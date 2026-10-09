@@ -1340,6 +1340,13 @@ void java_util_resource_ResourceRef_destroy(InvObject* self) {
   // Host: GPU tex/mesh destroy + gameref_on_destroy (deferred queue
   // stand-in). Keeps g_res — PE leaves Native.ptr until deleteNative.
   if (!self) return;
+  // Fork: a Text's render instance (Text.finalize -> renderinst.destroy()):
+  // the glyph instance lives under the Text object on the host.
+  if (InvObject* owner = tree_field_get_obj(self, "_text_owner")) {
+    render_d3d9_text_destroy(owner);
+    render_d3d9_mesh_destroy(owner);
+    tree_field_set_obj(self, "_text_owner", nullptr);
+  }
   render_d3d9_texture_destroy(self);
   render_d3d9_mesh_destroy(self);
   gameref_on_destroy(self);

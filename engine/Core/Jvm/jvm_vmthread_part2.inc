@@ -1779,10 +1779,23 @@ void jvm_apply_field_inits_chain(Jvm* j, const char* class_fqn, InvObject* self)
   }
 }
 
+static bool vmthread_sched_contains(const VmThread* t) {
+  for (VmThread* x = g_vm_sched_head; x; x = x->sched_next)
+    if (x == t) return true;
+  return false;
+}
+
 int vmthread_run(VmThread* thr, float budget_ms) {
   if (!thr) return -1;
   // PE @ 0x421018: flags&4 → "already running!"
   if ((thr->pe.flags & kVmThreadFlagRunning) != 0) return -1;
+  // Fork: 940 VMThread_run saves JVM+0x78 (scheduler cursor) at entry and
+  // restores it at exit; an inline named call from a native must not move
+  // the pump's resume point onto the new thread.
+  struct CursorRestore {
+    VmThread* saved;
+    ~CursorRestore() { if (!saved || vmthread_sched_contains(saved)) g_vm_sched_cursor = saved; }
+  } cursor_restore{g_vm_sched_cursor};
   if (!thr->pending.live) {
     // Fork: frames parked by a yield (wait / sleep / budget) resume here.
     if (vmthread_resumable(thr)) {
@@ -1822,10 +1835,22 @@ int vmthread_run(VmThread* thr, float budget_ms) {
     if (!v || !v[0]) return true;  // default on
     return !(v[0] == '0' && v[1] == '\0');
   }();
-  if (const JvmClass* cls = j->find_class(thr->pending.class_fqn.c_str())) {
-    if (const JvmMethod* m =
-            j->find_method(*cls, thr->pending.method.c_str(),
-                           thr->pending.signature.c_str())) {
+  // Fork: prefer the resolved (owner, method) slot carried by the pending
+  // invoke; the by-name lookup on the leaf class is only the host fallback.
+  const JvmClass* cls = nullptr;
+  const JvmMethod* m = nullptr;
+  if (!thr->pending.owner_fqn.empty() && thr->pending.method_ptr) {
+    cls = j->find_class(thr->pending.owner_fqn.c_str());
+    m = thr->pending.method_ptr;
+  }
+  if (!cls || !m) {
+    cls = j->find_class(thr->pending.class_fqn.c_str());
+    m = cls ? j->find_method(*cls, thr->pending.method.c_str(),
+                             thr->pending.signature.c_str())
+            : nullptr;
+  }
+  if (cls) {
+    if (m) {
       if (!m->is_native && m->tree_index >= 0 &&
           static_cast<size_t>(m->tree_index) < cls->trees.size()) {
         const TreeBody& code = cls->trees[m->tree_index];
@@ -1920,6 +1945,15 @@ void vmthread_request_stop(VmThread* thr) {
 
 void vmthread_destroy(VmThread* thr) {
   if (!thr) return;
+  // Fork: never free a thread that is executing (RUNNING) — defer to the
+  // pump's !RUNNING && STOP reap (PE semantics).
+  if ((thr->pe.flags & kVmThreadFlagRunning) != 0) {
+    thr->pe.flags |= kVmThreadFlagStop;
+    thr->pe.java_backref = 0;
+    if (vm_err_on())
+      std::fprintf(stderr, "[pe-thread] destroy deferred: thread %p is running\n", static_cast<void*>(thr));
+    return;
+  }
   vm_sched_unlink(thr);
   if (thr->frame_list) {
     for (VmCallFrame* f : thr->frame_list->frames) callframe_pool_release(f);
@@ -1970,7 +2004,19 @@ void vmthread_pump_stats_dump(FILE* out) {
                (unsigned long long)g_pump_stat_empty, g_pump_stat_cap);
 }
 
+static int g_pump_depth = 0;  // Fork: re-entrancy guard
+
 int jvm_run_threads_budgeted(float budget_ms, int32_t min_prio) {
+  // Fork: a native called from a VM thread must not pump the scheduler
+  // again (the hotkey path did, via the Soft main-loop stand-in, and the
+  // nested pump never returned to the frame loop).
+  if (g_pump_depth > 0) {
+    if (vm_err_on())
+      std::fprintf(stderr, "[pump] re-entered from thread %p: ignored\n",
+                   static_cast<void*>(vmthread_current()));
+    return 0;
+  }
+  struct DepthGuard { DepthGuard() { ++g_pump_depth; } ~DepthGuard() { --g_pump_depth; } } depth_guard;
   const bool unlimited = (budget_ms == 0.f);
   ++g_pump_stat_calls;
   float deadline = vm_now_ms() + budget_ms;

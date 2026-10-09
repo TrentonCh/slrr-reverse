@@ -64,6 +64,25 @@ static LONG WINAPI slrr_crash_filter(EXCEPTION_POINTERS* ep) {
   std::fflush(stderr);
   return EXCEPTION_EXECUTE_HANDLER;
 }
+
+// Fork: the unhandled-exception filter never ran for some deaths (stack
+// overflow leaves no stack; some paths terminate before it). A vectored
+// handler sees the first chance of the fatal codes; SetThreadStackGuarantee
+// reserves room for it to print.
+static LONG WINAPI slrr_vectored_handler(EXCEPTION_POINTERS* ep) {
+  const DWORD code = ep && ep->ExceptionRecord ? ep->ExceptionRecord->ExceptionCode : 0;
+  const bool fatal = code == 0xC0000005u || code == 0xC00000FDu || code == 0xC0000094u ||
+                     code == 0xC000001Du || code == 0xC0000096u || code == 0xC0000374u ||
+                     code == 0xC0000409u || code == 0xE06D7363u;
+  if (fatal) {
+    static int depth = 0;
+    if (depth++ == 0) {
+      std::fprintf(stderr, "[crash] first-chance 0x%08lX\n", static_cast<unsigned long>(code));
+      slrr_crash_filter(ep);
+    }
+  }
+  return EXCEPTION_CONTINUE_SEARCH;
+}
 #endif
 
 int main(int argc, char** argv) {
@@ -72,6 +91,8 @@ int main(int argc, char** argv) {
   setvbuf(stdout, nullptr, _IONBF, 0);
   setvbuf(stderr, nullptr, _IONBF, 0);
   SetUnhandledExceptionFilter(slrr_crash_filter);
+  { ULONG guarantee = 128u * 1024u; SetThreadStackGuarantee(&guarantee); }
+  AddVectoredExceptionHandler(1, slrr_vectored_handler);
 #endif
 
   const bool want_boot = (argc >= 2 && std::strcmp(argv[1], "--boot") == 0);

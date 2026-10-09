@@ -271,6 +271,12 @@ struct VmPendingInvoke {
   std::string method;
   std::string signature;
   std::vector<JvmValue> args;
+  // Fork: the (class, method) pair Class_findMethodSlot resolved (PE
+  // FUN_005493f0 box in 940). VMThread_invokeMethod runs exactly that
+  // method; re-resolving by name on the leaf class picked the wrong
+  // overload (GameRef.<init>() -> <init>(GameRef), the dialog ctor chain).
+  std::string owner_fqn;
+  const JvmMethod* method_ptr = nullptr;
 };
 
 struct VmThread {
@@ -321,7 +327,9 @@ int vmthread_push_call_frame(VmThread* thr);
 //   else CallFramePool+ctor queue + pending TREE; ret 0 (no bytecode VM).
 // Returns 0 (Java queued), 1 (native done), -1 (error) — PE sentinel.
 int vmthread_invoke_method(VmThread* thr, InvObject* self, const char* class_fqn,
-                           const char* method, const char* signature);
+                           const char* method, const char* signature,
+                           const char* owner_fqn = nullptr,
+                           const JvmMethod* resolved = nullptr);
 // PE Thread_callMethod @ 0x4207C0: NativeSigDesc_ctorFromOperands @ 0x41DCB0
 // + getJni @ 0x41DEF0 + Class_lookupMethod_nameSig @ 0x404910 → invokeMethod.
 // Soft: JNI from pack_vec tags + name lookup (find_method name fallback).

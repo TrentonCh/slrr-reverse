@@ -533,7 +533,11 @@ void java_io_Input_checkHotkeys(InvObject* inst, InvObject* infocus) {
   // @ 0x00428CB6 + Sfx_UpdateVoices @ 0x00428CBE + PollWindowQuit
   // @ 0x00428F5F (system_mainloop_sfx_listener_update).
   // PE @ 0x0047CD40
-  system_mainloop_sfx_listener_update();
+  // Fork: the Soft main-loop stand-in (Input_tick + SimulateFrame +
+  // Jvm_PumpFrame) belongs to Engine_MainLoop; on the script boot the frame
+  // loop performs it and a native running on a VM thread must not pump the
+  // scheduler again (it never returned to the frame loop).
+  if (!vmthread_current()) system_mainloop_sfx_listener_update();
   struct PendingFire {
     InvObject* hk = nullptr;
     InvObject* handler = nullptr;

@@ -517,6 +517,11 @@ void java_render_Text_create(InvObject* self, InvObject* parent, InvObject* char
                  charset ? (render_d3d9_font_ready(charset) ? 1 : 0) : -1, x, z);
   render_d3d9_text_create(self, charset, x, z);
   if (self) {
+    // Fork: PE Text_createRenderInst hangs the r_text node off the Text's
+    // renderinst handle; Text.finalize -> renderinst.destroy() frees it.
+    // The host keys the text state by the Text object, so link both ways.
+    if (InvObject* ri = tree_field_get_obj(self, "renderinst"))
+      tree_field_set_obj(ri, "_text_owner", self);
     tree_field_set_int(self, "_text_kind", 1);  // PE type "r_text"
     tree_field_set_float(self, "_text_px", x);
     tree_field_set_float(self, "_text_py", z);
@@ -556,6 +561,8 @@ bool text_create_rtext2_inst_soft(InvObject* self, InvObject* parent,
   if (!render_d3d9_font_ready(charset)) return false;
   (void)scale;
   render_d3d9_text_create(self, charset, x, z);
+  if (InvObject* ri = tree_field_get_obj(self, "renderinst"))
+    tree_field_set_obj(ri, "_text_owner", self);  // Fork: see Text.create
   tree_field_set_int(self, "_text_kind", 2);  // PE type "r_text2"
   tree_field_set_obj(self, "_text_type", string_new("r_text2"));
   tree_field_set_float(self, "_text_px", x);

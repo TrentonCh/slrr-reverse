@@ -341,7 +341,7 @@ void engine_dispatch_script_call_named_args(InvObject* handler, const char* name
   if (!thr) return;
   for (const JvmValue& a : args) thr->pack_vec.push_back(a);
   vmthread_push_call_frame(thr);
-  const bool tr = std::getenv("SLRR_PE_STREAM_TRACE") != nullptr;
+  const bool tr = std::getenv("SLRR_PE_STREAM_TRACE") != nullptr || std::getenv("SLRR_PE_STREAM_ERRORS") != nullptr;
   const auto t0 = std::chrono::steady_clock::now();
   const int inv = vmthread_invoke_method(thr, handler, cn, name, sig);
   if (inv == 0) vmthread_run(thr, /*budget_ms=*/0.f);

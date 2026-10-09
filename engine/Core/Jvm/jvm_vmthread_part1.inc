@@ -353,7 +353,8 @@ int vmthread_push_call_frame(VmThread* thr) {
 // pending TREE invoke for VMThread_run / Jvm_RunThreadsBudgeted; ret 0.
 // Do NOT invent opcode switch @ 0x4210D4 here.
 int vmthread_invoke_method(VmThread* thr, InvObject* self, const char* class_fqn,
-                           const char* method, const char* signature) {
+                           const char* method, const char* signature,
+                           const char* owner_fqn, const JvmMethod* resolved) {
   if (!thr || !class_fqn || !method || !signature) return -1;
   Jvm* j = jvm_active();
   if (!j) return -1;
@@ -389,10 +390,14 @@ int vmthread_invoke_method(VmThread* thr, InvObject* self, const char* class_fqn
   const NativeEntry* ne = resolve_native(class_fqn, method, signature);
   bool is_native = ne && ne->fn;
   if (!is_native) {
-    if (!j->find_class(class_fqn)) j->load_class(class_fqn);
-    if (const JvmClass* cls = j->find_class(class_fqn)) {
-      if (const JvmMethod* m = j->find_method(*cls, method, signature))
-        is_native = m->is_native;
+    if (resolved) {
+      is_native = resolved->is_native;  // Fork: the resolved slot decides
+    } else {
+      if (!j->find_class(class_fqn)) j->load_class(class_fqn);
+      if (const JvmClass* cls = j->find_class(class_fqn)) {
+        if (const JvmMethod* m = j->find_method(*cls, method, signature))
+          is_native = m->is_native;
+      }
     }
   }
 
@@ -442,6 +447,8 @@ int vmthread_invoke_method(VmThread* thr, InvObject* self, const char* class_fqn
   thr->pending.method = method;
   thr->pending.signature = signature;
   thr->pending.args = std::move(args);
+  thr->pending.owner_fqn = owner_fqn ? owner_fqn : "";
+  thr->pending.method_ptr = resolved;
   return 0;
 }
 
@@ -808,7 +815,11 @@ int vmthread_thread_call_method(VmThread* thr, InvObject* self,
   const char* call_fqn = (m && m->is_native && !owner_fqn.empty())
                              ? owner_fqn.c_str()
                              : resolve_fqn;
-  return vmthread_invoke_method(thr, self, call_fqn, method, sig);
+  // Fork: hand the resolved (owner, method) to the invoke so the callee
+  // frame is built from that slot (PE VMThread_invokeMethod takes the
+  // frame class from the lookup box), never re-resolved by name on the leaf.
+  return vmthread_invoke_method(thr, self, call_fqn, method, sig,
+                                (m && !owner_fqn.empty()) ? owner_fqn.c_str() : nullptr, m);
 }
 
 // PE op33 @ 0x421254: peek recv from operand; Object_callMethod(recv, thr,
@@ -1183,20 +1194,47 @@ StreamCall vmthread_stream_call(VmThread* thr, InvObject* self,
     // loop continue there (PE VMThread_invokeMethod @ 0x420222 Java path).
     {
       const std::string cfqn = thr->pending.class_fqn;  // copy: pending is restored below
-      if (!j->find_class(cfqn.c_str())) j->load_class(cfqn.c_str());
-      const JvmClass* owner = j->find_class(cfqn.c_str());
+      auto usable = [](const JvmClass* c, const JvmMethod* mm) {
+        return mm && c && !mm->is_native && mm->tree_index >= 0 &&
+               static_cast<size_t>(mm->tree_index) < c->trees.size() &&
+               !c->trees[static_cast<size_t>(mm->tree_index)].nodes.empty();
+      };
+      const JvmClass* owner = nullptr;
       const JvmMethod* cm = nullptr;
-      for (int guard = 0; owner && !cm && guard < 64; ++guard) {
-        cm = j->find_method(*owner, thr->pending.method.c_str(),
-                            thr->pending.signature.c_str());
-        if (cm && (cm->is_native || cm->tree_index < 0 ||
-                   static_cast<size_t>(cm->tree_index) >= owner->trees.size() ||
-                   owner->trees[static_cast<size_t>(cm->tree_index)].nodes.empty()))
-          cm = nullptr;
-        if (cm) break;
-        if (owner->super_name.empty() || owner->super_name == "java.lang.Object") { owner = nullptr; break; }
-        if (!j->find_class(owner->super_name.c_str())) j->load_class(owner->super_name.c_str());
-        owner = j->find_class(owner->super_name.c_str());
+      // Fork: PE runs the slot Class_findMethodSlot resolved (owner class +
+      // method); no re-lookup by name on the leaf class.
+      if (!thr->pending.owner_fqn.empty() && thr->pending.method_ptr) {
+        if (!j->find_class(thr->pending.owner_fqn.c_str()))
+          j->load_class(thr->pending.owner_fqn.c_str());
+        owner = j->find_class(thr->pending.owner_fqn.c_str());
+        cm = thr->pending.method_ptr;
+        if (!usable(owner, cm)) { owner = nullptr; cm = nullptr; }
+      }
+      if (!cm) {
+        // Host-constructed signature (event dispatch): exact signature first
+        // up the chain, then the old by-name walk for mis-paired MTHD rows.
+        for (int pass = 0; pass < 2 && !cm; ++pass) {
+          if (!j->find_class(cfqn.c_str())) j->load_class(cfqn.c_str());
+          owner = j->find_class(cfqn.c_str());
+          for (int guard = 0; owner && !cm && guard < 64; ++guard) {
+            if (pass == 0) {
+              for (const JvmMethod& mm : owner->methods) {
+                if (mm.name == thr->pending.method && mm.signature == thr->pending.signature) {
+                  if (usable(owner, &mm)) cm = &mm;
+                  break;
+                }
+              }
+            } else {
+              cm = j->find_method(*owner, thr->pending.method.c_str(),
+                                  thr->pending.signature.c_str());
+              if (!usable(owner, cm)) cm = nullptr;
+            }
+            if (cm) break;
+            if (owner->super_name.empty() || owner->super_name == "java.lang.Object") { owner = nullptr; break; }
+            if (!j->find_class(owner->super_name.c_str())) j->load_class(owner->super_name.c_str());
+            owner = j->find_class(owner->super_name.c_str());
+          }
+        }
       }
       if (cm && owner) {
         std::vector<JvmValue> cargs = thr->pending.args;
@@ -1214,8 +1252,12 @@ StreamCall vmthread_stream_call(VmThread* thr, InvObject* self,
         if (vm_trace_on() && std::strcmp(method, "<init>") == 0)
           std::fprintf(stderr, "[pe-stream]   ctor %s new_object_init=%d recv=%p\n",
                        cfqn.c_str(), thr->new_object_init ? 1 : 0, static_cast<void*>(recv));
-        if (thr->new_object_init && recv && std::strcmp(method, "<init>") == 0)
-          jvm_apply_field_inits_chain(j, cfqn.c_str(), recv);
+        if (thr->new_object_init && recv && std::strcmp(method, "<init>") == 0) {
+          // Fork: field initialisers belong to the object's own class (an
+          // inherited ctor must not skip the leaf's <fieldinit:*> trees).
+          const char* hc = tree_host_class(recv);
+          jvm_apply_field_inits_chain(j, (hc && hc[0]) ? hc : cfqn.c_str(), recv);
+        }
         thr->new_object_init = false;
         VmCallFrame* fr = vmthread_build_tree_frame(thr, owner, cm, recv, cargs);
         if (fr) {

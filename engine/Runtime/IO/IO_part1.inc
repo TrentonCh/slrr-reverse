@@ -51,7 +51,16 @@ void thread_drop_vm(ThreadState* st, InvObject* self) {
   if (!st || !st->thr) return;
   vmthread_request_stop(st->thr);
   st->thr->pe.java_backref = 0;
-  vmthread_destroy(st->thr);
+  // Fork: PE Thread.stop only sets STOP (thr+0x2C |= 0x80); the pump
+  // destroys the VMThread at !RUNNING && STOP. Deleting here while the
+  // thread is the pump's current entry (Thread.stop from a hotkey handler
+  // running inside the pump) freed it twice (heap corruption 0xC0000374).
+  static const bool green = [] {
+    const char* a = std::getenv("SLRR_PE_BOOT_INIT");
+    const char* b = std::getenv("SLRR_PE_GREEN");
+    return (a && a[0]) || (b && b[0]);
+  }();
+  if (!green) vmthread_destroy(st->thr);
   st->thr = nullptr;
   if (self) tree_field_set_int(self, "ptr", 0);
 }

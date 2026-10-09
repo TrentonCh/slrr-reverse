@@ -755,7 +755,7 @@ int game_interactive_run(Jvm& jvm, const char* game_root,
       s0 = std::chrono::steady_clock::now(); java_lang_GameType_pollTimers(); sec_ms[3] += lap(s0);
       s0 = std::chrono::steady_clock::now(); game_boot_mainloop_resource_pumps(); sec_ms[4] += lap(s0);
       const auto t_b = std::chrono::steady_clock::now();
-      jvm_run_threads_budgeted(8.f);
+      jvm_run_threads_budgeted(10.f);  // PE MainLoop: Jvm_PumpFrame(10.0)
       const auto t_c = std::chrono::steady_clock::now();
       sec_ms[5] += std::chrono::duration<double, std::milli>(t_c - t_b).count();
       pe_t_render += std::chrono::duration<double, std::milli>(t_b - t_a).count();
