@@ -724,12 +724,18 @@ bool render_d3d9_open(int32_t width, int32_t height, const char* title) {
 
   // Fixed client size matching the backbuffer — resizable chrome stretches
   // 4:3 content into widescreen and makes OSD text look crushed.
-  constexpr DWORD kWndStyle =
-      WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX | WS_VISIBLE;
+  // Fork: SLRR_WINDOW_NOACTIVATE=1 keeps automated runs from stealing
+  // focus (window shown without activation).
+  const char* noact_env = std::getenv("SLRR_WINDOW_NOACTIVATE");
+  const bool no_activate = noact_env && noact_env[0] == '1';
+  const DWORD kWndStyle =
+      WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX |
+      (no_activate ? 0 : WS_VISIBLE);
   RECT rc{0, 0, width, height};
   AdjustWindowRect(&rc, kWndStyle, FALSE);
   g_hwnd = CreateWindowExA(
-      0, g_wc.lpszClassName, title, kWndStyle, CW_USEDEFAULT, CW_USEDEFAULT,
+      no_activate ? WS_EX_NOACTIVATE : 0, g_wc.lpszClassName, title, kWndStyle,
+      CW_USEDEFAULT, CW_USEDEFAULT,
       rc.right - rc.left, rc.bottom - rc.top, nullptr, nullptr, hi, nullptr);
   if (!g_hwnd) {
     std::fprintf(stderr, "[render] CreateWindowEx failed\n");
@@ -741,7 +747,7 @@ bool render_d3d9_open(int32_t width, int32_t height, const char* title) {
                  reinterpret_cast<LPARAM>(g_stock_icon));
   }
   apply_stock_cursor_to_window();
-  ShowWindow(g_hwnd, SW_SHOW);
+  ShowWindow(g_hwnd, no_activate ? SW_SHOWNOACTIVATE : SW_SHOW);
   UpdateWindow(g_hwnd);
 
   if (!create_device(g_hwnd, width, height)) {

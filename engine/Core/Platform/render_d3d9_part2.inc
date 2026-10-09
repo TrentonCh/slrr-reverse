@@ -86,8 +86,58 @@ bool render_d3d9_print_screen(const char* path) {
 #endif
   if (!f) return false;
   // Tiny marker (not a real BMP) — enough for scripts to see a file appear.
-  static const char kMagic[] = {'S', 'C', 'R', 'N'};
-  std::fwrite(kMagic, 1, 4, f);
+  bool wrote = false;
+#ifdef _WIN32
+  // Fork: real back-buffer dump (24-bit BMP) when a device exists —
+  // PE GfxDevice_PrintScreen locks the back buffer and writes a TGA.
+  if (g_dev) {
+    IDirect3DSurface9* bb = nullptr;
+    if (SUCCEEDED(g_dev->GetBackBuffer(0, 0, D3DBACKBUFFER_TYPE_MONO, &bb)) && bb) {
+      D3DSURFACE_DESC desc{};
+      bb->GetDesc(&desc);
+      IDirect3DSurface9* sys = nullptr;
+      if (SUCCEEDED(g_dev->CreateOffscreenPlainSurface(desc.Width, desc.Height, desc.Format,
+                                                       D3DPOOL_SYSTEMMEM, &sys, nullptr)) &&
+          sys && SUCCEEDED(g_dev->GetRenderTargetData(bb, sys))) {
+        D3DLOCKED_RECT lr{};
+        if (SUCCEEDED(sys->LockRect(&lr, nullptr, D3DLOCK_READONLY))) {
+          const uint32_t w = desc.Width, h = desc.Height;
+          const uint32_t row = (w * 3 + 3) & ~3u;
+          const uint32_t img = row * h;
+          uint8_t hdr[54] = {};
+          hdr[0] = 'B'; hdr[1] = 'M';
+          const uint32_t fsize = 54 + img;
+          std::memcpy(hdr + 2, &fsize, 4);
+          const uint32_t off = 54; std::memcpy(hdr + 10, &off, 4);
+          const uint32_t ih = 40; std::memcpy(hdr + 14, &ih, 4);
+          std::memcpy(hdr + 18, &w, 4); std::memcpy(hdr + 22, &h, 4);
+          const uint16_t planes = 1, bpp = 24;
+          std::memcpy(hdr + 26, &planes, 2); std::memcpy(hdr + 28, &bpp, 2);
+          std::memcpy(hdr + 34, &img, 4);
+          std::fwrite(hdr, 1, 54, f);
+          std::vector<uint8_t> line(row, 0);
+          for (uint32_t y = 0; y < h; ++y) {
+            const uint8_t* srcp = static_cast<const uint8_t*>(lr.pBits) + (h - 1 - y) * lr.Pitch;
+            for (uint32_t x = 0; x < w; ++x) {  // X8R8G8B8 / A8R8G8B8 -> BGR
+              line[x * 3 + 0] = srcp[x * 4 + 0];
+              line[x * 3 + 1] = srcp[x * 4 + 1];
+              line[x * 3 + 2] = srcp[x * 4 + 2];
+            }
+            std::fwrite(line.data(), 1, row, f);
+          }
+          sys->UnlockRect();
+          wrote = true;
+        }
+      }
+      if (sys) sys->Release();
+      bb->Release();
+    }
+  }
+#endif
+  if (!wrote) {
+    static const char kMagic[] = {'S', 'C', 'R', 'N'};
+    std::fwrite(kMagic, 1, 4, f);
+  }
   std::fclose(f);
   ++g_printscreen_count;
   g_printscreen_last = path;

@@ -759,6 +759,12 @@ int game_interactive_run(Jvm& jvm, const char* game_root,
           std::chrono::duration<double>(std::chrono::steady_clock::now() - boot_t0).count() >= boot_secs)
         break;
     }
+    // Fork: SLRR_PE_BOOT_SHOT=<file.bmp> dumps the last presented frame.
+    if (const char* shot = std::getenv("SLRR_PE_BOOT_SHOT"); shot && shot[0]) {
+      render_d3d9_flush();
+      std::printf("[pe-boot] print screen %s -> %d\n", shot,
+                  render_d3d9_print_screen(shot) ? 1 : 0);
+    }
     report("loop end", pe_frames);
     return 0;
   }
