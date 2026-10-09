@@ -1,3 +1,6 @@
+#include "jvm.hpp"
+#include <chrono>
+#include <thread>
 // Split from natives_generated_world.cpp — RenderNatives.cpp
 #include "natives.hpp"
 #include "host_objects.hpp"

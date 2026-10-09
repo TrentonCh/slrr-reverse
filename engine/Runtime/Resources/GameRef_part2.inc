@@ -1347,6 +1347,16 @@ InvObject* frontend_gfx_engine() {
 void frontend_gfx_engine_frame_notify() {
   // Present path: wake Frontend.render.wait() once per frame.
   java_lang_Object_notify(frontend_gfx_engine());
+  // Fork: when the scripts built Frontend.render themselves (script boot),
+  // the waiters sit on THAT object, not on the host singleton.
+  if (Jvm* j = jvm_active()) {
+    if (const JvmClass* fe = j->find_class("java.render.Frontend")) {
+      JvmValue* slot = tree_static_slot(fe, "render", false);
+      if (slot && slot->tag == JvmTag::Obj && slot->v.o &&
+          slot->v.o != frontend_gfx_engine())
+        java_lang_Object_notify(slot->v.o);
+    }
+  }
 }
 
 namespace {

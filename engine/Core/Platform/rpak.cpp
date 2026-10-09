@@ -239,6 +239,22 @@ void link_entry_hierarchy(RpakPack* pack) {
     const int32_t parent_tid = kv.first;
     auto& idxs = kv.second;
     if (idxs.empty()) continue;
+    // Fork: a pack can carry two entries with the same type id; lookups go
+    // by type id (first entry), so a duplicate in the sibling order turns
+    // the chain into a 2-cycle (frontend font precache hung). Keep the
+    // first entry per type id.
+    {
+      std::vector<size_t> uniq;
+      uniq.reserve(idxs.size());
+      for (size_t ix : idxs) {
+        bool seen = false;
+        for (size_t u : uniq) {
+          if (pack->entries[u].type_id == pack->entries[ix].type_id) { seen = true; break; }
+        }
+        if (!seen) uniq.push_back(ix);
+      }
+      idxs.swap(uniq);
+    }
     auto pit = by_type.find(parent_tid);
     if (pit != by_type.end()) {
       pack->entries[pit->second].first_child_local =
@@ -520,6 +536,22 @@ std::vector<int32_t> collect_children_unlocked(int32_t parent_local) {
         out.push_back(rpak_make_id(pack.pack_id,
                                    static_cast<uint16_t>(e.type_id)));
     }
+  }
+  // Fork: a pack registered twice (host warm-up + script openLib with a
+  // different path spelling) lists every child twice; the sibling walk then
+  // finds the FIRST occurrence and cycles forever (countChildNodes hang).
+  // Keep the first occurrence of each id, in order.
+  {
+    std::vector<int32_t> uniq;
+    uniq.reserve(out.size());
+    for (int32_t id : out) {
+      bool seen = false;
+      for (int32_t u : uniq) {
+        if (u == id) { seen = true; break; }
+      }
+      if (!seen) uniq.push_back(id);
+    }
+    out.swap(uniq);
   }
   return out;
 }

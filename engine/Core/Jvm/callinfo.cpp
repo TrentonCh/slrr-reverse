@@ -1,3 +1,4 @@
+#include <cstdint>
 #include "callinfo.hpp"
 
 #include <cstdio>
@@ -633,6 +634,42 @@ bool call_native(const NativeEntry* entry, CallFrame* frame, std::string* err) {
                           InvObject*);
       reinterpret_cast<Fn>(fn)(arg_o(0), arg_o(1), arg_f(2), arg_f(3), arg_f(4),
                                arg_o(5));
+      return finish_v();
+    }
+  }
+
+  // Fork: generic Win32 cdecl dispatch. Every host native parameter is one
+  // 32-bit word (InvObject*, int32_t, float bit pattern) and the caller
+  // cleans the stack, so any shape can be called through a 10-word thunk;
+  // surplus words are ignored by the callee. Only the return kind matters.
+  {
+    std::vector<uint32_t> w;
+    if (!st) w.push_back(static_cast<uint32_t>(reinterpret_cast<std::uintptr_t>(arg_o(0))));
+    const size_t base = st ? 0 : 1;
+    for (size_t i = 0; i < atypes.size(); ++i) {
+      const size_t ai = base + i;
+      uint32_t v = 0;
+      if (atypes[i] == JvmTag::Float) {
+        const float f = arg_f(ai);
+        std::memcpy(&v, &f, 4);
+      } else if (atypes[i] == JvmTag::Obj) {
+        v = static_cast<uint32_t>(reinterpret_cast<std::uintptr_t>(arg_o(ai)));
+      } else {
+        v = static_cast<uint32_t>(arg_i(ai));
+      }
+      w.push_back(v);
+    }
+    if (w.size() <= 10) {
+      while (w.size() < 10) w.push_back(0u);
+      using A = uint32_t;
+      if (ret == JvmTag::Float) {
+        using Fn = float (*)(A, A, A, A, A, A, A, A, A, A);
+        return finish_f(reinterpret_cast<Fn>(fn)(w[0], w[1], w[2], w[3], w[4], w[5], w[6], w[7], w[8], w[9]));
+      }
+      using Fn = uint32_t (*)(A, A, A, A, A, A, A, A, A, A);
+      const uint32_t r = reinterpret_cast<Fn>(fn)(w[0], w[1], w[2], w[3], w[4], w[5], w[6], w[7], w[8], w[9]);
+      if (ret == JvmTag::Obj) return finish_o(reinterpret_cast<InvObject*>(static_cast<std::uintptr_t>(r)));
+      if (ret == JvmTag::Int) return finish_i(static_cast<int32_t>(r));
       return finish_v();
     }
   }

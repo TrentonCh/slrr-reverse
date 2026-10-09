@@ -835,17 +835,136 @@ bool vmthread_stream_walkable(const TreeBody& code) {
 // thread, kVmStreamReturned on op42/op43 (frame popped), kVmStreamYield on the
 // cooperative cutoff @ 0x4238F1, kVmStreamUnsupported when an opcode has no
 // host case yet (caller falls back without having touched the stream).
-int vmthread_exec_stream(VmThread* thr, const JvmClass* cls,
-                         const TreeBody& code, float budget_ms) {
+static int vmthread_exec_stream_inner(VmThread* thr, const JvmClass* cls_in,
+                                      const TreeBody& code_in, float budget_ms);
+
+// Fork: a failure inside a NESTED frame is a script error local to that
+// call (PE ScriptError + continue): pop the frame, yield null to the caller,
+// resume past the call site. Only a failure in the outermost frame
+// surfaces as kVmStreamUnsupported.
+int vmthread_exec_stream(VmThread* thr, const JvmClass* cls_in,
+                         const TreeBody& code_in, float budget_ms) {
+  for (;;) {
+    const int st = vmthread_exec_stream_inner(thr, cls_in, code_in, budget_ms);
+    if (st != kVmStreamUnsupported || !thr || vmthread_frame_depth(thr) <= 1)
+      return st;
+    if (vm_trace_on()) {
+      const VmCallFrame* f = thr->curr_frame;
+      std::fprintf(stderr, "[pe-stream]   script error: unwinding frame %s.%s at pc=%u (depth %zu)\n",
+                   f && f->host_cls ? f->host_cls->name.c_str() : "?",
+                   f && f->host_method ? f->host_method->name.c_str() : "?",
+                   thr->pe.unk_24, vmthread_frame_depth(thr));
+    }
+    const bool ret_void = thr->curr_frame && thr->curr_frame->host_method
+                              ? jni_sig_returns_void(thr->curr_frame->host_method->signature)
+                              : true;
+    vmthread_pop_frame_restore_pc(thr);
+    if (!ret_void) vmthread_value_stack_push(thr, JvmValue::make_obj(nullptr));
+    thr->pe.unk_24 += 8;
+    thr->null_recv_error = false;
+    thr->call_sig_hint.clear();
+  }
+}
+
+static thread_local VmThread* g_vm_current = nullptr;  // per OS thread: legacy harness still runs OS workers
+VmThread* vmthread_current() { return g_vm_current; }
+
+// Monitor wait queues (PE T_Container @ InvObject+0x14).
+static std::unordered_map<InvObject*, std::vector<VmThread*>> g_vm_monitors;
+
+bool vmthread_wait_current(InvObject* monitor) {
+  VmThread* thr = g_vm_current;
+  if (!thr || !monitor) return false;
+  thr->pe.flags |= 0x10;  // WAITING (PE Thread_markWaiting)
+  thr->pe.notify_34 = static_cast<uint32_t>(reinterpret_cast<std::uintptr_t>(monitor));
+  g_vm_monitors[monitor].push_back(thr);
+  if (vm_trace_on())
+    std::fprintf(stderr, "[pe-thread] wait: thread %p on monitor %p\n",
+                 static_cast<void*>(thr), static_cast<void*>(monitor));
+  return true;
+}
+
+int vmthread_monitor_notify(InvObject* monitor, bool all) {
+  auto it = g_vm_monitors.find(monitor);
+  if (it == g_vm_monitors.end() || it->second.empty()) return 0;
+  int n = 0;
+  while (!it->second.empty()) {
+    VmThread* t = it->second.back();  // PE pops LIFO
+    it->second.pop_back();
+    if (t) {
+      t->pe.flags &= ~0x10;
+      t->pe.notify_34 = 0;
+      ++n;
+      if (vm_trace_on())
+        std::fprintf(stderr, "[pe-thread] notify: thread %p woken\n", static_cast<void*>(t));
+    }
+    if (!all) break;
+  }
+  return n;
+}
+
+bool vmthread_sleep_current(float ms) {
+  VmThread* thr = g_vm_current;
+  if (!thr) return false;
+  thr->pe.flags |= kVmThreadFlagSleep;
+  thr->pe.sleep_deadline = vm_now_ms() + (ms < 0.f ? 0.f : ms);
+  if (vm_trace_on())
+    std::fprintf(stderr, "[pe-thread] sleep: thread %p for %g ms (flags=0x%x)\n",
+                 static_cast<void*>(thr), ms, thr->pe.flags);
+  return true;
+}
+
+bool vmthread_resumable(const VmThread* thr) {
+  return thr && !thr->pending.live && thr->curr_frame && thr->curr_frame->host_code &&
+         (thr->pe.flags & (kVmThreadFlagDone | kVmThreadFlagStop)) == 0;
+}
+
+void vmthread_green_start(VmThread* thr, const char* target_fqn, InvObject* target) {
+  if (!thr || !target_fqn || !target) return;
+  thr->pe.flags &= ~2;  // armed clear (PE Thread.start @ 0x47C5A4)
+  thr->pe.flags &= ~(kVmThreadFlagDone | kVmThreadFlagStop | 0x20);
+  thr->pending.live = true;
+  thr->pending.class_fqn = target_fqn;
+  thr->pending.method = "run";
+  thr->pending.signature = "()V";
+  thr->pending.args.clear();
+  thr->pending.args.push_back(JvmValue::make_obj(target));
+  if (vm_trace_on())
+    std::fprintf(stderr, "[pe-thread] start: thread %p -> %s.run()\n",
+                 static_cast<void*>(thr), target_fqn);
+}
+
+static int vmthread_exec_stream_inner(VmThread* thr, const JvmClass* cls_in,
+                                      const TreeBody& code_in, float budget_ms) {
   if (!thr) return kVmStreamUnsupported;
+  struct CurrentGuard {
+    VmThread* prev;
+    explicit CurrentGuard(VmThread* t) : prev(g_vm_current) { g_vm_current = t; }
+    ~CurrentGuard() { g_vm_current = prev; }
+  } current_guard(thr);
+  // Fork: the current frame names the stream; nested script calls switch
+  // frames on this thread (StreamCall::Switched) and returns pop back.
+  const JvmClass* cls = cls_in;
+  const TreeBody* code_p = &code_in;
   // PE @ 0x421050: noBudgetCutoff = 1 when budget_ms == 0.
   const bool no_budget_cutoff = (budget_ms == 0.f);
   const float deadline_ms = vm_now_ms() + budget_ms;  // PE @ 0x421076
   uint32_t insn_tick = 0;
 
   for (;;) {
+    if (thr->curr_frame && thr->curr_frame->host_code) {
+      cls = thr->curr_frame->host_cls;
+      code_p = thr->curr_frame->host_code;
+    }
+    const TreeBody& code = *code_p;
     const uint32_t idx = thr->pe.unk_24 / 8u;  // PE thr+0x24, stride 8
     if (idx >= code.nodes.size()) {
+      // Fork: a nested frame that ran off its end returns to the caller.
+      if (vmthread_frame_depth(thr) > 1) {
+        vmthread_pop_frame_restore_pc(thr);
+        thr->pe.unk_24 += 8;
+        continue;
+      }
       // PE empty / exhausted code: op16 DONE @ 0x423932 ends the thread.
       vmthread_op16_done(thr);
       return kVmStreamDone;
@@ -880,8 +999,11 @@ int vmthread_exec_stream(VmThread* thr, const JvmClass* cls,
         };
         std::string line;
         char h[160];
-        std::snprintf(h, sizeof h, "[pe-step] %s n=%u op=%02x pe=%04x imm=%d stk[",
-                      cls->name.c_str(), idx, insn.op, op, imm);
+        std::snprintf(h, sizeof h, "[pe-step] %p %s.%s n=%u op=%02x pe=%04x imm=%d stk[",
+                      static_cast<void*>(thr), cls->name.c_str(),
+                      thr->curr_frame && thr->curr_frame->host_method
+                          ? thr->curr_frame->host_method->name.c_str() : "?",
+                      idx, insn.op, op, imm);
         line += h;
         if (thr->curr_frame) {
           const auto& st = thr->curr_frame->operand;
@@ -937,9 +1059,21 @@ int vmthread_exec_stream(VmThread* thr, const JvmClass* cls,
           break;
         case kVmCaseOp42:
           vmthread_op42_ret_void(thr);  // popFrameRestorePc
+          if (thr->curr_frame && thr->curr_frame->host_code) {
+            // Fork: returned into a stream frame on this thread — land past
+            // the call site (PE afterPc → opDefault_advance).
+            thr->pe.unk_24 += 8;
+            self_advanced = true;
+            break;
+          }
           return kVmStreamReturned;
         case kVmCaseOp43:
           vmthread_op43_ret_val(thr);
+          if (thr->curr_frame && thr->curr_frame->host_code) {
+            thr->pe.unk_24 += 8;
+            self_advanced = true;
+            break;
+          }
           return kVmStreamReturned;
         case kVmCaseOp45:
           vmthread_op45_assign_store(thr);
@@ -949,12 +1083,13 @@ int vmthread_exec_stream(VmThread* thr, const JvmClass* cls,
           // PE op 0x21 @ 0x421254: peek recv via argc depth math;
           // Object_callMethod(recv, thr, "<init>") → class from obj+0xC.
           InvObject* recv = vmthread_op21_peek_recv(thr);
+          thr->new_object_init = true;
           if (!recv) return kVmStreamUnsupported;
           const char* cn = tree_host_class(recv);
           if (!cn || !cn[0]) cn = cls->name.c_str();
           const StreamCall sc = vmthread_stream_call(thr, recv, cn, "<init>");
-          if (sc == StreamCall::Fail) return kVmStreamUnsupported;
-          self_advanced = (sc == StreamCall::SelfAdvanced);
+          if (sc == StreamCall::Fail) break;  // PE: ScriptError + advance
+          self_advanced = (sc == StreamCall::SelfAdvanced || sc == StreamCall::Switched);
           break;
         }
         case kVmCaseOp34: {
@@ -967,8 +1102,8 @@ int vmthread_exec_stream(VmThread* thr, const JvmClass* cls,
             self = thr->curr_frame->locals[0].v.o;
           const StreamCall sc =
               vmthread_stream_call(thr, self, cls->name.c_str(), "<init>");
-          if (sc == StreamCall::Fail) return kVmStreamUnsupported;
-          self_advanced = (sc == StreamCall::SelfAdvanced);
+          if (sc == StreamCall::Fail) break;  // PE: ScriptError + advance
+          self_advanced = (sc == StreamCall::SelfAdvanced || sc == StreamCall::Switched);
           break;
         }
         case kVmCaseOp35: {
@@ -987,8 +1122,8 @@ int vmthread_exec_stream(VmThread* thr, const JvmClass* cls,
           }
           const StreamCall sc = vmthread_stream_call(
               thr, self, cls->super_name.c_str(), "<init>");
-          if (sc == StreamCall::Fail) return kVmStreamUnsupported;
-          self_advanced = (sc == StreamCall::SelfAdvanced);
+          if (sc == StreamCall::Fail) break;  // PE: ScriptError + advance
+          self_advanced = (sc == StreamCall::SelfAdvanced || sc == StreamCall::Switched);
           break;
         }
         case kVmCaseOp36: {
@@ -1033,7 +1168,10 @@ int vmthread_exec_stream(VmThread* thr, const JvmClass* cls,
             if (vm_trace_on())
               std::fprintf(stderr, "[pe-stream]   op24 call failed %s.%s self=%p\n",
                            class_fqn.c_str(), method.c_str(), static_cast<void*>(self));
-            return kVmStreamUnsupported;
+            // PE: ScriptError, then opDefault_advance past the terminator.
+            thr->pe.unk_24 += 8;
+            self_advanced = true;
+            break;
           }
           // Fork: the PC now sits on the terminator (native path restored
           // it from the saved frame PC). opDefault_advance must step past
@@ -1207,7 +1345,7 @@ int vmthread_exec_stream(VmThread* thr, const JvmClass* cls,
           const StreamCall sc =
               vmthread_stream_call(thr, recv, cn, mname.c_str());
           if (sc == StreamCall::Fail) return kVmStreamUnsupported;
-          self_advanced = (sc == StreamCall::SelfAdvanced);
+          self_advanced = (sc == StreamCall::SelfAdvanced || sc == StreamCall::Switched);
           break;
         }
         case 0x4026: {
@@ -1233,7 +1371,7 @@ int vmthread_exec_stream(VmThread* thr, const JvmClass* cls,
           const StreamCall sc = vmthread_stream_call(
               thr, self, cls->super_name.c_str(), mname.c_str());
           if (sc == StreamCall::Fail) return kVmStreamUnsupported;
-          self_advanced = (sc == StreamCall::SelfAdvanced);
+          self_advanced = (sc == StreamCall::SelfAdvanced || sc == StreamCall::Switched);
           break;
         }
         case 0x401C: {
@@ -1329,6 +1467,9 @@ VmCallFrame* vmthread_build_tree_frame(VmThread* thr, const JvmClass* cls,
   fr->pe.local_cap = fr->pe.local_count;
   fr->operand.clear();
 
+  fr->host_cls = cls;
+  fr->host_code = &cls->trees[static_cast<size_t>(m->tree_index)];
+  fr->host_method = m;
   thr->curr_frame = fr;  // PE @ 0x42056F
   thr->pe.curr_frame = 1;
   thr->pe.unk_24 = 0;  // PE thr+0x24 = frame+0x2C, i.e. the code origin
@@ -1412,9 +1553,19 @@ bool vmthread_try_stream_eval(const JvmClass* cls, const JvmMethod* m,
                  cls->name.c_str(), m->name.c_str(), m->signature.c_str(),
                  code.nodes.size());
 
-  VmThread thr{};
-  VmFrameList frames;
-  thr.frame_list = &frames;
+  // Fork: heap thread so a yield (wait/sleep) can park it in the scheduler.
+  VmThread* thr_p = new VmThread{};
+  VmThread& thr = *thr_p;
+  thr.frame_list = new VmFrameList();
+  struct ThreadOwner {
+    VmThread* t;
+    bool released = false;
+    ~ThreadOwner() {
+      if (released || !t) return;
+      delete t->frame_list;
+      delete t;
+    }
+  } thread_owner{thr_p};
   if (!vmthread_build_tree_frame(&thr, cls, m, recv, call_args)) return false;
 
   struct StreamDepthGuard {
@@ -1458,6 +1609,23 @@ bool vmthread_try_stream_eval(const JvmClass* cls, const JvmMethod* m,
   // it is stale whenever the frame is still alive. After op43 the frame is
   // gone and the return value was pushed onto the mirror; otherwise (DONE /
   // exhausted, e.g. field-init trees) the value is the frame TOS.
+  static const bool green_mode = [] {
+    const char* a = std::getenv("SLRR_PE_BOOT_INIT");
+    const char* b = std::getenv("SLRR_PE_GREEN");
+    return (a && a[0] == '1') || (b && b[0] == '1');
+  }();
+  if (st == kVmStreamYield && green_mode) {
+    // Fork: parked mid-body (Object.wait / Thread.sleep). Hand the thread
+    // to the scheduler; the caller gets void now and the body continues on
+    // later pumps (PE: the VMThread simply stays in the run list).
+    if (vm_trace_on())
+      std::fprintf(stderr, "[pe-thread] yield: %s.%s parked (flags=0x%X)\n",
+                   cls->name.c_str(), m->name.c_str(), thr.pe.flags);
+    vm_sched_link(thr_p);
+    thread_owner.released = true;
+    *out = JvmValue::make_void();
+    return true;
+  }
   if (jni_sig_returns_void(m->signature)) {
     *out = JvmValue::make_void();
   } else if (st == kVmStreamReturned && !thr.operand.empty()) {
@@ -1478,11 +1646,62 @@ static VmStreamStats g_vm_stream_stats;
 
 const VmStreamStats& vmthread_stream_stats() { return g_vm_stream_stats; }
 
+// Fork: number of live frames on this thread (frame_list is authoritative).
+size_t vmthread_frame_depth(const VmThread* thr) {
+  if (!thr || !thr->frame_list) return thr && thr->curr_frame ? 1u : 0u;
+  return thr->frame_list->frames.size();
+}
+
+// Fork: PE JVM_newObject — run the instance field initializer trees of the
+// class chain, root first, on the stream (see Jvm::invoke apply_field_inits).
+void jvm_apply_field_inits_chain(Jvm* j, const char* class_fqn, InvObject* self) {
+  if (!j || !class_fqn || !self) return;
+  std::vector<const JvmClass*> chain;
+  for (const JvmClass* c = j->find_class(class_fqn); c;) {
+    chain.push_back(c);
+    if (c->super_name.empty()) break;
+    if (!j->find_class(c->super_name.c_str())) j->load_class(c->super_name.c_str());
+    c = j->find_class(c->super_name.c_str());
+  }
+  for (auto it = chain.rbegin(); it != chain.rend(); ++it) {
+    const JvmClass& c = **it;
+    for (const JvmFieldInit& fi : c.field_inits) {
+      if (fi.tree_index < 0 || static_cast<size_t>(fi.tree_index) >= c.trees.size()) continue;
+      if (c.trees[static_cast<size_t>(fi.tree_index)].nodes.empty()) continue;
+      JvmMethod fim;
+      fim.name = "<fieldinit:" + fi.name + ">";
+      fim.signature = "()Ljava.lang.Object;";
+      fim.tree_index = fi.tree_index;
+      JvmValue fv{};
+      if (!vmthread_try_stream_eval(&c, &fim, self, {}, &fv)) continue;
+      if (fv.tag == JvmTag::Obj) tree_field_set_obj(self, fi.name.c_str(), fv.v.o);
+      else if (fv.tag == JvmTag::Int) tree_field_set_int(self, fi.name.c_str(), fv.v.i);
+      else if (fv.tag == JvmTag::Float) tree_field_set_float(self, fi.name.c_str(), fv.v.f);
+    }
+  }
+}
+
 int vmthread_run(VmThread* thr, float budget_ms) {
   if (!thr) return -1;
   // PE @ 0x421018: flags&4 → "already running!"
   if ((thr->pe.flags & kVmThreadFlagRunning) != 0) return -1;
   if (!thr->pending.live) {
+    // Fork: frames parked by a yield (wait / sleep / budget) resume here.
+    if (vmthread_resumable(thr)) {
+      if (!vmthread_can_continue(thr)) return 0;
+      thr->pe.flags |= kVmThreadFlagRunning;
+      g_vm_sched_cursor = thr;
+      const int st = vmthread_exec_stream(thr, thr->curr_frame->host_cls,
+                                          *thr->curr_frame->host_code, budget_ms);
+      if (st == kVmStreamUnsupported) {
+        while (thr->curr_frame) vmthread_pop_frame_restore_pc(thr);
+        vmthread_op16_done(thr);
+      } else if ((thr->pe.flags & kVmThreadFlagDone) == 0 && !thr->curr_frame) {
+        vmthread_op16_done(thr);
+      }
+      thr->pe.flags &= ~kVmThreadFlagRunning;
+      return 0;
+    }
     // PE empty thread (no code @ +0x24) → error path; host: idle ok.
     return 0;
   }
@@ -1534,6 +1753,8 @@ int vmthread_run(VmThread* thr, float budget_ms) {
             call_args.erase(call_args.begin());
           }
           VmCallFrame* prev_frame = thr->curr_frame;
+          if (vm_trace_on())
+            std::fprintf(stderr, "[pe-thread] run: %s.%s on the stream\n", cls->name.c_str(), m->name.c_str());
           if (vmthread_build_tree_frame(thr, cls, m, self, call_args)) {
             const int st = vmthread_exec_stream(thr, cls, code, budget_ms);
             if (st != kVmStreamUnsupported) {
@@ -1557,6 +1778,10 @@ int vmthread_run(VmThread* thr, float budget_ms) {
   }
 
   // Soft body: TREE/jvm invoke ≡ PE bytecode loop (residual cases OOS).
+  if (vm_trace_on())
+    std::fprintf(stderr, "[pe-thread] run: %s.%s%s falls to soft invoke (not walkable?)\n",
+                 thr->pending.class_fqn.c_str(), thr->pending.method.c_str(),
+                 thr->pending.signature.c_str());
   JvmValue result =
       j->invoke(thr->pending.class_fqn.c_str(), thr->pending.method.c_str(),
                 thr->pending.signature.c_str(), thr->pending.args, false);
@@ -1638,6 +1863,17 @@ int jvm_run_threads_budgeted(float budget_ms, int32_t min_prio) {
     }
     VmThread* cur = g_vm_sched_cursor;
     if (!cur) return 0;  // PE @ 0x4169E3 empty → ret 0
+    {
+      static const bool pump_trace = [] {
+        const char* e = std::getenv("SLRR_PE_PUMP_TRACE");
+        return e && e[0] == '1';
+      }();
+      if (pump_trace)
+        std::fprintf(stderr, "[pump] visit %p flags=0x%x prio=%d pending=%d resumable=%d sleep_left=%g\n",
+                     static_cast<void*>(cur), cur->pe.flags, cur->pe.priority,
+                     cur->pending.live ? 1 : 0, vmthread_resumable(cur) ? 1 : 0,
+                     (cur->pe.flags & kVmThreadFlagSleep) ? cur->pe.sleep_deadline - vm_now_ms() : 0.f);
+    }
 
     // PE body uses JVM+0x78 throughout; advance only @ 0x416AA4.
     if ((cur->pe.flags & kVmThreadFlagSkipMask) == 0) {
@@ -1648,8 +1884,13 @@ int jvm_run_threads_budgeted(float budget_ms, int32_t min_prio) {
         if ((cur->pe.flags & kVmThreadFlagSleep) != 0 &&
             vm_now_ms() > cur->pe.sleep_deadline) {
           cur->pe.flags &= ~kVmThreadFlagSleep;
+          if (vm_trace_on())
+            std::fprintf(stderr, "[pe-thread] sleep over: thread %p flags=0x%x pending=%d resumable=%d\n",
+                         static_cast<void*>(cur), cur->pe.flags, cur->pending.live ? 1 : 0,
+                         vmthread_resumable(cur) ? 1 : 0);
         }
-        if ((cur->pe.flags & kVmThreadFlagSleep) == 0) {
+        // Fork: WAITING (0x10) threads stay parked until Object.notify.
+        if ((cur->pe.flags & (kVmThreadFlagSleep | 0x10)) == 0) {
           // PE @ 0x416A28..0x416A6C: flt_5F08F8=0.1, F4=99, F0=1,
           // EC=0.9, E8=0.1 — priority-scaled slice.
           const int32_t prio = cur->pe.priority;
@@ -1662,7 +1903,7 @@ int jvm_run_threads_budgeted(float budget_ms, int32_t min_prio) {
           // PE @ 0x416A70..0x416A81: deadline = deadline - slice + scaled.
           if (!unlimited) deadline = deadline - slice + scaled;
           // PE always VMThread_run; host pending → TREE + op42/43/16 slice.
-          if (cur->pending.live) {
+          if (cur->pending.live || vmthread_resumable(cur)) {
             vmthread_run(cur, unlimited ? 0.f : scaled);
             saw_run = true;  // PE bl=1 @ 0x416A8C only here
           }

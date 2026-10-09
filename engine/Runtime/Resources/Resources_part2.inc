@@ -1,3 +1,4 @@
+#include <cstdlib>
 // Fragment 2/4 of Resources.cpp — included, not compiled on its own.
 // Split only to stay under the 128 KB editor buffer cap; the
 // translation unit is unchanged. See native/tools/split_source.py.
@@ -958,11 +959,33 @@ int resource_engine_pump_load_queue() {
   g_load_ring_index = (idx + 1u) & 0x1Fu;                   // @ 0x537AC8
   g_load_ring_sum = sum;                                    // @ 0x537ACD
   // PE: (double)sum * 0.03125 > 4.0 → eng+0x106ED4 (flt_5F3564 / flt_5F0CC8).
-  g_re_is_loading = (static_cast<double>(sum) * 0.03125 > 4.0) ? 1 : 0;
+  {
+    const int32_t was = g_re_is_loading;
+    g_re_is_loading = (static_cast<double>(sum) * 0.03125 > 4.0) ? 1 : 0;
+    if (was != g_re_is_loading && std::getenv("SLRR_PE_STREAM_TRACE"))
+      std::fprintf(stderr, "[native] load ring: isLoading %d -> %d (sum=%u)\n",
+                   was, g_re_is_loading, sum);
+  }
   if (g_pump_load_type7_peak < g_pump_load_type7)
     g_pump_load_type7_peak = g_pump_load_type7;  // @ 0x537B33
   return 0;  // PE @ 0x537B30
 }
+
+// PE ResourceEngine ring seed @ 0x5378B0 (System.isLoadingReset tail):
+// eax = Engine_resource_loadrate; rep stosd 0x20 dwords @ 0x765E8C;
+// dword_765F24 = eax << 5. The ring index and eng+0x106ED4 are untouched;
+// the next PumpLoadQueue reads sum*0.03125 > 4.0 → isLoading = 1 until the
+// seeded slots are replaced by idle samples (~24 pumps at rate 16).
+void resource_engine_seed_load_ring() {
+  const uint32_t rate = g_engine_resource_loadrate;
+  for (uint32_t& s : g_load_ring_slots) s = rate;
+  g_load_ring_sum = rate << 5;
+  if (std::getenv("SLRR_PE_STREAM_TRACE"))
+    std::fprintf(stderr, "[native] load ring seeded: rate=%u sum=%u\n", rate, g_load_ring_sum);
+}
+
+// PE System.isLoading @ 0x47C3B0: dword flag @ ResourceEngine+0x106ED4.
+int32_t resource_engine_is_loading() { return g_re_is_loading; }
 
 // PE ResHandle_maybeRelinkLod @ 0x00425150 size 0x2C:
 // *(handle+0xC); if inner && (inner+0x54 & 0x100) →
@@ -1443,7 +1466,11 @@ InvObject* java_util_resource_ResourceRef_getNextChild(InvObject* self) {
     std::lock_guard<std::mutex> lock(g_mu);
     id = R(self).id;
   }
-  return make_bound_ref(rpak_next_sibling_id(id));
+  const int32_t next_id = rpak_next_sibling_id(id);
+  if (std::getenv("SLRR_PE_STREAM_TRACE"))
+    std::fprintf(stderr, "[native] ResourceRef.getNextChild self=%p id=0x%08X -> 0x%08X\n",
+                 static_cast<void*>(self), static_cast<unsigned>(id), static_cast<unsigned>(next_id));
+  return make_bound_ref(next_id);
 }
 InvObject* java_util_resource_ResourceRef_getWTRoot(InvObject* self) {
   // PE @ 0x0047D570 size 0xba (186): twin of getParent @ 0x0047D4B0 /

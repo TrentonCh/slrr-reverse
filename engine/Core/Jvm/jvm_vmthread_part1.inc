@@ -46,6 +46,11 @@ VmCallFrame* callframe_pool_alloc() {
 
 void callframe_pool_release(VmCallFrame* f) {
   if (!f) return;
+  // Fork: pooled frames are reused; a stale host_code made the scheduler
+  // "resume" a legacy (OS-thread) frame into dead code (segfault).
+  f->host_cls = nullptr;
+  f->host_code = nullptr;
+  f->host_method = nullptr;
   // Fork diagnostic: a frame released twice would be handed out while
   // still live (caller frame aliasing seen in rpkScan #2).
   for (VmCallFrame* q : g_callframe_pool.freelist) {
@@ -190,12 +195,13 @@ static void vm_sched_unlink(VmThread* thr) {
   thr->sched_prev = thr->sched_next = nullptr;
 }
 
+// Fork: PE Engine_GetTimeMs is a float relative to engine start. GetTickCount
+// (absolute, 16 ms granularity) rounded an 8 ms budget to nothing at float
+// precision, so the pump visited ~1 thread per frame.
 static float vm_now_ms() {
-#ifdef _WIN32
-  return static_cast<float>(GetTickCount());
-#else
-  return 0.f;
-#endif
+  static const auto t0 = std::chrono::steady_clock::now();
+  const auto d = std::chrono::steady_clock::now() - t0;
+  return static_cast<float>(std::chrono::duration<double, std::milli>(d).count());
 }
 
 // PE VMThread_init @ 0x41F340 — fills 56B blob; FrameList malloc(28);
@@ -334,7 +340,19 @@ int vmthread_invoke_method(VmThread* thr, InvObject* self, const char* class_fqn
   if (is_native) {
     // PE ACC_NATIVE @ 0x41FC2D..0x4201D8 — RegisterNative lookup + UnboxArg
     // descriptor; host: Native.ptr arg unbox then invoke (registered sig).
-    unbox_native_ptr_args(j, &args, /*skip_self=*/self != nullptr);
+    // Fork: a STATIC native reached through an instance call
+    // (`this.sleep(300)` -> Thread.sleep(F)) takes no receiver: PE UnboxArg
+    // dest0 is the discarded static slot, so the first real arg is arg_0.
+    // Keeping `self` in front fed the receiver pointer to Thread.sleep.
+    bool has_self = self != nullptr;
+    if (has_self && ne && ne->is_static && !args.empty()) {
+      args.erase(args.begin());
+      has_self = false;
+      if (vm_trace_on())
+        std::fprintf(stderr, "[pe-stream]   static native %s.%s via instance: receiver dropped\n",
+                     class_fqn, method);
+    }
+    unbox_native_ptr_args(j, &args, /*skip_self=*/has_self);
     JvmValue result = j->invoke(class_fqn, method, signature, args, false);
     fr->operand.push_back(result);
     fr->pe.op_count = static_cast<uint32_t>(fr->operand.size());
@@ -464,7 +482,21 @@ static int pe_type_score(Jvm* j, const std::string& mt, const std::string& ct) {
     if (m == 'L' || m == '[') {
       if (mt == "L;" || ct == "L;") return 100;  // untyped object / null
       if (m == '[' || c == '[') return (m == c) ? 0 : -1;
-      return pe_class_distance(j, pe_strip_L(ct), pe_strip_L(mt));
+      const int d = pe_class_distance(j, pe_strip_L(ct), pe_strip_L(mt));
+      if (d >= 0) return d;
+      // Host gap: the loader keeps no interface list, so `Runnable` /
+      // `GameState` parameters cannot be proven assignable. Accept with a
+      // weak score when the parameter class is not a plain class we know
+      // the receiver's chain excludes (PE Class_isAssignable walks ifaces).
+      {
+        const std::string pm = pe_strip_L(mt);
+        if (!j->find_class(pm.c_str())) j->load_class(pm.c_str());
+        const JvmClass* pc = j->find_class(pm.c_str());
+        const bool iface_like = !pc || pc->methods.empty() ||
+                                pc->super_name.empty();
+        if (iface_like) return 500;
+      }
+      return -1;
     }
   }
   return -1;
@@ -627,6 +659,12 @@ int vmthread_thread_call_method(VmThread* thr, InvObject* self,
   // PE miss → ScriptError "not found"; Soft: still attempt soft_jni invoke
   // (resolve_native / TREE may bind). Exact PE: return name on miss.
   if (!m) {
+    // java.lang.Object natives (toString / hashCode / wait / notify / GC):
+    // every class inherits them; the host chain walk stops before Object.
+    if (resolve_native("java.lang.Object", method, soft_jni.c_str())) {
+      return vmthread_invoke_method(thr, self, "java.lang.Object", method,
+                                    soft_jni.c_str());
+    }
     if (vm_trace_on())
       std::fprintf(stderr, "[pe-stream]   script error: Thread::callMethod: %s.%s%s not found\n",
                    resolve_fqn, method, callsig.c_str());
@@ -947,7 +985,13 @@ bool jni_sig_returns_void(const std::string& sig) {
 // Soft has no thr+0x24 code-pointer switch, so a queued Java body is drained
 // inline via j->invoke and the +8 is applied here. Used by op 0x21/0x22/0x23
 // (PC on the opcode) and by op 0x24 after Thread_evalName (PC on terminator).
-enum class StreamCall : int8_t { Fail = -1, Advance = 0, SelfAdvanced = 1 };
+enum class StreamCall : int8_t {
+  Fail = -1,
+  Advance = 0,
+  SelfAdvanced = 1,
+  Switched = 2  // Fork: callee frame pushed on this thread, PC = 0 there
+};
+
 
 StreamCall vmthread_stream_call(VmThread* thr, InvObject* self,
                                 const char* class_fqn, const char* method) {
@@ -967,6 +1011,54 @@ StreamCall vmthread_stream_call(VmThread* thr, InvObject* self,
         vmthread_pop_frame_restore_pc(thr);
       thr->pending = saved;
       return StreamCall::Fail;
+    }
+    // Fork: script callee → push its frame on THIS thread and let the exec
+    // loop continue there (PE VMThread_invokeMethod @ 0x420222 Java path).
+    {
+      const std::string cfqn = thr->pending.class_fqn;  // copy: pending is restored below
+      if (!j->find_class(cfqn.c_str())) j->load_class(cfqn.c_str());
+      const JvmClass* owner = j->find_class(cfqn.c_str());
+      const JvmMethod* cm = nullptr;
+      for (int guard = 0; owner && !cm && guard < 64; ++guard) {
+        cm = j->find_method(*owner, thr->pending.method.c_str(),
+                            thr->pending.signature.c_str());
+        if (cm && (cm->is_native || cm->tree_index < 0 ||
+                   static_cast<size_t>(cm->tree_index) >= owner->trees.size() ||
+                   owner->trees[static_cast<size_t>(cm->tree_index)].nodes.empty()))
+          cm = nullptr;
+        if (cm) break;
+        if (owner->super_name.empty() || owner->super_name == "java.lang.Object") { owner = nullptr; break; }
+        if (!j->find_class(owner->super_name.c_str())) j->load_class(owner->super_name.c_str());
+        owner = j->find_class(owner->super_name.c_str());
+      }
+      if (cm && owner) {
+        std::vector<JvmValue> cargs = thr->pending.args;
+        InvObject* recv = nullptr;
+        const bool cstatic = (cm->flags & 0x8u) != 0;
+        if (!cstatic && !cargs.empty() && cargs.front().tag == JvmTag::Obj) {
+          recv = cargs.front().v.o;
+          cargs.erase(cargs.begin());
+        }
+        // Drop the leaf frame invoke_method pushed; the caller PC is restored
+        // to the call site (terminator) and re-saved by build_tree_frame.
+        if (thr->curr_frame && thr->curr_frame != before)
+          vmthread_pop_frame_restore_pc(thr);
+        thr->pending = saved;
+        if (vm_trace_on() && std::strcmp(method, "<init>") == 0)
+          std::fprintf(stderr, "[pe-stream]   ctor %s new_object_init=%d recv=%p\n",
+                       cfqn.c_str(), thr->new_object_init ? 1 : 0, static_cast<void*>(recv));
+        if (thr->new_object_init && recv && std::strcmp(method, "<init>") == 0)
+          jvm_apply_field_inits_chain(j, cfqn.c_str(), recv);
+        thr->new_object_init = false;
+        VmCallFrame* fr = vmthread_build_tree_frame(thr, owner, cm, recv, cargs);
+        if (fr) {
+          if (vm_trace_on())
+            std::fprintf(stderr, "[pe-stream]   frame-switch -> %s.%s%s depth=%zu\n",
+                         owner->name.c_str(), cm->name.c_str(), cm->signature.c_str(),
+                         thr->frame_list ? thr->frame_list->frames.size() : size_t{0});
+          return StreamCall::Switched;
+        }
+      }
     }
     const bool ret_void = jni_sig_returns_void(thr->pending.signature);
     JvmValue result =

@@ -590,6 +590,18 @@ int32_t java_io_MouseCursor_enable(InvObject* self, int32_t state) {
 
 // ---- Thread ----
 
+// Fork: cooperative (green) threads are used by the script boot
+// (SLRR_PE_BOOT_INIT=1 or SLRR_PE_GREEN=1). The legacy Soft harness keeps the
+// OS-thread stand-ins, which it never pumps a scheduler for.
+static bool green_threads_on() {
+  static const bool on = [] {
+    const char* a = std::getenv("SLRR_PE_BOOT_INIT");
+    const char* b = std::getenv("SLRR_PE_GREEN");
+    return (a && a[0] == '1') || (b && b[0] == '1');
+  }();
+  return on;
+}
+
 void java_lang_Thread_init(InvObject* self, InvObject* name) {
   // PE @ 0x0047C510 size 0x59 (89). Unbox this+String (JVM_UnboxArg @
   // 0x0045D910): dest0=this, dest1=name cstr. Engine_malloc(56 / 0x38) →
@@ -659,7 +671,19 @@ void java_lang_Thread_start(InvObject* self) {
     if (thr) thr->pe.flags &= ~0x20;  // Soft: clear suspend bit on (re)start
   }
 
-  // Detached OS thread — stock stop() is cooperative via STOP bit / alive.
+  // Fork: green start — queue target.run() on this Java thread's VmThread;
+  // the scheduler pump executes it cooperatively. No OS thread.
+  if (green_threads_on()) {
+    std::lock_guard<std::recursive_mutex> lock(g_mu);
+    ThreadState& st = g_threads[self];
+    VmThread* thr = thread_ensure_vm(&st, self);
+    if (thr) {
+      const char* hc = tree_host_class(target);
+      if (!hc || !hc[0]) hc = "java.lang.Thread";
+      vmthread_green_start(thr, hc, target);
+      return;
+    }
+  }
   std::thread([self, target]() {
     tree_field_set_int(self, "engine_run_entered", 1);
     Jvm* j = jvm_active();
@@ -732,7 +756,14 @@ int32_t java_lang_Thread_isAlive(InvObject* self) {
   // race123–125 deepen: PE always 0; host keeps alive≠PE (smoke waits).
   std::lock_guard<std::recursive_mutex> lock(g_mu);
   auto it = g_threads.find(self);
-  return (it != g_threads.end() && it->second.alive) ? 1 : 0;
+  if (it == g_threads.end() || !it->second.alive) return 0;
+  // Fork: a green thread is alive while it has queued or parked work.
+  if (green_threads_on() && it->second.thr) {
+    const VmThread* t = it->second.thr;
+    if ((t->pe.flags & (kVmThreadFlagDone | kVmThreadFlagStop)) != 0) return 0;
+    if (!t->pending.live && !vmthread_resumable(t)) return 0;
+  }
+  return 1;
 }
 
 int32_t java_lang_Thread_getPriority(InvObject* self) {
@@ -781,6 +812,8 @@ void java_lang_Thread_setDaemon(InvObject* self, int32_t daemon) {
 }
 
 void java_lang_Thread_sleep(float millisec) {
+  // Fork: on a VM thread this is a cooperative sleep (PE Thread_setSleepDeadline).
+  if (green_threads_on() && vmthread_sleep_current(millisec)) return;
   // PE @ 0x0047C650 size 0x29 (41). Unbox F (JVM_UnboxArg @ 0x0045D910):
   // dest0=&var_4 (static: no this write), dest1=&arg_0 := millisec float.
   // ECX = *(CallInfo+4) — current VM thread ctx. thiscall
@@ -873,6 +906,16 @@ void java_lang_Object_wait(InvObject* self) {
   // of scope here (no invented green-thread APIs). LoadingScreen render waits
   // still bypassed via polling (D3D9 thread safety).
   if (!self) return;
+  // Fork: cooperative path — flag the current VM thread and return; the
+  // exec loop yields and the scheduler resumes it after notify.
+  if (green_threads_on()) {
+    if (vmthread_wait_current(self)) return;
+    if (std::getenv("SLRR_PE_STREAM_TRACE"))
+      std::fprintf(stderr, "[pe-thread] wait outside a VM thread on %p: ignored\n",
+                   static_cast<void*>(self));
+    return;
+  }
+  // Legacy harness: the C++ mirror threads notify this CV (upstream path).
   auto m = monitor_of(self);
   std::unique_lock<std::mutex> lk(m->mu);
   ++m->waiters;
@@ -897,6 +940,7 @@ void java_lang_Object_notify(InvObject* self) {
   // @ 0x0047C920 host CV — needed for smoke; full PE needs VM scheduler).
   // PE @ 0x0047C950
   if (!self) return;
+  vmthread_monitor_notify(self, /*all=*/false);
   auto m = monitor_of(self);
   std::lock_guard<std::mutex> lk(m->mu);
   ++m->pending;
@@ -917,6 +961,7 @@ void java_lang_Object_notifyAll(InvObject* self) {
   // Host stand-in: ObjMonitor CV — one pending token per current waiter, then
   // cv.notify_all() (LoadingScreen.termSig / Signal.notifyAll).
   if (!self) return;
+  vmthread_monitor_notify(self, /*all=*/true);
   auto m = monitor_of(self);
   std::lock_guard<std::mutex> lk(m->mu);
   if (m->waiters <= 0) return;

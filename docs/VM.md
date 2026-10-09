@@ -186,3 +186,43 @@ Next milestone: boot through the script `Init(int)` -> `Frontend.init()`,
 `Sound.init()`, `Input.initControllers()`, `new GameLogic()` on the VM and
 retire the Soft splash/menu/GameLogic shims in `game_boot_part*.inc` and
 `GameRef_part3.inc`. Natives those paths touch must then be real.
+
+### 2026-10-09 (session 3, script boot)
+
+`SLRR_PE_BOOT_INIT=1` boots Build 940 through the scripts' own
+`java.game.Init.<init>(I)` instead of the C++ Soft boot. The Init call runs
+on one VM thread until it parks; the host main loop then presents a frame,
+pumps resources and runs the cooperative scheduler every iteration
+(`SLRR_PE_BOOT_FRAMES=N` or `SLRR_PE_BOOT_SECONDS=N` bound it).
+
+VM: nested script calls build a callee frame on the same thread
+(frame-switch) instead of recursing; a script error inside a nested frame
+unwinds that frame, yields null and continues (PE ScriptError). Green
+threads: `Thread.start` queues `run()` on the Java thread's VmThread,
+`Object.wait` parks it (flag 0x10), `notify` pops the LIFO waiter,
+`Thread.sleep` sets the sleep deadline; the budgeted pump skips parked and
+sleeping threads. The VM clock is a steady clock relative to start (the
+GetTickCount float lost an 8 ms budget to rounding). A static native
+reached through an instance call drops the receiver (`this.sleep(300)`
+was handing the object pointer to Thread.sleep).
+
+Loading-screen protocol (confirmed in the exe): `GfxEngine` has no `wait`;
+`Frontend.render.wait()` is `Object.wait` on the GfxEngine instance and the
+Present path notifies it once per frame. `System.isLoading` is the resource
+pump's flag from a 32-slot load ring; `isLoadingReset` (called by
+`LoadingScreen.track`) seeds the ring so `run()` sees loading for ~24
+pumps, shows the dialog, runs the SoftTimer/Fade/FlashText threads and
+finally `hide()` -> `termSig.notifyAll()` wakes Init. The seed is only
+applied on the script boot (the legacy C++ mirror spins on it).
+
+State: Init -> Frontend.init -> GameLogic -> loading screen -> MainMenu:
+`GameLogic.actualState` is `java.game.MainMenu` after the loop and
+`GameLogic.handleEvent` runs on the stream. Still failing: `Gates.show`
+(`Osd.createButton` node 142 calls through `groups.lastElement()` which is
+null; `Osd.<init>` reported `Osd.equals` not found), `careerComplete`
+(null player), classes without an explicit `<init>` (MainMenu, GfxEngine,
+Steam, HotkeyWatcher, InventoryItem) report "not found" and skip field
+inits, `ResourceRef.<init>(ResourceRef)` with a null argument.
+
+Old-build regression (E:) still passes: vehicleTypes=25, menu chrome=1,
+hub EXIT ok=1, exit 5.

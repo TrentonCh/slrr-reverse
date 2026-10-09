@@ -87,6 +87,9 @@ bool vmthread_op1007_literal(VmThread* thr, const JvmClass* cls, int32_t tag,
                              bool* skip_carrier = nullptr);  // PE @ 0x4218A5
 int vmthread_exec_stream(VmThread* thr, const JvmClass* cls,
                          const TreeBody& code, float budget_ms);
+size_t vmthread_frame_depth(const VmThread* thr);  // Fork
+// Fork: PE JVM_newObject — instance field initializer trees, root class first.
+void jvm_apply_field_inits_chain(Jvm* j, const char* class_fqn, InvObject* self);
 // PE CallFrame seed @ 0x420211 — used by VMThread_run and Jvm::invoke.
 VmCallFrame* vmthread_build_tree_frame(VmThread* thr, const JvmClass* cls,
                                        const JvmMethod* m, InvObject* self,

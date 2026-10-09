@@ -510,6 +510,16 @@ void java_lang_System_isLoadingReset() {
   // zero depth/peak (LoadingScreen.track arms a fresh watch).
   g_load_depth = 0;
   g_load_peak = 0;
+  // Fork: PE seeds the ResourceEngine load ring — LoadingScreen.track()
+  // calls this so run() sees isLoading()==1 for the next ~24 pumps and
+  // displays the dialog even when every openLib already completed. Only on
+  // the script boot: the legacy C++ LoadingScreen mirror spins on
+  // isLoading() from an OS thread that never pumps the load queue.
+  static const bool script_boot = [] {
+    const char* e = std::getenv("SLRR_PE_BOOT_INIT");
+    return e && e[0] == '1';
+  }();
+  if (script_boot) resource_engine_seed_load_ring();
 }
 
 // PE @ 0x0047C3B0 System.isLoading ()I size 0xc (12). Static; no UnboxArg;
@@ -523,7 +533,13 @@ void java_lang_System_isLoadingReset() {
 // globals, not this flag). Host: no RE object — depth refcount from
 // openLib/compileAll; booleanize like PE 0/1 (LoadingScreen: !isLoading).
 int32_t java_lang_System_isLoading() {  // PE @ 0x0047C3B0
-  return g_load_depth > 0 ? 1 : 0;
+  // Fork: PE flag from PumpLoadQueue's ring (seeded by isLoadingReset) OR
+  // the host's synchronous load depth.
+  const int32_t r = (resource_engine_is_loading() || g_load_depth > 0) ? 1 : 0;
+  if (std::getenv("SLRR_PE_STREAM_TRACE"))
+    std::fprintf(stderr, "[native] System.isLoading -> %d (ring=%d depth=%d)\n", r,
+                 resource_engine_is_loading(), g_load_depth);
+  return r;
 }
 
 // PE @ 0x0047BF30 System.setLdPriority (I)V size 0x46 (70). Static;

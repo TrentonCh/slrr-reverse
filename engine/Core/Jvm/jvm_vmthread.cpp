@@ -8,6 +8,7 @@
 #include "tree_interp.hpp"
 #include "tree_interp_internal.hpp"
 #include "host_objects.hpp"
+#include <chrono>
 #include "runtime.hpp"
 #include "natives.hpp"
 #include "rpak.hpp"

@@ -121,6 +121,9 @@ int resource_engine_pump_unload_queue();
 // LoadLod LABEL_68 slice + flag clear + buf==0 recycle. W22A: cold parse
 // slice. Returns 0.
 int resource_engine_pump_load_queue();
+// Fork: PE load-ring seed (isLoadingReset) and the pump's isLoading flag.
+void resource_engine_seed_load_ring();
+int32_t resource_engine_is_loading();
 
 // PE ResNode_GameType_parseLodBuf @ 0x53DEE0 — W22A prologue + W23A body
 // (PHYS/POLY mid) + W24A EXTP Prefetch@544370 + expand AABB half +

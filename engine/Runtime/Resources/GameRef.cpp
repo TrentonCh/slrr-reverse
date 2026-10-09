@@ -4,6 +4,7 @@
 #include "rpak.hpp"
 #include "jvm.hpp"
 #include "tree_interp.hpp"
+#include "tree_interp_internal.hpp"  // Fork: tree_static_slot
 #include "render_d3d9.hpp"
 #include "input_win32.hpp"
 #include "video_fmv.hpp"

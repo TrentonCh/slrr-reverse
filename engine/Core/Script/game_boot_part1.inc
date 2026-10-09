@@ -1,3 +1,6 @@
+#include "tree_interp_internal.hpp"
+#include <chrono>
+#include <cstdlib>
 // Fragment 1/2 of game_boot.cpp — included, not compiled on its own.
 // Split only to stay under the 128 KB editor buffer cap; the
 // translation unit is unchanged. See native/tools/split_source.py.
@@ -702,6 +705,62 @@ int game_interactive_run(Jvm& jvm, const char* game_root,
     InvObject* ls = frontend_loading_screen();
     std::vector<JvmValue> a = {JvmValue::make_obj(ls)};
     j->invoke("java.render.LoadingScreen", "hide", "()V", a, false);
+  }
+
+  // Fork: SLRR_PE_BOOT_INIT=1 — boot through the script's own Init(int)
+  // on the VM (PE Engine_MainLoop → LoadGameInit "GameInit" → new Init(id))
+  // instead of the Soft splash/menu shims below. Reports the GameLogic
+  // state the scripts reach and pumps frames until max_frames / quit.
+  if (const char* pe_boot = std::getenv("SLRR_PE_BOOT_INIT");
+      pe_boot && pe_boot[0] == '1') {
+    std::printf("[pe-boot] java.game.Init.<init>(I) on the VM\n");
+    if (!jvm.find_class("java.game.Init")) jvm.load_class("java.game.Init");
+    InvObject* init_obj = tree_host_new("java.game.Init");
+    jvm.invoke("java.game.Init", "<init>", "(I)V",
+               {JvmValue::make_obj(init_obj), JvmValue::make_int(0)}, false);
+    const auto boot_t0 = std::chrono::steady_clock::now();
+    auto report = [&](const char* when, int32_t nframes) {
+      const double el_ms = std::chrono::duration<double, std::milli>(
+                               std::chrono::steady_clock::now() - boot_t0).count();
+      std::printf("[pe-boot] elapsed %.0f ms\n", el_ms);
+      const JvmClass* gl = jvm.find_class("java.game.GameLogic");
+      JvmValue* st = gl ? tree_static_slot(gl, "actualState", false) : nullptr;
+      InvObject* so = (st && st->tag == JvmTag::Obj) ? st->v.o : nullptr;
+      std::printf("[pe-boot] %s (frames=%d): GameLogic.actualState='%s' host_state='%s' osd=%d txt=%d\n",
+                  when, nframes,
+                  so && tree_host_class(so) ? tree_host_class(so) : "null",
+                  game_logic_actual_state() && tree_host_class(game_logic_actual_state())
+                      ? tree_host_class(game_logic_actual_state()) : "null",
+                  render_d3d9_osd_count(), render_d3d9_osd_text_count());
+    };
+    report("Init done", 0);
+    input_live_enable(true);
+    int32_t pe_frames = 0;
+    int32_t pe_max_frames = max_frames;
+    if (const char* fenv = std::getenv("SLRR_PE_BOOT_FRAMES"))
+      pe_max_frames = static_cast<int32_t>(std::strtol(fenv, nullptr, 10));
+    while (!render_d3d9_quit_requested()) {
+      // PE Engine_MainLoop presents every iteration; the Present path wakes
+      // Frontend.render.wait() (LoadingScreen pacing).
+      render_d3d9_flush();
+      render_d3d9_pump(0);
+      input_live_poll();
+      java_lang_GameType_pollTimers();
+      game_boot_mainloop_resource_pumps();
+      jvm_run_threads_budgeted(8.f);
+      ++pe_frames;
+      if (pe_max_frames > 0 && pe_frames >= pe_max_frames) break;
+      // Fork: SLRR_PE_BOOT_SECONDS=N bounds the loop by wall time instead.
+      static const double boot_secs = [] {
+        const char* e = std::getenv("SLRR_PE_BOOT_SECONDS");
+        return e ? std::strtod(e, nullptr) : 0.0;
+      }();
+      if (boot_secs > 0.0 &&
+          std::chrono::duration<double>(std::chrono::steady_clock::now() - boot_t0).count() >= boot_secs)
+        break;
+    }
+    report("loop end", pe_frames);
+    return 0;
   }
 
   InvObject* splash = game_logic_boot_splash();

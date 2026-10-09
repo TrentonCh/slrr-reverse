@@ -224,6 +224,11 @@ struct VmValueRef {
 
 struct VmCallFrame {
   VmCallFramePe pe;
+  // Fork: the stream this frame executes (PE frame+0x2C code / +0x34 clazz).
+  // Set by vmthread_build_tree_frame; null on native leaf frames.
+  const JvmClass* host_cls = nullptr;
+  const TreeBody* host_code = nullptr;
+  const JvmMethod* host_method = nullptr;
   std::vector<JvmValue> locals;
   std::vector<JvmValue> operand;
   // Parallel to `operand`, same size; see VmValueRef above.
@@ -280,6 +285,9 @@ struct VmThread {
   // Fork: set by Thread_evalName when a segment dereferenced null; the op
   // 0x24 site then skips the call and pushes null (script error).
   bool null_recv_error = false;
+  // Fork: op 0x21 (<init> after NEW) sets this so the callee frame switch
+  // runs the instance field initializers first (PE JVM_newObject order).
+  bool new_object_init = false;
 };
 
 // PE VMThread_init @ 0x41F340 — CallNamedMethod uses prio=10, sync=0|1.
@@ -354,6 +362,42 @@ void vmthread_destroy(VmThread* thr);
 // prio-scale slice; VMThread_run; 0x40&!1→STOP; STOP&!RUNNING → dtor.
 // Returns 1 if budget exhausted, 0 if list drained.
 int jvm_run_threads_budgeted(float budget_ms, int32_t min_prio = 0);
+
+// Fork: cooperative green threads (PE Thread_markWaiting @ 0x41F650 /
+// Thread_notify @ 0x41F6F0 / Thread_setSleepDeadline @ 0x41F630).
+VmThread* vmthread_current();                       // thread whose stream is executing
+bool vmthread_wait_current(InvObject* monitor);     // WAITING + enqueue; false = no VM thread
+int vmthread_monitor_notify(InvObject* monitor, bool all);  // wakes 1 / all; returns count
+bool vmthread_sleep_current(float ms);              // SLEEP until deadline; false = no VM thread
+void vmthread_green_start(VmThread* thr, const char* target_fqn, InvObject* target);
+bool vmthread_resumable(const VmThread* thr);       // frames parked mid-body
+
+// Fork: cooperative green threads (PE Thread_markWaiting @ 0x41F650 /
+// Thread_notify @ 0x41F6F0 / Thread_setSleepDeadline @ 0x41F630).
+VmThread* vmthread_current();                       // thread whose stream is executing
+bool vmthread_wait_current(InvObject* monitor);     // WAITING + enqueue; false = no VM thread
+int vmthread_monitor_notify(InvObject* monitor, bool all);  // wakes 1 / all; returns count
+bool vmthread_sleep_current(float ms);              // SLEEP until deadline; false = no VM thread
+void vmthread_green_start(VmThread* thr, const char* target_fqn, InvObject* target);
+bool vmthread_resumable(const VmThread* thr);       // frames parked mid-body
+
+// Fork: cooperative green threads (PE Thread_markWaiting @ 0x41F650 /
+// Thread_notify @ 0x41F6F0 / Thread_setSleepDeadline @ 0x41F630).
+VmThread* vmthread_current();                       // thread whose stream is executing
+bool vmthread_wait_current(InvObject* monitor);     // WAITING + enqueue; false = no VM thread
+int vmthread_monitor_notify(InvObject* monitor, bool all);  // wakes 1 / all; returns count
+bool vmthread_sleep_current(float ms);              // SLEEP until deadline; false = no VM thread
+void vmthread_green_start(VmThread* thr, const char* target_fqn, InvObject* target);
+bool vmthread_resumable(const VmThread* thr);       // frames parked mid-body
+
+// Fork: cooperative green threads (PE Thread_markWaiting @ 0x41F650 /
+// Thread_notify @ 0x41F6F0 / Thread_setSleepDeadline @ 0x41F630).
+VmThread* vmthread_current();                       // thread whose stream is executing
+bool vmthread_wait_current(InvObject* monitor);     // WAITING + enqueue; false = no VM thread
+int vmthread_monitor_notify(InvObject* monitor, bool all);  // wakes 1 / all; returns count
+bool vmthread_sleep_current(float ms);              // SLEEP until deadline; false = no VM thread
+void vmthread_green_start(VmThread* thr, const char* target_fqn, InvObject* target);
+bool vmthread_resumable(const VmThread* thr);       // frames parked mid-body
 // PE Jvm_PumpFrame @ 0x418D10: MainLoop when EngineState+0xE4 (==g_JVM
 // @ 0x63641C); ++Jvm+0x40 → Jvm_GcSlice @ 0x418C20 (host SKIP: needs
 // +0x44/+0x30/+0x2C dllists + Object_FinalizeFree→bytecode) →
