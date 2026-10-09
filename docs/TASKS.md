@@ -70,7 +70,7 @@ comes after the menu is up.
 | Step trace filter by `Class.method`, comma list | faa15eb | `SLRR_PE_STREAM_STEPS=java.game.Gates.run,java.util.Vector.elementAt` |
 | Typed elements for primitive arrays (int[]/float[]) | 0200c16 | ControlSet key maps were all zero; 132 `user_Add` now |
 | Scripted key presses `SLRR_PE_BOOT_KEYS`, hotkey table-slot sampling, hotkey event on a VM thread | 4c5ff31 | ENTER reaches `Gates.osdCommand(34)` |
-| Physical input only when the window is foreground | 7f0c2a1 | unfocused test runs read the user's typing as game keys |
+| Physical input only when the window is foreground | 1c7d850 | unfocused test runs read the user's typing as game keys |
 
 ## In progress
 
