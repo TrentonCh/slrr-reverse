@@ -27,6 +27,7 @@ struct LineState {
 };
 
 struct ResState {
+  uint64_t seq = 0;  // Fork: creation order (runtime child enumeration)
   int32_t id = 0;
   int32_t type = 0;
   int32_t parent_id = 0;

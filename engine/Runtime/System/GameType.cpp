@@ -5,6 +5,7 @@
 #include "System.h"
 #include "Resources.h"
 
+#include <algorithm>
 #include <chrono>
 #include <cstdint>
 #include <cstdio>
@@ -18,6 +19,8 @@ namespace inv {
 namespace {
 
 std::mutex g_mu;
+// Fork: GII_ANIMATE registrants (PE eng+0x48/+0x50 dllist), creation order.
+std::vector<InvObject*> g_animate_hooks;
 
 struct GameTypeState {
   int32_t event_mask = 0;
@@ -341,7 +344,9 @@ void engine_dispatch_script_call_named_args(InvObject* handler, const char* name
   if (!thr) return;
   for (const JvmValue& a : args) thr->pack_vec.push_back(a);
   vmthread_push_call_frame(thr);
-  const bool tr = std::getenv("SLRR_PE_STREAM_TRACE") != nullptr || std::getenv("SLRR_PE_STREAM_ERRORS") != nullptr;
+  // Errors-only mode skips the per-frame animate dispatch (one line per hook per frame).
+  const bool tr = std::getenv("SLRR_PE_STREAM_TRACE") != nullptr ||
+                  (std::getenv("SLRR_PE_STREAM_ERRORS") != nullptr && std::strcmp(name, "animate") != 0);
   const auto t0 = std::chrono::steady_clock::now();
   const int inv = vmthread_invoke_method(thr, handler, cn, name, sig);
   if (inv == 0) vmthread_run(thr, /*budget_ms=*/0.f);
@@ -354,6 +359,39 @@ void engine_dispatch_script_call_named_args(InvObject* handler, const char* name
   }
 }
 
+
+// Fork: PE Engine_DispatchAnimateEvents (MainLoop @ 0x428AD5..0x428B02):
+// CallNamedMethod("animate") on each GII_ANIMATE registrant. Only classes
+// that override animate with a body are called (GameType.animate is empty).
+void engine_dispatch_animate_events() {
+  std::vector<InvObject*> hooks;
+  {
+    std::lock_guard<std::mutex> lock(g_mu);
+    hooks = g_animate_hooks;
+  }
+  Jvm* j = jvm_active();
+  if (!j) return;
+  for (InvObject* obj : hooks) {
+    const char* cn = tree_host_class(obj);
+    if (!cn || !cn[0]) continue;
+    bool has_body = false;
+    const JvmClass* c = j->find_class(cn);
+    for (int guard = 0; c && guard < 32 && !has_body; ++guard) {
+      for (const JvmMethod& m : c->methods) {
+        if (m.name == "animate" && m.signature == "()V" && !m.is_native && m.tree_index >= 0 &&
+            static_cast<size_t>(m.tree_index) < c->trees.size() &&
+            !c->trees[static_cast<size_t>(m.tree_index)].nodes.empty()) {
+          has_body = true;
+          break;
+        }
+      }
+      if (c->super_name.empty()) break;
+      c = j->find_class(c->super_name.c_str());
+    }
+    if (!has_body) continue;
+    engine_dispatch_script_call_named_args(obj, "animate", "()V", std::vector<JvmValue>{});
+  }
+}
 
 void java_lang_GameType_remNotification(InvObject* self, InvObject* ref,
                                         int32_t etype) {
@@ -723,6 +761,12 @@ void java_lang_GameType_registerCallback(InvObject* self, int32_t mode) {
     engine_gii_control_register(handle, self);  // PE @ 0x427370 mode 8
                                                // + Tick CallNamedMethod script
   }
+  if (mode == 28) {
+    // Fork: GII_ANIMATE list (PE eng+0x48/+0x50 tail insert).
+    std::lock_guard<std::mutex> lock(g_mu);
+    if (std::find(g_animate_hooks.begin(), g_animate_hooks.end(), self) == g_animate_hooks.end())
+      g_animate_hooks.push_back(self);
+  }
   const int32_t bit = callback_mode_bit(mode);
   if (!bit) return;
   const int32_t mask = tree_field_get_int(self, "callback_mode");
@@ -743,6 +787,11 @@ void java_lang_GameType_unregisterCallback(InvObject* self, int32_t mode) {
   const int32_t handle = tree_field_get_int(self, "ptr");  // Native.ptr
   if (mode == 8) {
     engine_gii_control_unregister(handle);  // PE @ 0x4274E0 mode 8
+  }
+  if (mode == 28) {
+    std::lock_guard<std::mutex> lock(g_mu);
+    g_animate_hooks.erase(std::remove(g_animate_hooks.begin(), g_animate_hooks.end(), self),
+                          g_animate_hooks.end());
   }
   const int32_t bit = callback_mode_bit(mode);
   if (!bit) return;

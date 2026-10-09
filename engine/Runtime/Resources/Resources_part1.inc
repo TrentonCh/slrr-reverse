@@ -242,7 +242,14 @@ std::mutex g_mu;
 std::unordered_map<InvObject*, LineState> g_lines;
 std::unordered_map<InvObject*, ResState> g_res;
 int32_t g_next_id = 1;
-ResState& R(InvObject* self) { return g_res[self]; }
+static uint64_t g_res_seq = 0;
+ResState& R(InvObject* self) {
+  auto it = g_res.find(self);
+  if (it != g_res.end()) return it->second;
+  ResState& st = g_res[self];
+  st.seq = ++g_res_seq;
+  return st;
+}
 
 
 // ---- Native.ptr / ResHandle_getPayload (OOS unlock) ----

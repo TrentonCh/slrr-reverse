@@ -1175,7 +1175,7 @@ InvObject* resref_new() {
   // (mapStack[i].id()) resolve as java.util.resource.ResourceRef.
   InvObject* o = tree_host_new("java.util.resource.ResourceRef");
   std::lock_guard<std::mutex> lock(g_mu);
-  g_res[o] = ResState{};
+  (void)R(o);  // Fork: assigns the creation sequence
   return o;
 }
 
@@ -1467,7 +1467,18 @@ InvObject* java_util_resource_ResourceRef_getFirstChild(InvObject* self) {
     std::lock_guard<std::mutex> lock(g_mu);
     id = R(self).id;
   }
-  return make_bound_ref(rpak_first_child_id(id));
+  if (InvObject* o = make_bound_ref(rpak_first_child_id(id))) return o;
+  // Fork: runtime instance children (PE walks the live node tree: a
+  // MouseCursor's RID_CURSOR GameRef / Camera, a Group's instances). The
+  // host records parents on create; return the earliest-created child.
+  std::lock_guard<std::mutex> lock(g_mu);
+  InvObject* best = nullptr;
+  uint64_t best_seq = 0;
+  for (const auto& kv : g_res) {
+    if (kv.second.parent != self || kv.first == self) continue;
+    if (!best || kv.second.seq < best_seq) { best = kv.first; best_seq = kv.second.seq; }
+  }
+  return best;
 }
 InvObject* java_util_resource_ResourceRef_getNextChild(InvObject* self) {
   // PE @ 0x0047D6F0 size 0xba (186): twin of getFirstChild @ 0x0047D630
@@ -1493,6 +1504,22 @@ InvObject* java_util_resource_ResourceRef_getNextChild(InvObject* self) {
   if (std::getenv("SLRR_PE_STREAM_TRACE"))
     std::fprintf(stderr, "[native] ResourceRef.getNextChild self=%p id=0x%08X -> 0x%08X\n",
                  static_cast<void*>(self), static_cast<unsigned>(id), static_cast<unsigned>(next_id));
+  if (next_id == 0) {
+    // Fork: runtime siblings — next child of the same recorded parent by
+    // creation order (see getFirstChild).
+    std::lock_guard<std::mutex> lock(g_mu);
+    const ResState& me = R(self);
+    if (me.parent) {
+      InvObject* best = nullptr;
+      uint64_t best_seq = 0;
+      for (const auto& kv : g_res) {
+        if (kv.second.parent != me.parent || kv.first == self) continue;
+        if (kv.second.seq <= me.seq) continue;
+        if (!best || kv.second.seq < best_seq) { best = kv.first; best_seq = kv.second.seq; }
+      }
+      return best;
+    }
+  }
   return make_bound_ref(next_id);
 }
 InvObject* java_util_resource_ResourceRef_getWTRoot(InvObject* self) {

@@ -752,10 +752,21 @@ int game_interactive_run(Jvm& jvm, const char* game_root,
       auto s0 = std::chrono::steady_clock::now(); render_d3d9_flush(); sec_ms[0] += lap(s0);
       s0 = std::chrono::steady_clock::now(); render_d3d9_pump(0); sec_ms[1] += lap(s0);
       s0 = std::chrono::steady_clock::now(); input_live_poll(); sec_ms[2] += lap(s0);
-      s0 = std::chrono::steady_clock::now(); java_lang_GameType_pollTimers(); sec_ms[3] += lap(s0);
+      // PE Engine_MainLoop: Input_tick(dt) + Engine_SimulateFrame (tick sim
+      // objects, physics, timers) before Jvm_PumpFrame.
+      {
+        static auto last = std::chrono::steady_clock::now();
+        const auto now = std::chrono::steady_clock::now();
+        float dt = std::chrono::duration<float>(now - last).count();
+        last = now;
+        if (dt > 0.1f) dt = 0.1f;
+        input_tick(dt);
+      }
+      s0 = std::chrono::steady_clock::now(); engine_simulate_frame(); sec_ms[3] += lap(s0);
       s0 = std::chrono::steady_clock::now(); game_boot_mainloop_resource_pumps(); sec_ms[4] += lap(s0);
       const auto t_b = std::chrono::steady_clock::now();
       jvm_run_threads_budgeted(10.f);  // PE MainLoop: Jvm_PumpFrame(10.0)
+      engine_dispatch_animate_events();  // PE Engine_DispatchAnimateEvents
       const auto t_c = std::chrono::steady_clock::now();
       sec_ms[5] += std::chrono::duration<double, std::milli>(t_c - t_b).count();
       pe_t_render += std::chrono::duration<double, std::milli>(t_b - t_a).count();
@@ -786,7 +797,7 @@ int game_interactive_run(Jvm& jvm, const char* game_root,
           if (el >= next_beat) {
             next_beat = el + 2.0;
             if (std::getenv("SLRR_PE_STREAM_TRACE") || std::getenv("SLRR_PE_HEARTBEAT"))
-              std::fprintf(stderr, "[pe-boot] heartbeat t=%.1f s frame=%u  ms: flush=%.0f pump0=%.0f input=%.0f timers=%.0f res=%.0f vm=%.0f\n",
+              std::fprintf(stderr, "[pe-boot] heartbeat t=%.1f s frame=%u  ms: flush=%.0f pump0=%.0f input=%.0f sim=%.0f res=%.0f vm=%.0f\n",
                            el, pe_frames, sec_ms[0], sec_ms[1], sec_ms[2], sec_ms[3], sec_ms[4], sec_ms[5]);
             for (double& m : sec_ms) m = 0.0;
           }

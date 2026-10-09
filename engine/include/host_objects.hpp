@@ -17,6 +17,13 @@ void vec3_get(InvObject* o, float* x, float* y, float* z);
 // overlay is read by the keyboard axis samplers in IO.cpp. dik = DirectInput
 // key code (ENTER 0x1C, UP 0xC8, DOWN 0xD0, LEFT 0xCB, RIGHT 0xCD, ESC 0x01).
 void input_inject_key(int32_t dik, bool down);
+// Fork: PE Engine_DispatchAnimateEvents — CallNamedMethod("animate") on every
+// GameType that registered GII_ANIMATE (GameType.enableAnimateHook), once per
+// frame from the main loop. Osd.animate is the only path to Input.lastKey.
+void engine_dispatch_animate_events();
+// PE Engine_SimulateFrame (also declared in System_internal.hpp): tick sim
+// objects + EVENT_TIME timers; the PE boot loop calls it before the pump.
+void engine_simulate_frame();
 void ypr_get(InvObject* o, float* y, float* p, float* r);
 void vec3_set(InvObject* o, float x, float y, float z);
 void ypr_set(InvObject* o, float y, float p, float r);

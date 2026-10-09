@@ -438,10 +438,12 @@ float hotkey_axis_value(InvObject* inst, int32_t axis, int32_t flags) {
 
 void input_inject_key(int32_t dik, bool down) {
   std::lock_guard<std::recursive_mutex> lock(g_mu);
-  if (down)
+  if (down) {
     g_inject_keys[dik] = true;
-  else
+    g_key_queue.push_back(dik);  // Input.lastKey (typing) sees the press too
+  } else {
     g_inject_keys.erase(dik);
+  }
 }
 
 void java_io_Input_createHotkey(int32_t axis, int32_t flags, InvObject* hk,
