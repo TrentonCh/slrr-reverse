@@ -381,6 +381,143 @@ std::string soft_jni_from_pack_vec(const std::vector<JvmValue>& pack) {
   return s;
 }
 
+// ---------------------------------------------------------------------------
+// Fork: faithful method resolution, ported from the Build 940 exe
+// (Class_lookupMethod @ 0x5494C0, Class_findMethodSlot @ 0x54A150,
+// NativeSigDesc_compatScore @ 0x5607D0, type score @ 0x55BD80).
+// ---------------------------------------------------------------------------
+// NativeSigDesc_ctorFromOperands @ 0x560930: one type string per operand.
+static std::string pe_value_type(const JvmValue& v) {
+  switch (v.tag) {
+    case JvmTag::Int: return "I";
+    case JvmTag::Float: return "F";
+    case JvmTag::Obj: {
+      if (!v.v.o) return "L;";
+      if (tree_vector_is(v.v.o)) return "[";
+      const char* hc = tree_host_class(v.v.o);
+      if (hc && hc[0]) return std::string("L") + hc + ";";
+      if (string_cstr(v.v.o)) return "Ljava.lang.String;";
+      return "L;";
+    }
+    default: return "L;";
+  }
+}
+
+static std::vector<std::string> pe_split_args(const std::string& sig) {
+  std::vector<std::string> out;
+  size_t i = sig.find('(');
+  if (i == std::string::npos) return out;
+  ++i;
+  while (i < sig.size() && sig[i] != ')') {
+    const size_t start = i;
+    while (i < sig.size() && sig[i] == '[') ++i;
+    if (i < sig.size() && sig[i] == 'L') {
+      const size_t e = sig.find(';', i);
+      i = (e == std::string::npos) ? sig.size() : e + 1;
+    } else {
+      ++i;
+    }
+    out.push_back(sig.substr(start, i - start));
+  }
+  return out;
+}
+
+// Inheritance distance from `from` up to `to`; -1 when unrelated.
+static int pe_class_distance(Jvm* j, const std::string& from, const std::string& to) {
+  if (from == to) return 0;
+  if (to == "java.lang.Object") return 1;
+  if (!j->find_class(from.c_str())) j->load_class(from.c_str());
+  const JvmClass* c = j->find_class(from.c_str());
+  int d = 0;
+  for (int guard = 0; c && guard < 64; ++guard) {
+    if (c->name == to) return d;
+    if (c->super_name.empty()) break;
+    if (!j->find_class(c->super_name.c_str())) j->load_class(c->super_name.c_str());
+    c = j->find_class(c->super_name.c_str());
+    ++d;
+  }
+  return -1;
+}
+
+static std::string pe_strip_L(const std::string& t) {
+  if (t.size() >= 2 && t[0] == 'L' && t.back() == ';') return t.substr(1, t.size() - 2);
+  return t;
+}
+
+// Type score @ 0x55BD80: method param type `mt` vs call arg type `ct`.
+static int pe_type_score(Jvm* j, const std::string& mt, const std::string& ct) {
+  if (mt == ct) return 0;
+  const char c = ct.empty() ? 0 : ct[0];
+  const char m = mt.empty() ? 0 : mt[0];
+  if (c == 'F') return (m == 'I') ? 101 : -1;
+  if (c == 'I') {
+    if (m == 'F') return 100;
+    // Host representation: a resource id literal is an Int here, while the
+    // PE types it as a ResourceRef value. Accept it for ResourceRef-derived
+    // parameters (new Style(w, h, Frontend.mediumFont, ...)).
+    if (m == 'L' && pe_class_distance(j, pe_strip_L(mt), "java.util.resource.ResourceRef") >= 0)
+      return 100;
+    return -1;
+  }
+  if (c == 'L' || c == '[') {
+    if (m == 'F' || m == 'I') return (ct == "Ljava.lang.String;") ? 100 : -1;
+    if (m == 'L' || m == '[') {
+      if (mt == "L;" || ct == "L;") return 100;  // untyped object / null
+      if (m == '[' || c == '[') return (m == c) ? 0 : -1;
+      return pe_class_distance(j, pe_strip_L(ct), pe_strip_L(mt));
+    }
+  }
+  return -1;
+}
+
+// Class_findMethodSlot @ 0x54A150: walk the super chain, scan each method
+// table from the end, score same-name candidates; 0 = exact (stop), else
+// the lowest score wins (a tie logs "more matching methods found").
+static const JvmMethod* pe_find_method(Jvm* j, const char* class_fqn,
+                                       const char* name,
+                                       const std::string& callsig,
+                                       std::string* owner_out) {
+  const std::vector<std::string> cargs = pe_split_args(callsig);
+  const JvmMethod* best = nullptr;
+  int best_score = 1000000;
+  std::string best_owner;
+  bool tie = false;
+  if (!j->find_class(class_fqn)) j->load_class(class_fqn);
+  const JvmClass* cls = j->find_class(class_fqn);
+  for (int guard = 0; cls && guard < 64; ++guard) {
+    for (size_t k = cls->methods.size(); k-- > 0;) {
+      const JvmMethod& cand = cls->methods[k];
+      if (cand.name != name) continue;
+      const std::vector<std::string> margs = pe_split_args(cand.signature);
+      if (margs.size() != cargs.size()) continue;
+      int score = 0;
+      for (size_t a = 0; a < margs.size(); ++a) {
+        const int sc = pe_type_score(j, margs[a], cargs[a]);
+        if (sc < 0) { score = -1; break; }
+        score += sc;
+      }
+      if (score < 0) continue;
+      if (score == 0) {
+        if (owner_out) *owner_out = cls->name;
+        return &cand;
+      }
+      if (score < best_score) {
+        best = &cand; best_score = score; best_owner = cls->name; tie = false;
+      } else if (score == best_score && best) {
+        tie = true;
+      }
+    }
+    if (cls->super_name.empty() || cls->super_name == "java.lang.Object") break;
+    if (!j->find_class(cls->super_name.c_str())) j->load_class(cls->super_name.c_str());
+    cls = j->find_class(cls->super_name.c_str());
+  }
+  if (best && owner_out) *owner_out = best_owner;
+  if (tie && vm_trace_on())
+    std::fprintf(stderr, "[pe-stream]   Class::getMethod: more matching methods found %s.%s%s\n",
+                 class_fqn, name, callsig.c_str());
+  return best;
+}
+
 // Soft Class_lookupMethod_nameSig @ 0x404910 → Class_findMethodSlot @ 0x405920:
 // exact name+JNI first; on miss, PE scores NativeSigDesc_compatScore over
 // same-name methods (getJni often ends ")V" while TREE has ")I"). Soft: first
@@ -457,28 +594,46 @@ int vmthread_thread_call_method(VmThread* thr, InvObject* self,
   if (self && tree_vector_is(self)) resolve_fqn = "java.util.Vector";
 
   const std::string soft_jni = soft_jni_from_pack_vec(thr->pack_vec);
-  // Fork: when the call site carried a methodref descriptor, resolve that
-  // exact overload (walking supers) before the name-only fallback.
-  const JvmMethod* m = nullptr;
-  std::string owner_fqn;  // Fork: class that declares the resolved method
+  // Fork: PE resolution. A 0x101A methodref supplies the descriptor from
+  // the constant pool (Thread_evalName @ 0x562540); a utf8 call builds it
+  // from the operand types (NativeSigDesc_ctorFromOperands @ 0x560930).
+  std::string callsig;
   if (!thr->call_sig_hint.empty()) {
-    const std::string hint = thr->call_sig_hint;
-    if (!j->find_class(resolve_fqn)) j->load_class(resolve_fqn);
-    const JvmClass* hc = j->find_class(resolve_fqn);
-    for (int guard = 0; hc && !m && guard < 64; ++guard) {
-      m = j->find_method(*hc, method, hint.c_str());
-      if (m) owner_fqn = hc->name;
-      if (m || hc->super_name.empty() || hc->super_name == "java.lang.Object") break;
-      if (!j->find_class(hc->super_name.c_str())) j->load_class(hc->super_name.c_str());
-      hc = j->find_class(hc->super_name.c_str());
-    }
+    callsig = thr->call_sig_hint;
+  } else {
+    callsig = "(";
+    for (const JvmValue& v : thr->pack_vec) callsig += pe_value_type(v);
+    callsig += ")V";
   }
   thr->call_sig_hint.clear();
-  if (!m)
+  std::string owner_fqn;  // class that declares the resolved method
+  const JvmMethod* m = pe_find_method(j, resolve_fqn, method, callsig, &owner_fqn);
+  if (!m) {
+    // PE: ScriptError "not found". Soft fallback keeps the name-only match
+    // (traced) until every host signature is PE-shaped.
     m = soft_lookup_method_name(j, resolve_fqn, method, soft_jni.c_str(),
                                 &owner_fqn);
+    // Never run a script body with the wrong arity (GameRef.<init>() picked
+    // <init>(GameRef) and read a missing local); the PE reports "not found"
+    // and makes no call.
+    if (m && !m->is_native &&
+        pe_split_args(m->signature).size() != pe_split_args(callsig).size())
+      m = nullptr;
+    if (vm_trace_on())
+      std::fprintf(stderr, "[pe-stream]   lookup fallback %s.%s%s -> %s\n",
+                   resolve_fqn, method, callsig.c_str(),
+                   m ? m->signature.c_str() : "(none)");
+  }
   // PE miss → ScriptError "not found"; Soft: still attempt soft_jni invoke
   // (resolve_native / TREE may bind). Exact PE: return name on miss.
+  if (!m) {
+    if (vm_trace_on())
+      std::fprintf(stderr, "[pe-stream]   script error: Thread::callMethod: %s.%s%s not found\n",
+                   resolve_fqn, method, callsig.c_str());
+    // PE Thread_callMethod: ScriptError, return -1 (no call). Only natives
+    // may still bind by name through invoke_method below.
+    if (!resolve_native(resolve_fqn, method, soft_jni.c_str())) return -1;
+  }
   const char* sig = m ? m->signature.c_str() : soft_jni.c_str();
   // Fork: an inherited NATIVE (Zed_VT.newNative -> GameRef.newNative) is
   // registered under the declaring class; invoke it there. Script methods
@@ -1301,12 +1456,30 @@ namespace {
 // TREE bag is untyped, so probe obj → int → float and settle on 0.
 JvmValue vmthread_field_value(InvObject* obj, const std::string& name) {
   if (!obj || name.empty()) return JvmValue::make_obj(nullptr);
-  if (InvObject* fo = tree_field_get_obj(obj, name.c_str()))
-    return JvmValue::make_obj(fo);
-  const int32_t iv = tree_field_get_int(obj, name.c_str());
-  if (iv != 0) return JvmValue::make_int(iv);
-  const float fv = tree_field_get_float(obj, name.c_str());
-  if (fv != 0.f) return JvmValue::make_float(fv);
+  // Fork: the bag slot is typed once written; read it as-is. An unwritten
+  // field takes the default of its DECLARED type (PE ValueField ctor with
+  // the FILD type): null for L/[ , 0.f for F, 0 otherwise. The old probe
+  // returned Int 0 for an unset String field (Dialog.title -> createText
+  // received an int where a String was declared).
+  if (JvmValue* slot = tree_field_slot(obj, name, false)) {
+    if (slot->tag != JvmTag::Void) return *slot;
+  }
+  if (Jvm* j = jvm_active()) {
+    const char* hc = tree_host_class(obj);
+    const JvmClass* c = (hc && hc[0]) ? j->find_class(hc) : nullptr;
+    for (int guard = 0; c && guard < 64; ++guard) {
+      for (const JvmFieldDecl& fd : c->instance_fields) {
+        if (fd.name != name) continue;
+        const char t = fd.type.empty() ? 'I' : fd.type[0];
+        if (t == 'L' || t == '[') return JvmValue::make_obj(nullptr);
+        if (t == 'F') return JvmValue::make_float(0.f);
+        return JvmValue::make_int(0);
+      }
+      if (c->super_name.empty()) break;
+      if (!j->find_class(c->super_name.c_str())) j->load_class(c->super_name.c_str());
+      c = j->find_class(c->super_name.c_str());
+    }
+  }
   return JvmValue::make_int(0);
 }
 }  // namespace
@@ -1410,7 +1583,19 @@ bool vmthread_op1011_eval_name(VmThread* thr, const JvmClass* cls,
 
     InvObject* recv =
         first ? self : (out->tag == JvmTag::Obj ? out->v.o : nullptr);
-    if (!first && !recv) { if (vm_trace_on()) std::fprintf(stderr, "[pe-stream]   op1011 fail L%d\n", __LINE__); return false; }
+    if (!first && !recv) {
+      // PE Thread_evalName_fieldPath @ 0x562280: "[illegal fieldaccess]
+      // null.%s" ScriptError, then the path yields null and the thread
+      // continues. Fork: do the same instead of bailing the whole body.
+      if (vm_trace_on())
+        std::fprintf(stderr, "[pe-stream]   script error: illegal fieldaccess null.<seg %d> in %s\n",
+                     segments - remaining - 1, cls->name.c_str());
+      *out = JvmValue::make_obj(nullptr);
+      *out_ref = VmValueRef{};
+      // skip the remaining segment nodes so the PC lands on the last one
+      while (remaining > 0) { *pc += 8; --remaining; }
+      return true;
+    }
 
     if (op == 0x1001) {  // PE @ 0x420F99 locals[imm]
       const uint32_t li = n.imm;

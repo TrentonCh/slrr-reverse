@@ -118,3 +118,44 @@ Next blocker: `Gates.<init>` reads `GameLogic.player`, `careerComplete` reads
 the host replaces with C++ ("Soft") state. Milestone: boot through the
 script's `Init(int)` -> `new GameLogic()` on the VM and retire the Soft
 GameLogic/Splash/MainMenu shims in `game_boot_part*.inc` / `GameRef_part3.inc`.
+
+## Build 940 VM functions (Ghidra project `slrr940`, see tools/ghidra940.py)
+
+| 940 VA | Role | Old-exe VA (upstream name) |
+|---|---|---|
+| 0x562D70 | VMThread_run (opcode loop, ends 0x56463C) | 0x420FF0 |
+| 0x562540 | Thread_evalName (op 0x24 call target) | 0x4208E0 |
+| 0x562280 | Thread_evalName_fieldPath (op 0x1011) | 0x420D20 |
+| 0x561700 | Thread_callMethod (name lookup + invoke) | 0x4207C0 |
+| 0x561830 | VMThread_invokeMethod (frame build, pops args) | 0x41FBC0 |
+| 0x5494C0 | Class_lookupMethod(name, sig) with cache | 0x404910 |
+| 0x54A150 | Class_findMethodSlot (compat-scored search, supers) | 0x405920 |
+| 0x5607D0 | NativeSigDesc_compatScore | — |
+| 0x560930 | NativeSigDesc_ctorFromOperands | 0x41DCB0 |
+| 0x562CB0 | T_Container_pop | — |
+| 0x562A30 | VMThread_popOperand (frame+0x28) | 0x41F7D0 |
+| 0x55D3B0 | TREE_nodeBytes (flags table 0x5B5260) | 0x41A5C0 |
+| 0x564684 | opcode case map (73 bytes) | 0x4239B0 |
+
+Confirmed semantics (decompiled 2026-10-09):
+
+- op 0x1003 pops the frame LOCALS container (frame+0x18) and releases the
+  value; the operand stack is untouched.
+- Thread_evalName: node 0x101A forces count=1 and stays; otherwise count=imm
+  and the count node is skipped. First segment: 0x1019 resolves a class and
+  subtracts 2 from the count; otherwise the context is frame+0x30 (instance)
+  if non-zero, else frame+0x34 (class). 0x1001 loads locals[imm]; 0x101B
+  reads a field (cached slot when the fieldref class is the context class,
+  else by name); 0x101A pops and releases one operand, resolves the method
+  through the cached slot or Class_lookupMethod(name, descriptor from the
+  nat) and, for non-static methods, sets instance = current object; a bare
+  utf8 segment is first tried as a field on the current object (not on the
+  first segment) and otherwise becomes the script-method marker (slot -2)
+  with instance = current object (null after a classname).
+- Class_findMethodSlot: for each class in the super chain, statics vector
+  first then instance vector, scanning from the END of the vector; same
+  name candidates are scored by NativeSigDesc_compatScore (arg count must
+  match; per-arg type score summed; 0 = exact, stops); lowest score wins,
+  a tie at the best score logs "more matching methods found".
+- VMThread_invokeMethod pops argc values from the caller operand stack into
+  the callee locals (top first), after `this` for instance methods.

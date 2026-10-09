@@ -634,7 +634,10 @@ void vmthread_op29_field_get(VmThread* thr, InvObject* obj, const char* name) {
     vmthread_value_stack_push(thr, JvmValue::make_obj(nullptr));
     return;
   }
-  // Prefer object field; fall back to int then float (PE Value* carries type).
+  // Fork: typed read (bag slot as written, else the declared type's
+  // default) — same helper as the name walkers.
+  vmthread_value_stack_push(thr, vmthread_field_value(obj, name));
+  return;
   if (InvObject* fo = tree_field_get_obj(obj, name)) {
     vmthread_value_stack_push(thr, JvmValue::make_obj(fo));
     return;
@@ -854,7 +857,10 @@ int vmthread_exec_stream(VmThread* thr, const JvmClass* cls,
     // Fork diagnostic: SLRR_PE_STREAM_STEPS=<class substring> dumps each step.
     {
       static const char* steps_env = std::getenv("SLRR_PE_STREAM_STEPS");
-      static long steps_left = 600;
+      static long steps_left = [] {
+        const char* m = std::getenv("SLRR_PE_STREAM_STEPS_MAX");
+        return m ? std::strtol(m, nullptr, 10) : 600L;
+      }();
       if (steps_env && steps_env[0] && steps_left > 0 &&
           cls && cls->name.find(steps_env) != std::string::npos) {
         --steps_left;
@@ -879,7 +885,7 @@ int vmthread_exec_stream(VmThread* thr, const JvmClass* cls,
         line += h;
         if (thr->curr_frame) {
           const auto& st = thr->curr_frame->operand;
-          for (size_t k = st.size() > 5 ? st.size() - 5 : 0; k < st.size(); ++k) {
+          for (size_t k = st.size() > 12 ? st.size() - 12 : 0; k < st.size(); ++k) {
             line += vt(st[k]);
             if (k < thr->curr_frame->operand_ref.size() &&
                 thr->curr_frame->operand_ref[k].kind != VmRefKind::None)
@@ -887,7 +893,7 @@ int vmthread_exec_stream(VmThread* thr, const JvmClass* cls,
             line += " ";
           }
           line += "] loc[";
-          for (size_t k = 0; k < thr->curr_frame->locals.size() && k < 8; ++k)
+          for (size_t k = 0; k < thr->curr_frame->locals.size() && k < 16; ++k)
             line += vt(thr->curr_frame->locals[k]) + " ";
         }
         line += "]";
@@ -1035,6 +1041,22 @@ int vmthread_exec_stream(VmThread* thr, const JvmClass* cls,
           // not 0x2C — soft skips the name node PE already read and applies
           // the same lvalue push when the following node is 0x2C.
           vmthread_op1002_local_declare(thr, static_cast<uint32_t>(imm));
+          // Fork: PE Value_ctorWithType gives the new ValueField its declared
+          // type with a zero payload (float local reads 0.0, object null).
+          // The 0x1006 carrier's utf8 is that type descriptor.
+          if (idx + 1 < code.nodes.size() &&
+              vmthread_pe_opcode(code.nodes[idx + 1]) == 0x1006 && thr->curr_frame &&
+              !thr->curr_frame->locals.empty()) {
+            const uint32_t ti = code.nodes[idx + 1].imm;
+            const std::string t =
+                ti < cls->const_strings.size() ? cls->const_strings[ti] : std::string();
+            JvmValue& nv = thr->curr_frame->locals.back();
+            if (!t.empty()) {
+              if (t[0] == 'F') nv = JvmValue::make_float(0.f);
+              else if (t[0] == 'L' || t[0] == '[') nv = JvmValue::make_obj(nullptr);
+              else nv = JvmValue::make_int(0);
+            }
+          }
           size_t comma_at = 0;
           if (idx + 1 < code.nodes.size() &&
               vmthread_pe_opcode(code.nodes[idx + 1]) == 0x002C) {

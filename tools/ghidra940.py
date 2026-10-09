@@ -124,6 +124,26 @@ def main():
                       ins.getMinAddress().toString() + " " + ins.toString() if ins else "-",
                       dat.getMinAddress().toString() + " " + str(dat.getDataType()) if dat else "-",
                       fn_at(a).getName() if fn_at(a) else "-"))
+        elif cmd == "asmrefs":
+            # for each code reference to the target, print the instructions leading to it
+            n_before = 8
+            for s in args:
+                a = addr(s)
+                print("== code refs to", a)
+                for r in rm.getReferencesTo(a):
+                    fa = r.getFromAddress()
+                    f = fn_at(fa)
+                    print("  -- from %s in %s" % (fa, f.getName() if f else "?"))
+                    ins = listing.getInstructionContaining(fa)
+                    chain = []
+                    cur = ins
+                    for _ in range(n_before):
+                        if cur is None:
+                            break
+                        chain.append(cur)
+                        cur = cur.getPrevious()
+                    for i in reversed(chain):
+                        print("     %s  %s" % (i.getMinAddress(), i))
         elif cmd == "strings":
             needle = args[0]
             for d in listing.getDefinedData(True):
