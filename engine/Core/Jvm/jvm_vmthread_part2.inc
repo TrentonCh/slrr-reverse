@@ -79,8 +79,14 @@ void vmthread_op101E_array_init(VmThread* thr, int32_t count) {
 // ErrorLogMsgBox; else --count, slot cleared, Value vtbl[1] release(1);
 // opDefault_advance. Soft: pop + discard (no Value* refcount).
 void vmthread_op1003_pop_release(VmThread* thr) {
-  JvmValue discarded;
-  (void)vmthread_pop_operand(thr, &discarded);  // PE @ 0x42183B..0x421859
+  // Fork: the container here is the LOCALS PtrVec, not the operand stack.
+  // The compiler emits one 0x1003 per declared local (imm = its index,
+  // highest first) on every scope exit, right before op42/op43, so the
+  // old operand pop silently destroyed every return value.
+  if (!thr || !thr->curr_frame || thr->curr_frame->locals.empty()) return;
+  thr->curr_frame->locals.pop_back();
+  thr->curr_frame->pe.local_count =
+      static_cast<uint32_t>(thr->curr_frame->locals.size());
 }
 
 // PE op 0x1014 @ 0x423648: PC += TreeInsn_getOperand(insn) * 8 then
@@ -845,6 +851,49 @@ int vmthread_exec_stream(VmThread* thr, const JvmClass* cls,
     const uint16_t op = vmthread_pe_opcode(insn);
     const int32_t imm = static_cast<int32_t>(insn.imm);
     const uint32_t pc_before = thr->pe.unk_24;
+    // Fork diagnostic: SLRR_PE_STREAM_STEPS=<class substring> dumps each step.
+    {
+      static const char* steps_env = std::getenv("SLRR_PE_STREAM_STEPS");
+      static long steps_left = 600;
+      if (steps_env && steps_env[0] && steps_left > 0 &&
+          cls && cls->name.find(steps_env) != std::string::npos) {
+        --steps_left;
+        auto vt = [](const JvmValue& v) -> std::string {
+          char b[80];
+          if (v.tag == JvmTag::Int) { std::snprintf(b, sizeof b, "i%d", v.v.i); return b; }
+          if (v.tag == JvmTag::Float) { std::snprintf(b, sizeof b, "f%g", v.v.f); return b; }
+          if (v.tag == JvmTag::Obj) {
+            if (!v.v.o) return "null";
+            const char* hc = tree_host_class(v.v.o);
+            if (hc && hc[0]) { std::snprintf(b, sizeof b, "<%s>", hc); return b; }
+            const char* sc = string_cstr(v.v.o);
+            if (sc) { std::snprintf(b, sizeof b, "\"%.20s\"", sc); return b; }
+            return "obj";
+          }
+          return "void";
+        };
+        std::string line;
+        char h[160];
+        std::snprintf(h, sizeof h, "[pe-step] %s n=%u op=%02x pe=%04x imm=%d stk[",
+                      cls->name.c_str(), idx, insn.op, op, imm);
+        line += h;
+        if (thr->curr_frame) {
+          const auto& st = thr->curr_frame->operand;
+          for (size_t k = st.size() > 5 ? st.size() - 5 : 0; k < st.size(); ++k) {
+            line += vt(st[k]);
+            if (k < thr->curr_frame->operand_ref.size() &&
+                thr->curr_frame->operand_ref[k].kind != VmRefKind::None)
+              line += "&";
+            line += " ";
+          }
+          line += "] loc[";
+          for (size_t k = 0; k < thr->curr_frame->locals.size() && k < 8; ++k)
+            line += vt(thr->curr_frame->locals[k]) + " ";
+        }
+        line += "]";
+        std::fprintf(stderr, "%s\n", line.c_str());
+      }
+    }
 
     // PE @ 0x4210C5: 'J'/'M' and low 0/19/66/72 → JVM_ScriptError then
     // opDefault_afterPc (PC unchanged). Host stops rather than spin.
@@ -907,6 +956,7 @@ int vmthread_exec_stream(VmThread* thr, const JvmClass* cls,
           // Object_callMethod_init → Thread_callMethod(..., "<init>").
           InvObject* self = nullptr;
           if (thr->curr_frame && !thr->curr_frame->locals.empty() &&
+              thr->curr_frame->pe.instance != 0 &&  // Fork: static frame has no this
               thr->curr_frame->locals[0].tag == JvmTag::Obj)
             self = thr->curr_frame->locals[0].v.o;
           const StreamCall sc =
@@ -921,6 +971,7 @@ int vmthread_exec_stream(VmThread* thr, const JvmClass* cls,
           // clazz → ret 1 (continue); else Thread_callMethod "<init>".
           InvObject* self = nullptr;
           if (thr->curr_frame && !thr->curr_frame->locals.empty() &&
+              thr->curr_frame->pe.instance != 0 &&  // Fork: static frame has no this
               thr->curr_frame->locals[0].tag == JvmTag::Obj)
             self = thr->curr_frame->locals[0].v.o;
           if (cls->super_name.empty() ||
@@ -944,13 +995,26 @@ int vmthread_exec_stream(VmThread* thr, const JvmClass* cls,
           std::string method;
           InvObject* self = nullptr;
           if (!vmthread_op24_eval_name(thr, cls, code, &walk_pc, &class_fqn,
-                                       &method, &self))
+                                       &method, &self)) {
+            if (vm_trace_on())
+              std::fprintf(stderr, "[pe-stream]   op24 evalName failed at node %u\n",
+                           walk_pc / 8u);
             return kVmStreamUnsupported;
+          }
           thr->pe.unk_24 = walk_pc;  // ON the terminator (0x101A / utf8)
           const StreamCall sc = vmthread_stream_call(
               thr, self, class_fqn.c_str(), method.c_str());
-          if (sc == StreamCall::Fail) return kVmStreamUnsupported;
-          self_advanced = (sc == StreamCall::SelfAdvanced);
+          if (sc == StreamCall::Fail) {
+            if (vm_trace_on())
+              std::fprintf(stderr, "[pe-stream]   op24 call failed %s.%s self=%p\n",
+                           class_fqn.c_str(), method.c_str(), static_cast<void*>(self));
+            return kVmStreamUnsupported;
+          }
+          // Fork: the PC now sits on the terminator (native path restored
+          // it from the saved frame PC). opDefault_advance must step past
+          // the terminator, never back to pc_before + 8 (the count node).
+          if (sc == StreamCall::Advance) thr->pe.unk_24 += 8;
+          self_advanced = true;
           break;
         }
         case kVmCaseDefault:
@@ -1023,8 +1087,12 @@ int vmthread_exec_stream(VmThread* thr, const JvmClass* cls,
           VmValueRef named_ref;
           uint32_t walk_pc = thr->pe.unk_24;
           if (!vmthread_op1011_eval_name(thr, cls, code, &walk_pc, imm, &named,
-                                         &named_ref))
+                                         &named_ref)) {
+            if (vm_trace_on())
+              std::fprintf(stderr, "[pe-stream]   op1011 evalName failed segs=%d at node %u\n",
+                           static_cast<int>(imm), walk_pc / 8u);
             return kVmStreamUnsupported;
+          }
           thr->pe.unk_24 = walk_pc;
           vmthread_value_stack_push_ref(thr, named, named_ref);
           thr->pe.unk_24 += 8;
@@ -1038,7 +1106,7 @@ int vmthread_exec_stream(VmThread* thr, const JvmClass* cls,
           std::string fname;
           bool is_static = false;
           const JvmClass* owner = nullptr;
-          if (!vmthread_resolve_field_ref(cls, static_cast<uint32_t>(insn.imm),
+          if (!vmthread_resolve_field_ref(cls, cls, static_cast<uint32_t>(insn.imm),
                                           &fname, &is_static, &owner))
             return kVmStreamUnsupported;
           vmthread_op101B_field_ref(thr, fname.c_str(), is_static, owner);
@@ -1118,6 +1186,7 @@ int vmthread_exec_stream(VmThread* thr, const JvmClass* cls,
           }
           InvObject* self = nullptr;
           if (thr->curr_frame && !thr->curr_frame->locals.empty() &&
+              thr->curr_frame->pe.instance != 0 &&  // Fork: static frame has no this
               thr->curr_frame->locals[0].tag == JvmTag::Obj)
             self = thr->curr_frame->locals[0].v.o;
           const StreamCall sc = vmthread_stream_call(
@@ -1240,10 +1309,18 @@ bool vmthread_try_stream_eval(const JvmClass* cls, const JvmMethod* m,
     return false;
   // Soft <init> / VehicleType.init: stream 4025 still sees VehicleType as
   // recv for size/elementAt when getfield packing ≠ Soft tree_eval.
-  if (m->name == "<init>" || m->name == "init") return false;
+  // Fork: SLRR_PE_STREAM_INIT=1 lets constructors / init run on the stream
+  // too (the Soft exclusion above belongs to the legacy path).
+  static const bool stream_init = [] {
+    const char* v = std::getenv("SLRR_PE_STREAM_INIT");
+    return v && v[0] == '1';
+  }();
+  if (!stream_init && (m->name == "<init>" || m->name == "init")) return false;
 
   thread_local int tls_pe_stream_depth = 0;
-  if (tls_pe_stream_depth > 0) return false;  // nested: Soft tree_eval
+  // Fork: nested script calls stay on the stream (each level runs on its
+  // own VmThread, so recursion is safe); only guard against runaway depth.
+  if (tls_pe_stream_depth > 40) return false;
 
   static const bool pe_stream_enabled = [] {
     const char* v = std::getenv("SLRR_PE_STREAM");
@@ -1310,17 +1387,44 @@ bool vmthread_try_stream_eval(const JvmClass* cls, const JvmMethod* m,
     std::fprintf(stderr, "[pe-stream] leave %s.%s st=%d\n", cls->name.c_str(),
                  m->name.c_str(), st);
   if (st == kVmStreamUnsupported) {
+    // Fork diagnostic: where did the stream give up?
+    if (pe_stream_trace) {
+      const size_t bail_ip = static_cast<size_t>(thr.pe.unk_24 / 8u);
+      const bool inb = bail_ip < code.nodes.size();
+      std::fprintf(stderr, "[pe-stream] bail %s.%s at node %zu/%zu op=%02x pe=%04x imm=%u\n",
+                   cls->name.c_str(), m->name.c_str(), bail_ip, code.nodes.size(),
+                   inb ? code.nodes[bail_ip].op : 0xFF,
+                   inb ? vmthread_pe_opcode(code.nodes[bail_ip]) : 0,
+                   inb ? code.nodes[bail_ip].imm : 0u);
+    }
     while (thr.curr_frame) vmthread_pop_frame_restore_pc(&thr);
+    // Fork: SLRR_PE_STREAM_STRICT=1 — never re-run a partially executed
+    // body in the legacy tree_eval (its side effects already happened);
+    // report the script error and continue, as the PE does.
+    static const bool strict = [] {
+      const char* v = std::getenv("SLRR_PE_STREAM_STRICT");
+      return v && v[0] == '1';
+    }();
+    if (strict) {
+      *out = JvmValue::make_void();
+      return true;
+    }
     return false;
   }
 
   // op43 @ 0x421662 pushes the return onto thr.operand after popFrame.
+  // Fork: thr.operand is a push-only mirror (pops only touch the frame), so
+  // it is stale whenever the frame is still alive. After op43 the frame is
+  // gone and the return value was pushed onto the mirror; otherwise (DONE /
+  // exhausted, e.g. field-init trees) the value is the frame TOS.
   if (jni_sig_returns_void(m->signature)) {
     *out = JvmValue::make_void();
-  } else if (!thr.operand.empty()) {
+  } else if (st == kVmStreamReturned && !thr.operand.empty()) {
     *out = thr.operand.back();
   } else if (thr.curr_frame && !thr.curr_frame->operand.empty()) {
     *out = thr.curr_frame->operand.back();
+  } else if (!thr.operand.empty()) {
+    *out = thr.operand.back();
   } else {
     *out = JvmValue{};
   }

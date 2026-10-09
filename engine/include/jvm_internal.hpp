@@ -54,7 +54,8 @@ int32_t vmthread_class_find_field_slot(const JvmClass* cls,
                                        const JvmClass** owner_out);
 // PE ConstantPool_resolveFieldRef @ 0x406D00 — name + the static bit 0x4234D9
 // branches on.
-bool vmthread_resolve_field_ref(const JvmClass* cls, uint32_t cp_index,
+bool vmthread_resolve_field_ref(const JvmClass* cp_cls, const JvmClass* cls,
+                                uint32_t cp_index,
                                 std::string* name_out, bool* is_static_out,
                                 const JvmClass** owner_out = nullptr);
 void vmthread_op101E_array_init(VmThread* thr, int32_t count);  // PE @ 0x4232BB soft

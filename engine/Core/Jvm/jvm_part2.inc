@@ -1225,6 +1225,29 @@ JvmValue Jvm::invoke(const char* class_fqn, const char* name, const char* signat
     return JvmValue::make_void();
   }
 
+  // Fork diagnostic: SLRR_JVM_INVOKE_TRACE=1 logs every invoke entry.
+  {
+    static const bool inv_trace = [] {
+      const char* v = std::getenv("SLRR_JVM_INVOKE_TRACE");
+      return v && v[0] == '1';
+    }();
+    if (inv_trace) {
+      std::string a;
+      for (const JvmValue& v : args) {
+        if (v.tag == JvmTag::Int) a += "I";
+        else if (v.tag == JvmTag::Float) a += "F";
+        else if (v.tag == JvmTag::Obj) {
+          const char* hc = v.v.o ? tree_host_class(v.v.o) : nullptr;
+          a += v.v.o ? (hc && hc[0] ? std::string("<") + hc + ">" : "O") : "null";
+        } else a += "V";
+        a += " ";
+      }
+      std::fprintf(stderr, "[jvm-invoke] d=%d %s.%s%s static=%d args=[%s]\n", tls_depth,
+                   class_fqn ? class_fqn : "?", name ? name : "?",
+                   signature ? signature : "?", is_static ? 1 : 0, a.c_str());
+    }
+  }
+
   // Empty PE ctors — same early-out as call_by_name. Stream op35/op34 nest
   // through invoke (not call_by_name), so keep these here too.
   if (name && std::strcmp(name, "<init>") == 0 && class_fqn &&
@@ -1796,9 +1819,30 @@ JvmValue Jvm::invoke(const char* class_fqn, const char* name, const char* signat
         fim.signature = "()V";
         fim.tree_index = fi.tree_index;
         std::string ferr;
-        JvmValue fv =
-            tree_eval(&host, c, fim, {JvmValue::make_obj(self)}, &ferr);
-        if (!ferr.empty()) continue;
+        JvmValue fv{};
+        // Fork: with SLRR_PE_STREAM_STATIC_INIT=1 run instance field
+        // initializers on the stream VM (this in locals[0]); the legacy
+        // tree_eval stays as the fallback.
+        static const bool inits_on_stream = [] {
+          const char* v = std::getenv("SLRR_PE_STREAM_STATIC_INIT");
+          return v && v[0] == '1';
+        }();
+        bool done = false;
+        if (inits_on_stream) {
+          JvmMethod sfim = fim;
+          sfim.name = "<fieldinit:" + fi.name + ">";
+          sfim.signature = "()Ljava.lang.Object;";  // force a value return
+          done = vmthread_try_stream_eval(&c, &sfim, self, {}, &fv);
+        }
+        if (!done) {
+          fv = tree_eval(&host, c, fim, {JvmValue::make_obj(self)}, &ferr);
+          if (!ferr.empty()) continue;
+        }
+        if (std::getenv("SLRR_PE_STREAM_TRACE"))
+          std::fprintf(stderr, "[fieldinit] %s.%s on %p stream=%d tag=%d obj=%p\n",
+                       c.name.c_str(), fi.name.c_str(), static_cast<void*>(self),
+                       done ? 1 : 0, static_cast<int>(fv.tag),
+                       fv.tag == JvmTag::Obj ? static_cast<void*>(fv.v.o) : nullptr);
         if (fv.tag == JvmTag::Obj)
           tree_field_set_obj(self, fi.name.c_str(), fv.v.o);
         else if (fv.tag == JvmTag::Int)

@@ -4,6 +4,16 @@
 
 
 namespace inv {
+
+// Fork diagnostic switch (SLRR_PE_STREAM_TRACE=1).
+static bool vm_trace_on() {
+  static const bool on = [] {
+    const char* v = std::getenv("SLRR_PE_STREAM_TRACE");
+    return v && v[0] == '1';
+  }();
+  return on;
+}
+
 namespace {
 Jvm* g_active_jvm = nullptr;
 }
@@ -36,6 +46,14 @@ VmCallFrame* callframe_pool_alloc() {
 
 void callframe_pool_release(VmCallFrame* f) {
   if (!f) return;
+  // Fork diagnostic: a frame released twice would be handed out while
+  // still live (caller frame aliasing seen in rpkScan #2).
+  for (VmCallFrame* q : g_callframe_pool.freelist) {
+    if (q == f) {
+      std::fprintf(stderr, "[pe-stream] DOUBLE RELEASE of frame %p\n", static_cast<void*>(f));
+      return;
+    }
+  }
   f->locals.clear();
   f->operand.clear();
   f->dllist_prev = nullptr;
@@ -97,9 +115,14 @@ bool class_inherits_native(Jvm* j, const char* fqn) {
 }
 
 // PE Object_getField(obj,"ptr")+8 → Native.ptr (aPtr @ 0x60C338).
-void unbox_native_ptr_args(Jvm* j, std::vector<JvmValue>* args) {
+void unbox_native_ptr_args(Jvm* j, std::vector<JvmValue>* args,
+                           bool skip_self = false) {
   if (!j || !args) return;
+  size_t ai = 0;
   for (JvmValue& a : *args) {
+    // Fork: host natives take the receiver as InvObject*, never as the
+    // PE Native.ptr int (FindFile.first(self, ...) received Int 0).
+    if (ai++ == 0 && skip_self) continue;
     if (a.tag != JvmTag::Obj || !a.v.o) continue;
     const char* cn = tree_host_class(a.v.o);
     if (!class_inherits_native(j, cn)) continue;
@@ -291,6 +314,7 @@ int vmthread_invoke_method(VmThread* thr, InvObject* self, const char* class_fqn
   args.reserve(thr->pack_vec.size() + 1);
   if (self) args.push_back(JvmValue::make_obj(self));
   for (const JvmValue& v : thr->pack_vec) args.push_back(v);
+  thr->pack_vec.clear();  // Fork: consumed; never reuse stale args
 
   // Copy packed args onto new frame locals (PE pops operand → locals).
   fr->locals = args;
@@ -310,11 +334,13 @@ int vmthread_invoke_method(VmThread* thr, InvObject* self, const char* class_fqn
   if (is_native) {
     // PE ACC_NATIVE @ 0x41FC2D..0x4201D8 — RegisterNative lookup + UnboxArg
     // descriptor; host: Native.ptr arg unbox then invoke (registered sig).
-    unbox_native_ptr_args(j, &args);
+    unbox_native_ptr_args(j, &args, /*skip_self=*/self != nullptr);
     JvmValue result = j->invoke(class_fqn, method, signature, args, false);
     fr->operand.push_back(result);
-    thr->operand.push_back(result);
     fr->pe.op_count = static_cast<uint32_t>(fr->operand.size());
+    // Fork: hand the result to whoever pops this leaf frame.
+    thr->native_ret = result;
+    thr->has_native_ret = (result.tag != JvmTag::Void);
     thr->pending.live = false;
     return 1;
   }
@@ -361,18 +387,25 @@ std::string soft_jni_from_pack_vec(const std::vector<JvmValue>& pack) {
 // same-name method on the class / supers.
 const JvmMethod* soft_lookup_method_name(Jvm* j, const char* class_fqn,
                                          const char* method,
-                                         const char* soft_jni) {
+                                         const char* soft_jni,
+                                         std::string* owner_out = nullptr) {
   if (!j || !class_fqn || !method) return nullptr;
+  if (owner_out) owner_out->clear();
   if (!j->find_class(class_fqn)) j->load_class(class_fqn);
   const JvmClass* cls = j->find_class(class_fqn);
   for (int guard = 0; cls && guard < 64; ++guard) {
     if (soft_jni && soft_jni[0]) {
-      if (const JvmMethod* m = j->find_method(*cls, method, soft_jni))
+      if (const JvmMethod* m = j->find_method(*cls, method, soft_jni)) {
+        if (owner_out) *owner_out = cls->name;
         return m;
+      }
     }
     // PE compatScore path: name match when operand-built JNI ret is default V.
     for (const JvmMethod& cand : cls->methods) {
-      if (cand.name == method) return &cand;
+      if (cand.name == method) {
+        if (owner_out) *owner_out = cls->name;
+        return &cand;
+      }
     }
     if (cls->super_name.empty() || cls->super_name == "java.lang.Object") break;
     if (!j->find_class(cls->super_name.c_str()))
@@ -403,6 +436,16 @@ int vmthread_thread_call_method(VmThread* thr, InvObject* self,
       const int argc = op.back().v.i;
       if (argc >= 0 && static_cast<std::size_t>(argc) < op.size()) {
         thr->pack_vec.assign(op.end() - 1 - argc, op.end() - 1);
+        // Fork: PE NativeSigDesc_ctorFromOperands @ 0x41DCB0 pops the argc
+        // box and CallFrame_ctor moves the args into the callee locals, so
+        // the caller operand stack loses argc+1 entries here. Without this
+        // the box is left behind and the next assign stores it (rpkScan
+        // `ff = new FindFile()` ended with ff == 0).
+        auto& mop = thr->curr_frame->operand;
+        mop.resize(mop.size() - 1 - static_cast<std::size_t>(argc));
+        auto& mref = thr->curr_frame->operand_ref;
+        if (mref.size() > mop.size()) mref.resize(mop.size());
+        thr->curr_frame->pe.op_count = static_cast<uint32_t>(mop.size());
       }
     }
   }
@@ -414,12 +457,36 @@ int vmthread_thread_call_method(VmThread* thr, InvObject* self,
   if (self && tree_vector_is(self)) resolve_fqn = "java.util.Vector";
 
   const std::string soft_jni = soft_jni_from_pack_vec(thr->pack_vec);
-  const JvmMethod* m =
-      soft_lookup_method_name(j, resolve_fqn, method, soft_jni.c_str());
+  // Fork: when the call site carried a methodref descriptor, resolve that
+  // exact overload (walking supers) before the name-only fallback.
+  const JvmMethod* m = nullptr;
+  std::string owner_fqn;  // Fork: class that declares the resolved method
+  if (!thr->call_sig_hint.empty()) {
+    const std::string hint = thr->call_sig_hint;
+    if (!j->find_class(resolve_fqn)) j->load_class(resolve_fqn);
+    const JvmClass* hc = j->find_class(resolve_fqn);
+    for (int guard = 0; hc && !m && guard < 64; ++guard) {
+      m = j->find_method(*hc, method, hint.c_str());
+      if (m) owner_fqn = hc->name;
+      if (m || hc->super_name.empty() || hc->super_name == "java.lang.Object") break;
+      if (!j->find_class(hc->super_name.c_str())) j->load_class(hc->super_name.c_str());
+      hc = j->find_class(hc->super_name.c_str());
+    }
+  }
+  thr->call_sig_hint.clear();
+  if (!m)
+    m = soft_lookup_method_name(j, resolve_fqn, method, soft_jni.c_str(),
+                                &owner_fqn);
   // PE miss → ScriptError "not found"; Soft: still attempt soft_jni invoke
   // (resolve_native / TREE may bind). Exact PE: return name on miss.
   const char* sig = m ? m->signature.c_str() : soft_jni.c_str();
-  return vmthread_invoke_method(thr, self, resolve_fqn, method, sig);
+  // Fork: an inherited NATIVE (Zed_VT.newNative -> GameRef.newNative) is
+  // registered under the declaring class; invoke it there. Script methods
+  // keep the leaf class so virtual dispatch stays on the receiver.
+  const char* call_fqn = (m && m->is_native && !owner_fqn.empty())
+                             ? owner_fqn.c_str()
+                             : resolve_fqn;
+  return vmthread_invoke_method(thr, self, call_fqn, method, sig);
 }
 
 // PE op33 @ 0x421254: peek recv from operand; Object_callMethod(recv, thr,
@@ -689,10 +756,19 @@ void vmthread_pop_frame_restore_pc(VmThread* thr) {
       frames.erase(frames.begin() + static_cast<std::ptrdiff_t>(i));
       break;
     }
-    if (!parent && dying->dllist_prev) parent = dying->dllist_prev;
+    // Fork: the frames vector is authoritative. The old fallback to
+    // dying->dllist_prev followed a stale link to an already-released
+    // frame (double release → pool handed a live caller frame to a
+    // nested thread). Unlink the neighbours properly instead.
+    if (dying->dllist_prev) dying->dllist_prev->dllist_next = dying->dllist_next;
+    if (dying->dllist_next) dying->dllist_next->dllist_prev = dying->dllist_prev;
     thr->frame_list->cursor =
         parent ? parent : (frames.empty() ? nullptr : frames.back());
+  } else if (dying->dllist_prev) {
+    parent = dying->dllist_prev;
   }
+  dying->dllist_prev = nullptr;
+  dying->dllist_next = nullptr;
   // Soft leaf frames have pe.code==0 (invokeMethod ctor); parent keeps saved
   // resume in pe.code (PE writePcToFrame @ 0x41F7C0 / invokeMethod @ 0x420237).
   const uint32_t resume = parent ? parent->pe.code : dying->pe.code;
@@ -724,6 +800,11 @@ StreamCall vmthread_stream_call(VmThread* thr, InvObject* self,
   VmCallFrame* before = thr->curr_frame;
   VmPendingInvoke saved = thr->pending;
   const int ret = vmthread_thread_call_method(thr, self, class_fqn, method);
+  if (vm_trace_on())
+    std::fprintf(stderr, "[pe-stream]   call %s.%s ret=%d before=%p cur=%p frames=%zu pc=%u\n",
+                 class_fqn, method, ret, static_cast<void*>(before),
+                 static_cast<void*>(thr->curr_frame),
+                 thr->frame_list ? thr->frame_list->frames.size() : size_t{0}, thr->pe.unk_24);
   if (ret == 0 && thr->pending.live) {
     Jvm* j = jvm_active();
     if (!j) {
@@ -739,6 +820,10 @@ StreamCall vmthread_stream_call(VmThread* thr, InvObject* self,
                   /*is_static=*/self == nullptr);
     if (thr->curr_frame && thr->curr_frame != before)
       vmthread_pop_frame_restore_pc(thr);
+    if (vm_trace_on())
+      std::fprintf(stderr, "[pe-stream]   after-pop(java) cur=%p frames=%zu pc=%u\n",
+                   static_cast<void*>(thr->curr_frame),
+                   thr->frame_list ? thr->frame_list->frames.size() : size_t{0}, thr->pe.unk_24);
     thr->pending = saved;
     if (!ret_void) vmthread_value_stack_push(thr, result);
     thr->pe.unk_24 += 8;  // PE op42/43 post-return default_advance
@@ -748,6 +833,15 @@ StreamCall vmthread_stream_call(VmThread* thr, InvObject* self,
     vmthread_pop_frame_restore_pc(thr);
   thr->pending = saved;
   if (ret < 0) return StreamCall::Fail;
+  if (vm_trace_on())
+    std::fprintf(stderr, "[pe-stream]   after-pop cur=%p frames=%zu pc=%u\n",
+                 static_cast<void*>(thr->curr_frame),
+                 thr->frame_list ? thr->frame_list->frames.size() : size_t{0}, thr->pe.unk_24);
+  if (ret == 1 && thr->has_native_ret) {
+    // Fork: PE native path pushes the result on the resumed frame.
+    vmthread_value_stack_push(thr, thr->native_ret);
+  }
+  thr->has_native_ret = false;
   return StreamCall::Advance;  // native/empty: leave PC for default +8
 }
 
@@ -1019,9 +1113,13 @@ bool vmthread_soft_value_cmp(const JvmValue& a, const JvmValue& b, char op) {
 // Soft PE VMThread_pcSkipByOperand @ 0x423645: PC += imm*8 (insn stride).
 void vmthread_pc_skip_by_operand(VmThread* thr, int32_t imm) {
   if (!thr) return;
-  if (imm < 0) imm = 0;
+  // Fork: the PE adds a SIGNED imm*8 (shl eax,3; add). Loops jump
+  // backwards (rpkScan node 50: goto -26); clamping to 0 pinned the PC.
   if (imm > 0x10000) imm = 0x10000;
-  thr->pe.unk_24 += static_cast<uint32_t>(imm) * 8u;
+  if (imm < -0x10000) imm = -0x10000;
+  const int64_t next = static_cast<int64_t>(thr->pe.unk_24) +
+                       static_cast<int64_t>(imm) * 8;
+  thr->pe.unk_24 = next < 0 ? 0u : static_cast<uint32_t>(next);
 }
 }  // namespace
 
@@ -1132,11 +1230,15 @@ int32_t vmthread_class_find_field_slot(const JvmClass* cls,
 // what 0x4234D9 tests to pick Class_getFieldAt over Object_getFieldAt. The host
 // const pool only keeps the resolved name, so re-run the slot search to learn
 // the same bit instead of trusting the declaration site.
-bool vmthread_resolve_field_ref(const JvmClass* cls, uint32_t cp_index,
+bool vmthread_resolve_field_ref(const JvmClass* cp_cls, const JvmClass* cls,
+                                uint32_t cp_index,
                                 std::string* name_out, bool* is_static_out,
                                 const JvmClass** owner_out) {
-  if (!cls || cp_index >= cls->const_mref_name.size()) return false;
-  const std::string& n = cls->const_mref_name[cp_index];
+  // Fork: the CP index belongs to the class whose CODE is running
+  // (cp_cls); the slot search starts at the context class (cls), which
+  // differs after a ClassName segment (GameLogic.RID_* read from Zed_VT).
+  if (!cp_cls || !cls || cp_index >= cp_cls->const_mref_name.size()) return false;
+  const std::string& n = cp_cls->const_mref_name[cp_index];
   if (n.empty()) return false;
   const JvmClass* owner = nullptr;
   const int32_t slot = vmthread_class_find_field_slot(cls, n, &owner);
@@ -1174,6 +1276,7 @@ void vmthread_op101B_field_ref(VmThread* thr, const char* name,
   }
   InvObject* self = nullptr;
   if (thr->curr_frame && !thr->curr_frame->locals.empty() &&
+      thr->curr_frame->pe.instance != 0 &&  // Fork: static frame has no this
       thr->curr_frame->locals[0].tag == JvmTag::Obj)
     self = thr->curr_frame->locals[0].v.o;  // Soft stand-in for frame+0x30
   if (!self || !name || !name[0]) {
@@ -1268,13 +1371,14 @@ bool vmthread_op1011_eval_name(VmThread* thr, const JvmClass* cls,
                                const TreeBody& code, uint32_t* pc,
                                int32_t segments, JvmValue* out,
                                VmValueRef* out_ref) {
-  if (!thr || !cls || !pc || !out || !out_ref) return false;
-  if (segments <= 0 || segments > 64) return false;
+  if (!thr || !cls || !pc || !out || !out_ref) { if (vm_trace_on()) std::fprintf(stderr, "[pe-stream]   op1011 fail L%d\n", __LINE__); return false; }
+  if (segments <= 0 || segments > 64) { if (vm_trace_on()) std::fprintf(stderr, "[pe-stream]   op1011 fail L%d\n", __LINE__); return false; }
   *out = JvmValue{};
   *out_ref = VmValueRef{};
 
   InvObject* self = nullptr;  // PE frame+0x30
   if (thr->curr_frame && !thr->curr_frame->locals.empty() &&
+      thr->curr_frame->pe.instance != 0 &&  // Fork: static frame has no this
       thr->curr_frame->locals[0].tag == JvmTag::Obj)
     self = thr->curr_frame->locals[0].v.o;
 
@@ -1284,7 +1388,7 @@ bool vmthread_op1011_eval_name(VmThread* thr, const JvmClass* cls,
   for (;;) {
     *pc += 8;  // PE advances before reading the segment node
     size_t idx = *pc / 8u;
-    if (idx >= code.nodes.size()) return false;
+    if (idx >= code.nodes.size()) { if (vm_trace_on()) std::fprintf(stderr, "[pe-stream]   op1011 fail L%d\n", __LINE__); return false; }
     TreeNode n = code.nodes[idx];
     uint16_t op = vmthread_pe_opcode(n);
     bool after_classname = false;
@@ -1293,12 +1397,12 @@ bool vmthread_op1011_eval_name(VmThread* thr, const JvmClass* cls,
       // PE @ 0x420D5A: resolve class, refuse "classname found alone", then
       // land on the companion node in this same iteration.
       ctx_class = vmthread_resolve_class_from_cp(cls, n.imm);
-      if (!ctx_class) return false;
-      if (remaining == 0) return false;
+      if (!ctx_class) { if (vm_trace_on()) std::fprintf(stderr, "[pe-stream]   op1011 fail L%d\n", __LINE__); return false; }
+      if (remaining == 0) { if (vm_trace_on()) std::fprintf(stderr, "[pe-stream]   op1011 fail L%d\n", __LINE__); return false; }
       *pc += 8;
       --remaining;
       idx = *pc / 8u;
-      if (idx >= code.nodes.size()) return false;
+      if (idx >= code.nodes.size()) { if (vm_trace_on()) std::fprintf(stderr, "[pe-stream]   op1011 fail L%d\n", __LINE__); return false; }
       n = code.nodes[idx];
       op = vmthread_pe_opcode(n);
       after_classname = true;
@@ -1306,11 +1410,11 @@ bool vmthread_op1011_eval_name(VmThread* thr, const JvmClass* cls,
 
     InvObject* recv =
         first ? self : (out->tag == JvmTag::Obj ? out->v.o : nullptr);
-    if (!first && !recv) return false;
+    if (!first && !recv) { if (vm_trace_on()) std::fprintf(stderr, "[pe-stream]   op1011 fail L%d\n", __LINE__); return false; }
 
     if (op == 0x1001) {  // PE @ 0x420F99 locals[imm]
       const uint32_t li = n.imm;
-      if (!thr->curr_frame || li >= thr->curr_frame->locals.size()) return false;
+      if (!thr->curr_frame || li >= thr->curr_frame->locals.size()) { if (vm_trace_on()) std::fprintf(stderr, "[pe-stream]   op1011 fail L%d\n", __LINE__); return false; }
       *out = thr->curr_frame->locals[li];
       out_ref->kind = VmRefKind::Local;
       out_ref->local_index = li;
@@ -1321,19 +1425,19 @@ bool vmthread_op1011_eval_name(VmThread* thr, const JvmClass* cls,
       std::string fname;
       bool is_static = false;
       const JvmClass* owner = nullptr;
-      if (!vmthread_resolve_field_ref(ctx_class, n.imm, &fname, &is_static,
+      if (!vmthread_resolve_field_ref(cls, ctx_class, n.imm, &fname, &is_static,
                                       &owner))
-        return false;
+        { if (vm_trace_on()) std::fprintf(stderr, "[pe-stream]   op1011 fail L%d\n", __LINE__); return false; }
       if (is_static) {
         JvmValue* slot = tree_static_slot(owner, fname, false);
-        if (!slot) return false;
+        if (!slot) { if (vm_trace_on()) std::fprintf(stderr, "[pe-stream]   op1011 fail L%d\n", __LINE__); return false; }
         *out = *slot;
         out_ref->kind = VmRefKind::Static;
         out_ref->owner = owner;
         out_ref->obj = nullptr;
         out_ref->name = fname;
       } else {
-        if (!recv) return false;
+        if (!recv) { if (vm_trace_on()) std::fprintf(stderr, "[pe-stream]   op1011 fail L%d\n", __LINE__); return false; }
         *out = vmthread_field_value(recv, fname);
         out_ref->kind = VmRefKind::Field;
         out_ref->obj = recv;
@@ -1344,13 +1448,13 @@ bool vmthread_op1011_eval_name(VmThread* thr, const JvmClass* cls,
       // PE @ 0x420E4E: seg0 non-1001/101B → ScriptError "parse error (2)".
       // Soft: after 0x1019, utf8/0x4012 companion = static field on the
       // resolved class (stock MainMenu ClassName.CMD_* / MUSIC_*).
-      if (n.imm >= cls->const_strings.size()) return false;
+      if (n.imm >= cls->const_strings.size()) { if (vm_trace_on()) std::fprintf(stderr, "[pe-stream]   op1011 fail L%d\n", __LINE__); return false; }
       const std::string& fname = cls->const_strings[n.imm];
-      if (fname.empty()) return false;
+      if (fname.empty()) { if (vm_trace_on()) std::fprintf(stderr, "[pe-stream]   op1011 fail L%d\n", __LINE__); return false; }
       if (first) {
-        if (!after_classname || !ctx_class) return false;
+        if (!after_classname || !ctx_class) { if (vm_trace_on()) std::fprintf(stderr, "[pe-stream]   op1011 fail L%d\n", __LINE__); return false; }
         JvmValue* slot = tree_static_slot(ctx_class, fname, true);
-        if (!slot) return false;
+        if (!slot) { if (vm_trace_on()) std::fprintf(stderr, "[pe-stream]   op1011 fail L%d\n", __LINE__); return false; }
         *out = *slot;
         out_ref->kind = VmRefKind::Static;
         out_ref->owner = ctx_class;
@@ -1421,13 +1525,13 @@ bool vmthread_op24_eval_name(VmThread* thr, const JvmClass* cls,
                              std::string* class_out, std::string* method_out,
                              InvObject** self_out) {
   if (!thr || !cls || !pc || !class_out || !method_out || !self_out)
-    return false;
+    { if (vm_trace_on()) std::fprintf(stderr, "[pe-stream]   op24 fail L%d\n", __LINE__); return false; }
   class_out->clear();
   method_out->clear();
   *self_out = nullptr;
 
   size_t idx = *pc / 8u;
-  if (idx >= code.nodes.size()) return false;
+  if (idx >= code.nodes.size()) { if (vm_trace_on()) std::fprintf(stderr, "[pe-stream]   op24 fail L%d\n", __LINE__); return false; }
   const TreeNode& hdr = code.nodes[idx];
   const uint16_t hop = vmthread_pe_opcode(hdr);
 
@@ -1436,13 +1540,14 @@ bool vmthread_op24_eval_name(VmThread* thr, const JvmClass* cls,
     remaining = 1;  // PE @ 0x420902: force count=1, do not advance yet
   } else {
     remaining = static_cast<int32_t>(hdr.imm);
-    if (remaining <= 0 || remaining > 64) return false;
+    if (remaining <= 0 || remaining > 64) { if (vm_trace_on()) std::fprintf(stderr, "[pe-stream]   op24 fail L%d\n", __LINE__); return false; }
     *pc += 8;  // PE @ 0x420912: advance past the count-bearing node
     idx = *pc / 8u;
   }
 
   InvObject* frame_this = nullptr;
   if (thr->curr_frame && !thr->curr_frame->locals.empty() &&
+      thr->curr_frame->pe.instance != 0 &&  // Fork: static frame has no this
       thr->curr_frame->locals[0].tag == JvmTag::Obj)
     frame_this = thr->curr_frame->locals[0].v.o;
 
@@ -1453,7 +1558,7 @@ bool vmthread_op24_eval_name(VmThread* thr, const JvmClass* cls,
 
   while (remaining > 0) {
     idx = *pc / 8u;
-    if (idx >= code.nodes.size()) return false;
+    if (idx >= code.nodes.size()) { if (vm_trace_on()) std::fprintf(stderr, "[pe-stream]   op24 fail L%d\n", __LINE__); return false; }
     const TreeNode& n = code.nodes[idx];
     const uint16_t op = vmthread_pe_opcode(n);
 
@@ -1461,12 +1566,12 @@ bool vmthread_op24_eval_name(VmThread* thr, const JvmClass* cls,
       if (op == 0x1019) {
         // PE @ 0x42093A: resolve class, refuse alone, land on companion.
         ctx_class = vmthread_resolve_class_from_cp(cls, n.imm);
-        if (!ctx_class) return false;
-        if (remaining <= 1) return false;  // classname alone
+        if (!ctx_class) { if (vm_trace_on()) std::fprintf(stderr, "[pe-stream]   op24 fail L%d\n", __LINE__); return false; }
+        if (remaining <= 1) { if (vm_trace_on()) std::fprintf(stderr, "[pe-stream]   op24 fail L%d\n", __LINE__); return false; }  // classname alone
         *pc += 8;
         --remaining;
         idx = *pc / 8u;
-        if (idx >= code.nodes.size()) return false;
+        if (idx >= code.nodes.size()) { if (vm_trace_on()) std::fprintf(stderr, "[pe-stream]   op24 fail L%d\n", __LINE__); return false; }
         // Re-fetch companion as the real segment node (still first).
         const TreeNode& cn = code.nodes[idx];
         const uint16_t cop = vmthread_pe_opcode(cn);
@@ -1475,7 +1580,7 @@ bool vmthread_op24_eval_name(VmThread* thr, const JvmClass* cls,
         if (cop == 0x1001) {
           const uint32_t li = cn.imm;
           if (!thr->curr_frame || li >= thr->curr_frame->locals.size())
-            return false;
+            { if (vm_trace_on()) std::fprintf(stderr, "[pe-stream]   op24 fail L%d\n", __LINE__); return false; }
           prev = thr->curr_frame->locals[li];
           *pc += 8;
           first = false;
@@ -1486,15 +1591,15 @@ bool vmthread_op24_eval_name(VmThread* thr, const JvmClass* cls,
           std::string fname;
           bool is_static = false;
           const JvmClass* owner = nullptr;
-          if (!vmthread_resolve_field_ref(ctx_class, cn.imm, &fname, &is_static,
+          if (!vmthread_resolve_field_ref(cls, ctx_class, cn.imm, &fname, &is_static,
                                           &owner))
-            return false;
+            { if (vm_trace_on()) std::fprintf(stderr, "[pe-stream]   op24 fail L%d\n", __LINE__); return false; }
           if (is_static) {
             JvmValue* slot = tree_static_slot(owner, fname, false);
-            if (!slot) return false;
+            if (!slot) { if (vm_trace_on()) std::fprintf(stderr, "[pe-stream]   op24 fail L%d\n", __LINE__); return false; }
             prev = *slot;
           } else {
-            if (!ctx_obj) return false;
+            if (!ctx_obj) { if (vm_trace_on()) std::fprintf(stderr, "[pe-stream]   op24 fail L%d\n", __LINE__); return false; }
             prev = vmthread_field_value(ctx_obj, fname);
           }
           *pc += 8;
@@ -1503,14 +1608,16 @@ bool vmthread_op24_eval_name(VmThread* thr, const JvmClass* cls,
           continue;
         }
         if (cop == 0x101A) {
-          // method terminator after classname — same as bare 0x101A path
-          JvmValue recv_v;
-          if (!vmthread_pop_operand(thr, &recv_v)) recv_v = JvmValue{};
-          InvObject* recv =
-              (recv_v.tag == JvmTag::Obj) ? recv_v.v.o : nullptr;
-          if (cn.imm >= cls->const_mref_name.size()) return false;
+          // method terminator after classname: `ClassName.method(...)` is a
+          // static call. Fork: nothing on the operand stack is a receiver
+          // here (the old pop grabbed the argc box or a leftover value).
+          InvObject* recv = nullptr;
+          if (cn.imm >= cls->const_mref_name.size()) { if (vm_trace_on()) std::fprintf(stderr, "[pe-stream]   op24 fail L%d\n", __LINE__); return false; }
           const std::string& mname = cls->const_mref_name[cn.imm];
-          if (mname.empty()) return false;
+          if (mname.empty()) { if (vm_trace_on()) std::fprintf(stderr, "[pe-stream]   op24 fail L%d\n", __LINE__); return false; }
+          thr->call_sig_hint = (cn.imm < cls->const_mref_sig.size())
+                                   ? cls->const_mref_sig[cn.imm]
+                                   : std::string();
           *method_out = mname;
           if (recv) {
             *self_out = recv;
@@ -1523,11 +1630,11 @@ bool vmthread_op24_eval_name(VmThread* thr, const JvmClass* cls,
           return true;
         }
         // utf8 / 0x4012 script method on companion
-        if (cn.imm >= cls->const_strings.size()) return false;
+        if (cn.imm >= cls->const_strings.size()) { if (vm_trace_on()) std::fprintf(stderr, "[pe-stream]   op24 fail L%d\n", __LINE__); return false; }
         const std::string& mname = cls->const_strings[cn.imm];
-        if (mname.empty()) return false;
+        if (mname.empty()) { if (vm_trace_on()) std::fprintf(stderr, "[pe-stream]   op24 fail L%d\n", __LINE__); return false; }
         *method_out = mname;
-        *self_out = frame_this;
+        *self_out = nullptr;  // Fork: ClassName.method(...) is a static call
         *class_out = ctx_class->name;
         return true;
       }
@@ -1536,13 +1643,13 @@ bool vmthread_op24_eval_name(VmThread* thr, const JvmClass* cls,
       ctx_obj = frame_this;
     } else {
       // PE @ 0x42099B: previous payload must be a live object.
-      if (prev.tag != JvmTag::Obj || !prev.v.o) return false;
+      if (prev.tag != JvmTag::Obj || !prev.v.o) { if (vm_trace_on()) std::fprintf(stderr, "[pe-stream]   op24 fail L%d\n", __LINE__); return false; }
       ctx_obj = prev.v.o;
     }
 
     if (op == 0x1001) {  // PE @ 0x420B62 locals[imm]
       const uint32_t li = n.imm;
-      if (!thr->curr_frame || li >= thr->curr_frame->locals.size()) return false;
+      if (!thr->curr_frame || li >= thr->curr_frame->locals.size()) { if (vm_trace_on()) std::fprintf(stderr, "[pe-stream]   op24 fail L%d\n", __LINE__); return false; }
       prev = thr->curr_frame->locals[li];
       *pc += 8;  // PE LABEL_45
       first = false;
@@ -1554,15 +1661,15 @@ bool vmthread_op24_eval_name(VmThread* thr, const JvmClass* cls,
       std::string fname;
       bool is_static = false;
       const JvmClass* owner = nullptr;
-      if (!vmthread_resolve_field_ref(ctx_class, n.imm, &fname, &is_static,
+      if (!vmthread_resolve_field_ref(cls, ctx_class, n.imm, &fname, &is_static,
                                       &owner))
-        return false;
+        { if (vm_trace_on()) std::fprintf(stderr, "[pe-stream]   op24 fail L%d\n", __LINE__); return false; }
       if (is_static) {
         JvmValue* slot = tree_static_slot(owner, fname, false);
-        if (!slot) return false;
+        if (!slot) { if (vm_trace_on()) std::fprintf(stderr, "[pe-stream]   op24 fail L%d\n", __LINE__); return false; }
         prev = *slot;
       } else {
-        if (!ctx_obj) return false;
+        if (!ctx_obj) { if (vm_trace_on()) std::fprintf(stderr, "[pe-stream]   op24 fail L%d\n", __LINE__); return false; }
         prev = vmthread_field_value(ctx_obj, fname);
       }
       *pc += 8;
@@ -1574,13 +1681,29 @@ bool vmthread_op24_eval_name(VmThread* thr, const JvmClass* cls,
     if (op == 0x101A) {
       // PE @ 0x420C0D: pop recv; resolve method from the fieldref at this node;
       // return the call target. PC stays ON the 0x101A (no advance here).
+      // Fork: when a previous path segment (local / field) already produced
+      // the receiver (`ff.close()` compiles to 0x1001 ff, 0x101A close), the
+      // host keeps it in `prev` instead of the operand stack, so use it
+      // rather than popping an unrelated value.
       JvmValue recv_v;
-      if (!vmthread_pop_operand(thr, &recv_v)) recv_v = JvmValue{};
+      if (!first && prev.tag == JvmTag::Obj && prev.v.o) {
+        recv_v = prev;
+      } else if (first) {
+        // Fork: a leading methodref is an implicit-this call (`first(path,
+        // FILES_DIRS)` inside FindFile); the args + argc box are on the
+        // operand stack, the receiver is not. Chained `expr.m()` is TODO.
+        recv_v = frame_this ? JvmValue::make_obj(frame_this) : JvmValue{};
+      } else if (!vmthread_pop_operand(thr, &recv_v)) {
+        recv_v = JvmValue{};
+      }
       InvObject* recv =
           (recv_v.tag == JvmTag::Obj) ? recv_v.v.o : nullptr;
-      if (n.imm >= cls->const_mref_name.size()) return false;
+      if (n.imm >= cls->const_mref_name.size()) { if (vm_trace_on()) std::fprintf(stderr, "[pe-stream]   op24 fail L%d\n", __LINE__); return false; }
       const std::string& mname = cls->const_mref_name[n.imm];
-      if (mname.empty()) return false;
+      if (mname.empty()) { if (vm_trace_on()) std::fprintf(stderr, "[pe-stream]   op24 fail L%d\n", __LINE__); return false; }
+      thr->call_sig_hint = (n.imm < cls->const_mref_sig.size())
+                               ? cls->const_mref_sig[n.imm]
+                               : std::string();
       // Soft: ACC_STATIC is not on the host CP cache. Prefer an instance call
       // when the popped recv is live (PE Object_getFieldAt / instance path);
       // otherwise treat as static against the context class.
@@ -1601,9 +1724,9 @@ bool vmthread_op24_eval_name(VmThread* thr, const JvmClass* cls,
     // Soft: always take the script-method path — that is the invoke op 0x24
     // needs; a pure field hit continuing the walk cannot produce a call target
     // for this opcode (exhausted count → nullptr → "script error").
-    if (n.imm >= cls->const_strings.size()) return false;
+    if (n.imm >= cls->const_strings.size()) { if (vm_trace_on()) std::fprintf(stderr, "[pe-stream]   op24 fail L%d\n", __LINE__); return false; }
     const std::string& mname = cls->const_strings[n.imm];
-    if (mname.empty()) return false;
+    if (mname.empty()) { if (vm_trace_on()) std::fprintf(stderr, "[pe-stream]   op24 fail L%d\n", __LINE__); return false; }
     *method_out = mname;
     *self_out = first ? frame_this : ctx_obj;
     *class_out = ctx_class->name;
@@ -1614,5 +1737,5 @@ bool vmthread_op24_eval_name(VmThread* thr, const JvmClass* cls,
     // PC stays ON the name carrier (PE returns without advancing).
     return true;
   }
-  return false;  // PE exhausted without a method → nullptr → "script error"
+  { if (vm_trace_on()) std::fprintf(stderr, "[pe-stream]   op24 fail L%d\n", __LINE__); return false; }  // PE exhausted without a method → nullptr → "script error"
 }

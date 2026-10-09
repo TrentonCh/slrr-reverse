@@ -4,6 +4,7 @@
 #include "rpak.hpp"
 #include "natives.hpp"
 #include "host_objects.hpp"
+#include "jvm_internal.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -97,6 +98,36 @@ void tree_static_ensure_initialized(const JvmClass* owner) {
     if (!fd.name.empty() && bag.by_name.count(fd.name) != 0) continue;
     if (!fd.name.empty()) bag.by_name.emplace(fd.name, bag.slots.size());
     bag.slots.push_back(tree_static_seed(fd));
+  }
+  // Fork: run the "<static field init>" trees (PE THRD-CLASSVAR-INI) on the
+  // stream VM and assign the popped operand, so statics like GameLogic.goals
+  // exist before the first read. Opt-in with SLRR_PE_STREAM_STATIC_INIT=1
+  // while the stream path is being completed.
+  static const bool run_static_inits = [] {
+    const char* v = std::getenv("SLRR_PE_STREAM_STATIC_INIT");
+    return v && v[0] == '1';
+  }();
+  if (run_static_inits) {
+    for (const JvmFieldDecl& fd : owner->static_fields) {
+      if (fd.name.empty() || fd.tree_index < 0 ||
+          static_cast<size_t>(fd.tree_index) >= owner->trees.size())
+        continue;
+      if (owner->trees[static_cast<size_t>(fd.tree_index)].nodes.empty()) continue;
+      JvmMethod init;
+      init.name = "<static-init:" + fd.name + ">";
+      init.signature = "()Ljava.lang.Object;";  // force a value return
+      init.tree_index = fd.tree_index;
+      init.flags = 0x8;  // ACC_STATIC
+      JvmValue v{};
+      if (vmthread_try_stream_eval(owner, &init, nullptr, {}, &v) &&
+          v.tag != JvmTag::Void) {
+        auto it = bag.by_name.find(fd.name);
+        if (it != bag.by_name.end()) bag.slots[it->second] = v;
+      } else if (std::getenv("SLRR_PE_STREAM_TRACE")) {
+        std::fprintf(stderr, "[pe-stream] static init skipped %s.%s\n",
+                     owner->name.c_str(), fd.name.c_str());
+      }
+    }
   }
 }
 

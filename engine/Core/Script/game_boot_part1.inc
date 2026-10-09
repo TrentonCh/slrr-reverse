@@ -679,9 +679,11 @@ int game_interactive_run(Jvm& jvm, const char* game_root,
       "  Soft Engine_PlayBootFMV@0x55C470 clips=%d (Activision+Invictus; "
       "StreetLegal PathExists-skip)\n",
       fmv_n);
+  // Fork: Build 940 ships no Activision/Invictus intros (only the menu
+  // background_motion.avi). PE PathExists-skips missing clips, so do we.
   if (fmv_n < 2) {
-    std::printf("FAIL --game boot FMV intros (need Activision+Invictus)\n");
-    return 5;
+    std::printf("WARN --game boot FMV intros missing (%d/2) - continuing\n",
+                fmv_n);
   }
 
   // Soft ≈ MainLoop prologue (stock post-FMV, pre-while): GameInit under wtroot.

@@ -521,6 +521,60 @@ JvmValue tree_eval(TreeHost* host, const JvmClass& cls, const JvmMethod& method,
       return JvmValue::make_void();
     }
     const TreeNode& n = tree.nodes[ip];
+    // Debug aid (fork): SLRR_TREE_TRACE=<method substring> prints one line
+    // per step for matching methods; SLRR_TREE_TRACE_MAX caps lines (400).
+    {
+      static const char* trace_env = std::getenv("SLRR_TREE_TRACE");
+      static const long trace_max = [] {
+        const char* m = std::getenv("SLRR_TREE_TRACE_MAX");
+        return m ? std::strtol(m, nullptr, 10) : 400L;
+      }();
+      static long trace_lines = 0;
+      if (trace_env && trace_env[0] && trace_lines < trace_max &&
+          method.name.find(trace_env) != std::string::npos) {
+        ++trace_lines;
+        auto vtxt = [](const JvmValue& v) -> std::string {
+          char buf[96];
+          switch (v.tag) {
+            case JvmTag::Int: std::snprintf(buf, sizeof buf, "i%d", v.v.i); break;
+            case JvmTag::Float: std::snprintf(buf, sizeof buf, "f%g", v.v.f); break;
+            case JvmTag::Obj: {
+              if (!v.v.o) return "null";
+              const char* hc = tree_host_class(v.v.o);
+              if (hc && hc[0]) { std::snprintf(buf, sizeof buf, "<%s>", hc); break; }
+              const char* sc = string_cstr(v.v.o);
+              if (sc) { std::snprintf(buf, sizeof buf, "\"%.24s\"", sc); break; }
+              std::snprintf(buf, sizeof buf, "obj%p", static_cast<void*>(v.v.o));
+              break;
+            }
+            default: return "void";
+          }
+          return buf;
+        };
+        std::string line;
+        char head[160];
+        std::snprintf(head, sizeof head, "[trace] %s.%s step=%ld ip=%zu op=%02x",
+                      cls.name.c_str(), method.name.c_str(), steps, ip, n.op);
+        line += head;
+        if (n.has_imm) {
+          char ib[64];
+          std::snprintf(ib, sizeof ib, " imm=%d", static_cast<int32_t>(n.imm));
+          line += ib;
+          const std::string nm = field_name(n.imm);
+          if (!nm.empty()) line += "(" + nm + ")";
+        }
+        line += " pc=" + pending_class;
+        if (pending_binop) line += " binop=" + std::to_string(*pending_binop);
+        line += " stk[";
+        for (size_t k = stack.size() > 4 ? stack.size() - 4 : 0; k < stack.size(); ++k)
+          line += vtxt(stack[k]) + " ";
+        line += "] loc[";
+        for (size_t k = 0; k < locals.size() && k < 8; ++k)
+          line += vtxt(locals[k]) + " ";
+        line += "]";
+        std::printf("%s\n", line.c_str());
+      }
+    }
     switch (n.op) {
       case 0x01: {  // LOCAL_LOAD
         if (!n.has_imm) break;
@@ -1220,7 +1274,12 @@ JvmValue tree_eval(TreeHost* host, const JvmClass& cls, const JvmMethod& method,
                      const_mref_name[peek.imm] == "size" ||
                      const_mref_name[peek.imm] == "elementAt" ||
                      const_mref_name[peek.imm] == "addColorIndex");
-                if (named || peek.imm >= tree.nodes.size()) {
+                // Fork: the node-count heuristic only applies to unnamed
+                // refs; a named ref (e.g. FindFile.next) must not match
+                // just because the Build 940 pool is larger (idx 75 > 68).
+                const bool unnamed = peek.imm >= const_mref_name.size() ||
+                                     const_mref_name[peek.imm].empty();
+                if (named || (unnamed && peek.imm >= tree.nodes.size())) {
                   method_ref = true;
                   break;
                 }

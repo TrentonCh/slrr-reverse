@@ -91,6 +91,9 @@ struct JvmClass {
   // entry i is an mref resolving to a field/method name.
   std::vector<std::string> const_strings;
   std::vector<std::string> const_mref_name;
+  // Fork: descriptor of the nat behind an mref/fref (or the nat itself),
+  // e.g. "(Ljava.lang.String;I)Ljava.lang.String;" — empty when unknown.
+  std::vector<std::string> const_mref_sig;
   // Parallel int constants (RID / INT pool entries); valid[i]==1 when set.
   std::vector<int32_t> const_ints;
   std::vector<uint8_t> const_int_valid;
@@ -264,6 +267,14 @@ struct VmThread {
   VmThread* sched_prev = nullptr;
   VmThread* sched_next = nullptr;
   VmPendingInvoke pending;
+  // Fork: result of the last ACC_NATIVE invoke, handed to the caller frame
+  // by vmthread_stream_call after the callee frame is popped (PE pushes
+  // the native result onto the resumed frame's operand stack).
+  JvmValue native_ret;
+  bool has_native_ret = false;
+  // Fork: descriptor carried from a 0x101A methodref to the call resolver
+  // so overloads resolve exactly (FindFile.first(String) wraps first(String,I)).
+  std::string call_sig_hint;
 };
 
 // PE VMThread_init @ 0x41F340 — CallNamedMethod uses prio=10, sync=0|1.

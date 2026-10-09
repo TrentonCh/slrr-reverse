@@ -174,13 +174,15 @@ ConstPool parse_cons_slrr(const uint8_t* payload, size_t size) {
         continue;
       }
       pos += 4;
-      if (pos + 12 > size) break;
-      uint32_t pack_idx = 0, local = 0, pad = 0;
+      if (pos + 8 > size) break;
+      uint32_t pack_idx = 0, local = 0;
       std::memcpy(&pack_idx, payload + pos, 4);
       std::memcpy(&local, payload + pos + 4, 4);
-      std::memcpy(&pad, payload + pos + 8, 4);
-      pos += 12;
-      (void)pad;
+      // Fork: a RID entry is 12 bytes (kind, pack, local). The "pad" the
+      // old parser consumed was the kind=0 of the Utf8 that happened to
+      // follow in pre-940 pools; Build 940 emits RIDs back to back
+      // (Gates: 4 in a row), which shifted every later index.
+      pos += 8;
       // Encode as ref-like array {3, pack_idx, local} for export.
       pool.entries.emplace_back(std::array<uint32_t, 3>{3u, pack_idx, local});
       continue;
@@ -333,6 +335,7 @@ bool tufa_parse(const uint8_t* data, size_t size, JvmClass* out, std::string* er
   // Export const pool strings + resolve mref → field/method name via nat.
   out->const_strings.assign(pool.entries.size(), {});
   out->const_mref_name.assign(pool.entries.size(), {});
+  out->const_mref_sig.assign(pool.entries.size(), {});
   out->const_ints.assign(pool.entries.size(), 0);
   out->const_int_valid.assign(pool.entries.size(), 0);
   out->const_rid_pack.assign(pool.entries.size(), {});
@@ -361,13 +364,17 @@ bool tufa_parse(const uint8_t* data, size_t size, JvmClass* out, std::string* er
       out->const_rid_pack[i] = pool.get_str(a);
     } else if (kind == 7) {  // nat: name_idx, sig_idx
       out->const_mref_name[i] = pool.get_str(a);
+      out->const_mref_sig[i] = pool.get_str(b);
     } else if (kind == 5 || kind == 6) {  // mref/fref → nat
       if (a < pool.entries.size()) {
         // try b as nat index first (SLRR mref is (class, nat))
         if (b < pool.entries.size()) {
           if (auto* natb =
                   std::get_if<std::array<uint32_t, 3>>(&pool.entries[b])) {
-            if ((*natb)[0] == 7) out->const_mref_name[i] = pool.get_str((*natb)[1]);
+            if ((*natb)[0] == 7) {
+              out->const_mref_name[i] = pool.get_str((*natb)[1]);
+              out->const_mref_sig[i] = pool.get_str((*natb)[2]);
+            }
           } else {
             std::string s = pool.get_str(b);
             if (!s.empty()) out->const_mref_name[i] = s;
@@ -589,6 +596,18 @@ bool tufa_parse(const uint8_t* data, size_t size, JvmClass* out, std::string* er
     size_t vo = 0;
     std::vector<JvmFieldDecl> statics, insts;
     if (read_vec(vo, &statics) && read_vec(vo, &insts)) {
+      // Fork: derive the instance-initializer list from the authoritative
+      // two-vector layout. The heuristic scan above assumes a leading count
+      // pair and misaligns by 8 bytes when a class has no statics
+      // (VehicleModel: 1 of 17 initializers found).
+      out->field_inits.clear();
+      for (const JvmFieldDecl& fd : insts) {
+        if (fd.tree_index < 0 || fd.name.empty()) continue;
+        JvmFieldInit fi;
+        fi.name = fd.name;
+        fi.tree_index = fd.tree_index;
+        out->field_inits.push_back(std::move(fi));
+      }
       out->static_fields = std::move(statics);
       out->instance_fields = std::move(insts);
     }
