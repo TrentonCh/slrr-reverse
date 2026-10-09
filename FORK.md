@@ -4,6 +4,9 @@ This fork of [EliasFD3S/slrr-reverse](https://github.com/EliasFD3S/slrr-reverse)
 modern vehicle physics backend and real force feedback behind the host's existing
 native contract, so stock Java scripts and existing mods keep working.
 
+Background research (SLRR internals, ecosystem, upstream assessment, design notes) is in
+`docs/BACKGROUND.md`.
+
 Upstream marks the physics bodies as out of scope ("OOS"), so there is nothing to
 preserve there. We write new. Everything else in the host we leave alone unless a
 native we need is missing.
