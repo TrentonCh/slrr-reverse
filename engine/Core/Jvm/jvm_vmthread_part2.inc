@@ -1203,7 +1203,7 @@ static int vmthread_exec_stream_inner(VmThread* thr, const JvmClass* cls_in,
           InvObject* self = nullptr;
           if (!vmthread_op24_eval_name(thr, cls, code, &walk_pc, &class_fqn,
                                        &method, &self)) {
-            if (vm_trace_on())
+            if (vm_err_on())
               std::fprintf(stderr, "[pe-stream]   op24 evalName failed at node %u\n",
                            walk_pc / 8u);
             return kVmStreamUnsupported;
@@ -1231,7 +1231,7 @@ static int vmthread_exec_stream_inner(VmThread* thr, const JvmClass* cls_in,
           const StreamCall sc = vmthread_stream_call(
               thr, self, class_fqn.c_str(), method.c_str());
           if (sc == StreamCall::Fail) {
-            if (vm_trace_on())
+            if (vm_err_on())
               std::fprintf(stderr, "[pe-stream]   op24 call failed %s.%s self=%p\n",
                            class_fqn.c_str(), method.c_str(), static_cast<void*>(self));
             // PE: ScriptError, then opDefault_advance past the terminator.
@@ -1333,7 +1333,7 @@ static int vmthread_exec_stream_inner(VmThread* thr, const JvmClass* cls_in,
           uint32_t walk_pc = thr->pe.unk_24;
           if (!vmthread_op1011_eval_name(thr, cls, code, &walk_pc, imm, &named,
                                          &named_ref)) {
-            if (vm_trace_on())
+            if (vm_err_on())
               std::fprintf(stderr, "[pe-stream]   op1011 evalName failed segs=%d at node %u\n",
                            static_cast<int>(imm), walk_pc / 8u);
             return kVmStreamUnsupported;
@@ -1405,7 +1405,7 @@ static int vmthread_exec_stream_inner(VmThread* thr, const JvmClass* cls_in,
             // Fork: PE Object_callMethod on a null payload is a ScriptError
             // ("null.methodcall()") and the walker continues; the argc box
             // and args are dropped and null stands in for the result.
-            if (vm_trace_on())
+            if (vm_err_on())
               std::fprintf(stderr, "[pe-stream]   script error: null.methodcall() %s in %s (0x4025)%s",
                            mname.c_str(), cls->name.c_str(), "\n");
             if (thr->curr_frame && !thr->curr_frame->operand.empty() &&
@@ -1941,6 +1941,7 @@ void vmthread_destroy(VmThread* thr) {
 //   VMThread_run (PE always; host: pending.live → TREE + op42/43/16);
 //   inside !&0x82: 0x40&!1 → |=STOP; THEN advance cursor via thr+4;
 //   STOP&!RUNNING → vtbl dtor(1). saw_run (PE bl) only on VMThread_run.
+static uint64_t g_pump_stat_cap = 0;  // Fork: wall-cap exits
 static uint64_t g_pump_stat_calls = 0, g_pump_stat_runs = 0, g_pump_stat_deadline = 0,
                 g_pump_stat_nosaw = 0, g_pump_stat_empty = 0, g_pump_stat_visits = 0;
 static double g_pump_stat_run_ms = 0.0;
@@ -1962,17 +1963,22 @@ void vmthread_pump_stats_dump(FILE* out) {
                  cf && cf->host_method ? cf->host_method->name.c_str() : "?",
                  t->frame_list ? t->frame_list->frames.size() : size_t{0});
   }
-  std::fprintf(out, "[prof] pump calls=%llu visits=%llu runs=%llu run_ms=%.0f exits: deadline=%llu nosaw=%llu empty=%llu\n",
+  std::fprintf(out, "[prof] pump calls=%llu visits=%llu runs=%llu run_ms=%.0f exits: deadline=%llu nosaw=%llu empty=%llu cap=%llu\n",
                (unsigned long long)g_pump_stat_calls, (unsigned long long)g_pump_stat_visits,
                (unsigned long long)g_pump_stat_runs, g_pump_stat_run_ms,
                (unsigned long long)g_pump_stat_deadline, (unsigned long long)g_pump_stat_nosaw,
-               (unsigned long long)g_pump_stat_empty);
+               (unsigned long long)g_pump_stat_empty, g_pump_stat_cap);
 }
 
 int jvm_run_threads_budgeted(float budget_ms, int32_t min_prio) {
   const bool unlimited = (budget_ms == 0.f);
   ++g_pump_stat_calls;
   float deadline = vm_now_ms() + budget_ms;
+  static const float cap_ms = [] {
+    const char* e = std::getenv("SLRR_PE_PUMP_CAP_MS");
+    return e ? static_cast<float>(std::strtod(e, nullptr)) : 50.f;
+  }();
+  const float hard_deadline = vm_now_ms() + (cap_ms > budget_ms ? cap_ms : budget_ms);
   float slice = 10.f;  // PE v17 / flt_5E7334 = 10.0f
   if (!unlimited && budget_ms < 10.f) slice = budget_ms;
 
@@ -1981,6 +1987,11 @@ int jvm_run_threads_budgeted(float budget_ms, int32_t min_prio) {
   while (true) {
     // PE @ 0x4169A7..0x4169B5: budget cut (skipped when a2==0).
     if (!unlimited && vm_now_ms() >= deadline) { ++g_pump_stat_deadline; return 1; }
+    // Fork: wall cap. PE extends the deadline by (prio*9.9+1)*slice per run
+    // (FUN_0055caf0 in 940: prio 10 -> 100x), which only converges because
+    // its wraps take microseconds; a traced/slow host wrap would never get
+    // back to the frame loop. SLRR_PE_PUMP_CAP_MS (default 50) bounds it.
+    if (!unlimited && vm_now_ms() >= hard_deadline) { ++g_pump_stat_cap; return 1; }
 
     // PE @ 0x4169BB..0x4169DC: cursor null → reload list head; !saw_run→1.
     if (!g_vm_sched_cursor) {

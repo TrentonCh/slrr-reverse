@@ -375,7 +375,13 @@ bool poll_di_mouse(DIMOUSESTATE2* st) {
   return true;
 }
 
-bool key_down_vk(int vk) { return (GetAsyncKeyState(vk) & 0x8000) != 0; }
+static bool input_window_is_foreground();
+// Fork: GetAsyncKeyState is global; only count it while the game window is
+// the foreground window (typing in another window leaked in as hotkeys).
+bool key_down_vk(int vk) {
+  if (!input_window_is_foreground()) return false;
+  return (GetAsyncKeyState(vk) & 0x8000) != 0;
+}
 
 int32_t vk_to_dik(int vk) {
   switch (vk) {

@@ -744,21 +744,27 @@ int game_interactive_run(Jvm& jvm, const char* game_root,
       // PE Engine_MainLoop presents every iteration; the Present path wakes
       // Frontend.render.wait() (LoadingScreen pacing).
       const auto t_a = std::chrono::steady_clock::now();
-      render_d3d9_flush();
-      render_d3d9_pump(0);
-      input_live_poll();
-      java_lang_GameType_pollTimers();
-      game_boot_mainloop_resource_pumps();
+      // Fork: per-section wall time for the heartbeat (ms since last beat).
+      static double sec_ms[6] = {};
+      auto lap = [](const std::chrono::steady_clock::time_point& a) {
+        return std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - a).count();
+      };
+      auto s0 = std::chrono::steady_clock::now(); render_d3d9_flush(); sec_ms[0] += lap(s0);
+      s0 = std::chrono::steady_clock::now(); render_d3d9_pump(0); sec_ms[1] += lap(s0);
+      s0 = std::chrono::steady_clock::now(); input_live_poll(); sec_ms[2] += lap(s0);
+      s0 = std::chrono::steady_clock::now(); java_lang_GameType_pollTimers(); sec_ms[3] += lap(s0);
+      s0 = std::chrono::steady_clock::now(); game_boot_mainloop_resource_pumps(); sec_ms[4] += lap(s0);
       const auto t_b = std::chrono::steady_clock::now();
       jvm_run_threads_budgeted(8.f);
       const auto t_c = std::chrono::steady_clock::now();
+      sec_ms[5] += std::chrono::duration<double, std::milli>(t_c - t_b).count();
       pe_t_render += std::chrono::duration<double, std::milli>(t_b - t_a).count();
       pe_t_vm += std::chrono::duration<double, std::milli>(t_c - t_b).count();
       ++pe_frames;
       // Fork: SLRR_PE_BOOT_KEYS="t:dik[,t:dik...]" presses DirectInput key
       // `dik` for 150 ms at `t` seconds after loop start (unattended runs).
       {
-        struct KeyAt { double t; int32_t dik; bool down; };
+        struct KeyAt { double t; int32_t dik; int state; double down_at; };  // state 0 pending, 1 down, 2 done
         static std::vector<KeyAt> keys = [] {
           std::vector<KeyAt> v;
           const char* e = std::getenv("SLRR_PE_BOOT_KEYS");
@@ -767,7 +773,7 @@ int game_interactive_run(Jvm& jvm, const char* game_root,
             const double t = std::strtod(e, &end);
             if (end == e || *end != ':') break;
             const long dik = std::strtol(end + 1, &end, 0);
-            v.push_back({t, static_cast<int32_t>(dik), false});
+            v.push_back({t, static_cast<int32_t>(dik), 0, 0.0});
             if (*end != ',') break;
             e = end + 1;
           }
@@ -775,21 +781,28 @@ int game_interactive_run(Jvm& jvm, const char* game_root,
         }();
         const double el = std::chrono::duration<double>(std::chrono::steady_clock::now() - boot_t0).count();
         {
-          // Fork: heartbeat every 2 s (SLRR_PE_STREAM_TRACE) — shows whether the
-          // frame loop itself keeps turning.
+          // Fork: heartbeat every 2 s (SLRR_PE_STREAM_TRACE / SLRR_PE_HEARTBEAT).
           static double next_beat = 2.0;
           if (el >= next_beat) {
             next_beat = el + 2.0;
-            if (std::getenv("SLRR_PE_STREAM_TRACE"))
-              std::fprintf(stderr, "[pe-boot] heartbeat t=%.1f s frame=%u\n", el, pe_frames);
+            if (std::getenv("SLRR_PE_STREAM_TRACE") || std::getenv("SLRR_PE_HEARTBEAT"))
+              std::fprintf(stderr, "[pe-boot] heartbeat t=%.1f s frame=%u  ms: flush=%.0f pump0=%.0f input=%.0f timers=%.0f res=%.0f vm=%.0f\n",
+                           el, pe_frames, sec_ms[0], sec_ms[1], sec_ms[2], sec_ms[3], sec_ms[4], sec_ms[5]);
+            for (double& m : sec_ms) m = 0.0;
           }
         }
         for (KeyAt& k : keys) {
-          const bool want = el >= k.t && el < k.t + 0.15;
-          if (want == k.down) continue;
-          k.down = want;
-          input_inject_key(k.dik, want);
-          std::printf("[pe-boot] key 0x%02x %s at %.2f s\n", k.dik, want ? "down" : "up", el);
+          // Press when the clock crosses t; release on the first frame at least
+          // 150 ms later (a slow frame must not skip the press).
+          if (k.state == 0 && el >= k.t) {
+            k.state = 1; k.down_at = el;
+            input_inject_key(k.dik, true);
+            std::printf("[pe-boot] key 0x%02x down at %.2f s\n", k.dik, el);
+          } else if (k.state == 1 && el >= k.down_at + 0.15) {
+            k.state = 2;
+            input_inject_key(k.dik, false);
+            std::printf("[pe-boot] key 0x%02x up at %.2f s\n", k.dik, el);
+          }
         }
       }
       if (pe_max_frames > 0 && pe_frames >= pe_max_frames) break;
