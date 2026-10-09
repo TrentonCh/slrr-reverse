@@ -67,9 +67,7 @@ void vmthread_op101E_array_init(VmThread* thr, int32_t count) {
   // PE assigns from temp end → index 0..N-1 (source order). Soft reverse.
   for (int32_t i = 0; i < count; ++i) {
     const JvmValue& e = elems[static_cast<std::size_t>(count - 1 - i)];
-    if (e.tag == JvmTag::Obj)
-      tree_vector_set(arr, i, e.v.o);  // PE Value_assignOp('#')
-    // I/F → SoftArray slot stays null (Value_assignOp primitive OOS).
+    vm_array_elem_set(arr, i, e);  // PE Value_assignOp('#'); Fork: typed
   }
   vmthread_value_stack_push(thr, JvmValue::make_obj(arr));
   thr->pe.unk_24 += 8;  // PE → VMThread_opDefault_advance

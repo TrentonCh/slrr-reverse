@@ -3,7 +3,12 @@
 // translation unit is unchanged. See native/tools/split_source.py.
 
 
+
 namespace inv {
+
+// Fork: typed primitive-array elements (defined with op32 below).
+JvmValue vm_array_elem_get(InvObject* arr, int32_t idx);
+bool vm_array_elem_set(InvObject* arr, int32_t idx, const JvmValue& v);
 
 // Fork diagnostic switch (SLRR_PE_STREAM_TRACE=1).
 static bool vm_trace_on() {
@@ -1062,9 +1067,7 @@ bool vmthread_ref_assign(VmThread* thr, const VmValueRef& dst,
       // Fork: SoftArray element slot. Host arrays hold InvObject* only, so a
       // primitive element is OOS (stored as null, like the legacy arrayInit).
       if (!dst.obj || dst.index < 0) return false;
-      if (dst.index >= tree_vector_size(dst.obj)) return false;
-      tree_vector_set(dst.obj, dst.index, src.tag == JvmTag::Obj ? src.v.o : nullptr);
-      return true;
+      return vm_array_elem_set(dst.obj, dst.index, src);  // Fork: typed
     }
     case VmRefKind::None:
     default:
@@ -1304,6 +1307,57 @@ void vmthread_op40_pop_push(VmThread* thr) {
   vmthread_value_stack_push(thr, v);
 }
 
+// Fork: primitive arrays. The host SoftArray (tree vector) holds InvObject*
+// only, so int[]/float[] elements had no home (stored as null, read back as
+// null: ControlSet.define/load lost every key mapping). Typed elements live
+// in a side table keyed by the array object; object arrays stay in the
+// vector. Unset primitive slots read as the type's zero.
+static std::unordered_map<InvObject*, std::vector<JvmValue>> g_vm_prim_array_elems;
+
+static bool vm_array_is_primitive(InvObject* arr) {
+  const char* hc = arr ? tree_host_class(arr) : nullptr;
+  return hc && hc[0] == '[' && hc[1] != 'L' && hc[1] != '[' && hc[1] != '\0';
+}
+
+JvmValue vm_array_elem_get(InvObject* arr, int32_t idx) {
+  if (!arr || idx < 0) return JvmValue::make_obj(nullptr);
+  if (vm_array_is_primitive(arr)) {
+    auto it = g_vm_prim_array_elems.find(arr);
+    if (it != g_vm_prim_array_elems.end() &&
+        static_cast<size_t>(idx) < it->second.size() &&
+        it->second[static_cast<size_t>(idx)].tag != JvmTag::Void)
+      return it->second[static_cast<size_t>(idx)];
+    const char* hc = tree_host_class(arr);
+    if (hc && (hc[1] == 'F' || hc[1] == 'D')) return JvmValue::make_float(0.f);
+    return JvmValue::make_int(0);
+  }
+  return JvmValue::make_obj(tree_vector_element_at(arr, idx));
+}
+
+bool vm_array_elem_set(InvObject* arr, int32_t idx, const JvmValue& v) {
+  if (!arr || idx < 0) return false;
+  if (vm_array_is_primitive(arr)) {
+    const int32_t n = tree_vector_size(arr);
+    if (idx >= n) return false;
+    auto& elems = g_vm_prim_array_elems[arr];
+    if (elems.size() < static_cast<size_t>(n)) elems.resize(static_cast<size_t>(n));
+    const char* hc = tree_host_class(arr);
+    JvmValue e = v;
+    if (hc && (hc[1] == 'F' || hc[1] == 'D')) {
+      if (v.tag == JvmTag::Int) e = JvmValue::make_float(static_cast<float>(v.v.i));
+      else if (v.tag != JvmTag::Float) e = JvmValue::make_float(0.f);
+    } else {
+      if (v.tag == JvmTag::Float) e = JvmValue::make_int(static_cast<int32_t>(v.v.f));
+      else if (v.tag != JvmTag::Int) e = JvmValue::make_int(v.tag == JvmTag::Obj && v.v.o ? 1 : 0);
+    }
+    elems[static_cast<size_t>(idx)] = e;
+    return true;
+  }
+  if (idx >= tree_vector_size(arr)) return false;
+  tree_vector_set(arr, idx, v.tag == JvmTag::Obj ? v.v.o : nullptr);
+  return true;
+}
+
 // PE op32 @ 0x421398 (VMThread_op32_arrayAccess / case-map[32]=6):
 // ValueStack_pop TOS=array (type '['), then index (type 'I', >=0); optional
 // ValueField(getType==2) clone via ValuePool+Value_ctorCopy OOS soft;
@@ -1318,13 +1372,13 @@ void vmthread_op32_array_access(VmThread* thr) {
   // PE @ 0x42139E first pop = array (TOS); @ 0x4213D3 second = index.
   if (!vmthread_pop_operand(thr, &arr)) arr = JvmValue{};
   if (!vmthread_pop_operand(thr, &idx)) idx = JvmValue{};
-  InvObject* elem = nullptr;
+  JvmValue elem = JvmValue::make_obj(nullptr);
   const int32_t i =
       (idx.tag == JvmTag::Int)
           ? idx.v.i
           : (idx.tag == JvmTag::Float ? static_cast<int32_t>(idx.v.f) : 0);
   if (arr.tag == JvmTag::Obj && arr.v.o && i >= 0)
-    elem = tree_vector_element_at(arr.v.o, i);  // PE @ 0x421437
+    elem = vm_array_elem_get(arr.v.o, i);  // PE @ 0x421437 (Fork: typed)
   // Fork: PE pushes a ValueField on the element, so the operand stays
   // assignable (`elementData[elementCount++] = obj` in Vector.addElement).
   VmValueRef ref;
@@ -1333,7 +1387,7 @@ void vmthread_op32_array_access(VmThread* thr) {
     ref.obj = arr.v.o;
     ref.index = i;
   }
-  vmthread_value_stack_push_ref(thr, JvmValue::make_obj(elem), ref);
+  vmthread_value_stack_push_ref(thr, elem, ref);
   thr->pe.unk_24 += 8;  // PE @ 0x4214B7 → VMThread_opDefault_advance
 }
 
