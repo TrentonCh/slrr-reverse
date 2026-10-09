@@ -472,8 +472,7 @@ const RpakEntry* rpak_find_entry(int32_t res_id) {
 }
 
 // Soft PE ResPack_RemapLocalId @ 0x544590 (ASM stride 66 @ 0x5445DB..E2).
-uint32_t rpak_remap_local_id(int32_t pack_id, uint32_t local_id) {
-  std::lock_guard<std::mutex> lock(g_mu);
+static uint32_t rpak_remap_local_id_unlocked(int32_t pack_id, uint32_t local_id) {
   if (static_cast<uint32_t>(pack_id) == 0xFFFFu) return local_id;  // @ 0x54459D
   const uint32_t lo = local_id & 0xFFFFu;                          // @ 0x5445A5
   const uint32_t hi = local_id >> 16;                              // @ 0x5445AB
@@ -496,6 +495,11 @@ uint32_t rpak_remap_local_id(int32_t pack_id, uint32_t local_id) {
   if (hi >= pack->remap_toc.size()) return 0;
   const uint32_t ext_hi = pack->remap_toc[hi].pack_hi;     // table+66*hi+2
   return lo | (ext_hi << 16);                             // @ 0x5445EA
+}
+
+uint32_t rpak_remap_local_id(int32_t pack_id, uint32_t local_id) {
+  std::lock_guard<std::mutex> lock(g_mu);
+  return rpak_remap_local_id_unlocked(pack_id, local_id);
 }
 
 // Soft PE sourcefile load path: entry blob is often text
@@ -526,13 +530,28 @@ bool rpak_read_entry(int32_t res_id, std::vector<uint8_t>* out) {
 
 namespace {
 
-std::vector<int32_t> collect_children_unlocked(int32_t parent_local) {
+// Fork: the entry's parent field is a pack-relative id (hi 16 bits = remap
+// slot, PE ResPack_RemapLocalId). Resolve it to a full resource id and
+// compare with the requested parent; matching on the local id alone made
+// system.rpk:0x2000 (GameLogic.EVENT_ROOT) list every pack's node 0x2000
+// (brakes) as "career events". When the remap table cannot resolve the
+// slot, fall back to the legacy local-id match (racer packs: cars:0x1000).
+std::vector<int32_t> collect_children_unlocked(int32_t parent_res_id) {
   std::vector<int32_t> out;
+  const int32_t parent_local = static_cast<int32_t>(rpak_id_local(parent_res_id));
   for (const auto& pack : g_packs) {
     if (!pack.parsed_entries) continue;
     for (const auto& e : pack.entries) {
       if (e.is_dir) continue;
-      if (rpak_parent_key(e.kind) == parent_local)
+      const uint32_t full = rpak_remap_local_id_unlocked(pack.pack_id,
+                                                         static_cast<uint32_t>(e.kind));
+      bool match = false;
+      if (full != 0) {
+        match = static_cast<int32_t>(full) == parent_res_id;
+      } else {
+        match = rpak_parent_key(e.kind) == parent_local;
+      }
+      if (match)
         out.push_back(rpak_make_id(pack.pack_id,
                                    static_cast<uint16_t>(e.type_id)));
     }
@@ -572,7 +591,7 @@ int32_t rpak_first_child_id(int32_t parent_res_id) {
                             static_cast<uint16_t>(e.first_child_local));
     }
   }
-  auto kids = collect_children_unlocked(plocal);
+  auto kids = collect_children_unlocked(parent_res_id);
   return kids.empty() ? 0 : kids.front();
 }
 
@@ -595,9 +614,13 @@ int32_t rpak_next_sibling_id(int32_t child_res_id) {
   if (ent->next_sibling_local >= 0)
     return rpak_make_id(pack->pack_id,
                         static_cast<uint16_t>(ent->next_sibling_local));
-  // Cross-pack: next child of the same parent_key after this id.
-  const int32_t pk = rpak_parent_key(ent->kind);
-  auto kids = collect_children_unlocked(pk);
+  // Cross-pack: next child of the same parent after this id.
+  uint32_t pfull = rpak_remap_local_id_unlocked(pack->pack_id,
+                                                static_cast<uint32_t>(ent->kind));
+  if (pfull == 0)
+    pfull = static_cast<uint32_t>(rpak_make_id(pack->pack_id,
+                                               static_cast<uint16_t>(rpak_parent_key(ent->kind))));
+  auto kids = collect_children_unlocked(static_cast<int32_t>(pfull));
   for (size_t i = 0; i < kids.size(); ++i) {
     if (kids[i] == child_res_id)
       return (i + 1 < kids.size()) ? kids[i + 1] : 0;
