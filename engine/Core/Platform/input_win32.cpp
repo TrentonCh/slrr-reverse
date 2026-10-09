@@ -626,6 +626,21 @@ int32_t input_last_key_event() {
 #endif
 }
 
+int32_t input_scan_to_ascii(int32_t scan) {
+#ifdef _WIN32
+  if (scan <= 0 || scan >= 0x100) return 0;
+  WORD ch[2]{};
+  const HKL layout = GetKeyboardLayout(0);
+  const UINT vk = MapVirtualKeyExA(static_cast<UINT>(scan), MAPVK_VSC_TO_VK_EX, layout);
+  BYTE ks[256]{};  // no modifiers held
+  if (ToAsciiEx(vk, static_cast<UINT>(scan), ks, ch, 0, layout) <= 0) return 0;
+  return static_cast<int32_t>(ch[0] & 0xFF);
+#else
+  (void)scan;
+  return 0;
+#endif
+}
+
 void input_live_enable(bool on) {
   g_live = on;
 #ifdef _WIN32

@@ -332,8 +332,10 @@ int32_t java_io_Input_lastKey() {
     // Host smoke injection (input_set_last_key edges); not stock.
     const int32_t dik = g_key_queue.front() & 0xFF;
     g_key_queue.pop_front();
-    const char ascii = dik_to_lower(dik);
-    result = dik | (static_cast<int32_t>(static_cast<unsigned char>(ascii)) << 16);
+    // Same ToAsciiEx translation as the physical path (ENTER=13, BS=8, ' ').
+    int32_t ascii = input_scan_to_ascii(dik);
+    if (!ascii) ascii = static_cast<unsigned char>(dik_to_lower(dik));
+    result = dik | ((ascii & 0xFF) << 16);
   }
   if ((result & 0xFF0000) != 0)
     cheat_append_ascii(static_cast<char>((result >> 16) & 0xFF));

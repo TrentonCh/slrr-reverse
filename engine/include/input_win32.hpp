@@ -46,6 +46,9 @@ void input_device_list_ensure();
 // PE Input_lastKeyEvent @ 0x00556E00 — DI8 Acquire+GetDeviceData key-down;
 // return DIK scan | (ToAsciiEx ascii << 16), or 0.
 int32_t input_last_key_event();
+// Fork: ASCII for a DirectInput scan code with no modifiers (same ToAsciiEx
+// translation as input_last_key_event); 0 when the key has no character.
+int32_t input_scan_to_ascii(int32_t scan);
 
 // PE Engine_WndProc @ 0x004B8000 LABEL_34: WM_MOUSEMOVE/LBUTTON{DOWN,UP}/
 // RBUTTON{DOWN,UP} → NDC 2*(px/w)-1, 2*(py/h)-1 (Windows Y, top=-1).
