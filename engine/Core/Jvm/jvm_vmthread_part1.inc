@@ -1443,8 +1443,19 @@ bool vmthread_soft_value_eq(const JvmValue& a, const JvmValue& b) {
             : (b.tag == JvmTag::Int ? static_cast<float>(b.v.i) : 0.f);
     return fa == fb;
   }
-  if (a.tag == JvmTag::Obj || b.tag == JvmTag::Obj)
-    return a.tag == b.tag && a.v.o == b.v.o;
+  if (a.tag == JvmTag::Obj || b.tag == JvmTag::Obj) {
+    if (a.tag != b.tag) return false;
+    if (a.v.o == b.v.o) return true;
+    // Fork: PE Value_eq compares two String payloads by text (scripts
+    // rely on `axle == "S"` across classes' literal pools, e.g.
+    // Rectangle.validAxle); other objects by identity.
+    if (a.v.o && b.v.o) {
+      const char* sa = string_cstr(a.v.o);
+      const char* sb = string_cstr(b.v.o);
+      if (sa && sb) return std::strcmp(sa, sb) == 0;
+    }
+    return false;
+  }
   if (a.tag == JvmTag::Int || b.tag == JvmTag::Int) {
     const int32_t ia =
         (a.tag == JvmTag::Int)

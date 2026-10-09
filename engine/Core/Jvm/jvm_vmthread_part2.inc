@@ -1022,8 +1022,23 @@ static int vmthread_exec_stream_inner(VmThread* thr, const JvmClass* cls_in,
         const char* m = std::getenv("SLRR_PE_STREAM_STEPS_MAX");
         return m ? std::strtol(m, nullptr, 10) : 600L;
       }();
-      if (steps_env && steps_env[0] && steps_left > 0 &&
-          cls && cls->name.find(steps_env) != std::string::npos) {
+      auto steps_match = [&]() -> bool {
+        // Fork: comma-separated "Class" / "Class.method" substrings.
+        if (!steps_env || !steps_env[0] || steps_left <= 0 || !cls) return false;
+        std::string full = cls->name;
+        if (thr->curr_frame && thr->curr_frame->host_method)
+          full += "." + thr->curr_frame->host_method->name;
+        const char* s = steps_env;
+        while (*s) {
+          const char* e = std::strchr(s, ',');
+          const std::string pat(s, e ? static_cast<size_t>(e - s) : std::strlen(s));
+          if (!pat.empty() && full.find(pat) != std::string::npos) return true;
+          if (!e) break;
+          s = e + 1;
+        }
+        return false;
+      };
+      if (steps_match()) {
         --steps_left;
         auto vt = [](const JvmValue& v) -> std::string {
           char b[80];

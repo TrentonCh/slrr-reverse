@@ -1222,6 +1222,117 @@ static void invert_rigid(const D3DMATRIX& m, D3DMATRIX* out) {
 
 void draw_meshes();
 
+// Fork: texts drawn by the camera pass this frame; draw_osd_texts skips them.
+static std::unordered_set<void*> g_vp_drawn_texts;
+
+// Fork: PE r_text render instances are glyph geometry from the font SCX
+// under the text's bone00 (Text_createRenderInst @ 0x48C4B0), drawn by the
+// camera pass like any instance. Host: world-space glyph quads from the
+// font atlas, glyph pixels taken as centimetres (SCX units), placed at the
+// text's resolved world (parent Group + own bone00 (x, z, 0)).
+static void draw_camera_texts(void* root) {
+  struct Vtx {
+    float x, y, z;
+    DWORD color;
+    float u, v;
+  };
+  const DWORD fvf = D3DFVF_XYZ | D3DFVF_DIFFUSE | D3DFVF_TEX1;
+  bool state_set = false;
+  for (const auto& kv : g_texts) {
+    void* key = kv.first;
+    const TextState& t = kv.second;
+    if (!t.alive || !t.visible || !t.font || t.text.empty()) continue;
+    if (mesh_root_of(key) != root) continue;
+    auto fit = g_fonts.find(t.font);
+    if (fit == g_fonts.end() || !fit->second.ready) continue;
+    const FontState& font = fit->second;
+    IDirect3DTexture9* tex = nullptr;
+    if (font.atlas_key) {
+      auto tit = g_textures.find(font.atlas_key);
+      if (tit != g_textures.end()) tex = tit->second.tex;
+    }
+    if (!tex) continue;
+    g_vp_drawn_texts.insert(key);
+    if (!state_set) {
+      state_set = true;
+      g_dev->SetFVF(fvf);
+      g_dev->SetRenderState(D3DRS_ZENABLE, FALSE);
+      g_dev->SetRenderState(D3DRS_LIGHTING, FALSE);
+      g_dev->SetRenderState(D3DRS_CULLMODE, D3DCULL_NONE);
+      g_dev->SetRenderState(D3DRS_ALPHABLENDENABLE, TRUE);
+      g_dev->SetRenderState(D3DRS_SRCBLEND, D3DBLEND_SRCALPHA);
+      g_dev->SetRenderState(D3DRS_DESTBLEND, D3DBLEND_INVSRCALPHA);
+      g_dev->SetTextureStageState(0, D3DTSS_COLOROP, D3DTOP_MODULATE);
+      g_dev->SetTextureStageState(0, D3DTSS_COLORARG1, D3DTA_TEXTURE);
+      g_dev->SetTextureStageState(0, D3DTSS_COLORARG2, D3DTA_DIFFUSE);
+      g_dev->SetTextureStageState(0, D3DTSS_ALPHAOP, D3DTOP_MODULATE);
+      g_dev->SetTextureStageState(0, D3DTSS_ALPHAARG1, D3DTA_TEXTURE);
+      g_dev->SetTextureStageState(0, D3DTSS_ALPHAARG2, D3DTA_DIFFUSE);
+      g_dev->SetSamplerState(0, D3DSAMP_MINFILTER, D3DTEXF_LINEAR);
+      g_dev->SetSamplerState(0, D3DSAMP_MAGFILTER, D3DTEXF_LINEAR);
+    }
+    D3DMATRIX world{};
+    resolve_world(key, &world, 0);
+    g_dev->SetTransform(D3DTS_WORLD, &world);
+    g_dev->SetTexture(0, tex);
+
+    auto glyph_adv = [&](unsigned char ch) -> float {
+      if (ch == ' ') return static_cast<float>(font.px_height) * 0.35f;
+      const size_t gi = static_cast<size_t>(ch);
+      if (gi >= font.glyphs.size()) return 0.f;
+      return font.glyphs[gi].adv_px;
+    };
+    float width_cm = 0.f;
+    for (unsigned char ch : t.text) width_cm += glyph_adv(ch);
+    float pen = 0.f;
+    if (t.align == 1) pen -= width_cm * 0.5f;   // CENTER
+    else if (t.align == 0) pen -= width_cm;     // RIGHT
+    const DWORD col = t.color;
+    for (unsigned char ch : t.text) {
+      const float adv = glyph_adv(ch);
+      if (ch != ' ') {
+        const size_t gi = static_cast<size_t>(ch);
+        if (gi < font.glyphs.size()) {
+          const FontGlyph& g = font.glyphs[gi];
+          if (g.u1 > g.u0 + 1e-6f && g.v1 > g.v0 + 1e-6f) {
+            const float gw = (g.u1 - g.u0) * static_cast<float>(font.atlas_w);
+            const float gh = (g.v1 - g.v0) * static_cast<float>(font.atlas_h);
+            const float l = pen * kScxCmToM, r = (pen + gw) * kScxCmToM;
+            const float top = 0.f, bot = -gh * kScxCmToM;
+            Vtx v[4] = {
+                {l, top, 0.f, col, g.u0, g.v0},
+                {r, top, 0.f, col, g.u1, g.v0},
+                {l, bot, 0.f, col, g.u0, g.v1},
+                {r, bot, 0.f, col, g.u1, g.v1},
+            };
+            g_dev->DrawPrimitiveUP(D3DPT_TRIANGLESTRIP, 2, v, sizeof(Vtx));
+          }
+        }
+      }
+      pen += adv;
+    }
+  }
+  if (state_set) {
+    g_dev->SetTexture(0, nullptr);
+    g_dev->SetRenderState(D3DRS_ALPHABLENDENABLE, FALSE);
+    g_dev->SetRenderState(D3DRS_ZENABLE, TRUE);
+    g_dev->SetRenderState(D3DRS_LIGHTING, TRUE);
+  }
+  if (std::getenv("SLRR_RENDER_TRACE") && g_vp_pass_trace_budget > 0) {
+    size_t n = 0;
+    for (const auto& kv : g_texts) {
+      if (!g_vp_drawn_texts.count(kv.first)) continue;
+      ++n;
+      D3DMATRIX w{};
+      resolve_world(kv.first, &w, 0);
+      std::fprintf(stderr, "[render]   text %p '%s' world=(%g,%g,%g) align=%d color=%08X font_px=%d\n",
+                   kv.first, kv.second.text.c_str(), w.m[3][0], w.m[3][1], w.m[3][2],
+                   kv.second.align, kv.second.color, render_d3d9_font_px_height(kv.second.font));
+    }
+    std::fprintf(stderr, "[render]   texts under root %p: %zu\n", root, n);
+  }
+}
+
 // Fork: PE per-viewport camera pass (GfxEngine_PresentFrame walks the bound
 // viewports, each hooked camera renders the render instances under its
 // parent tree). Host: every camera whose viewport is active draws the
@@ -1230,6 +1341,7 @@ void draw_meshes();
 // Meshes already in g_mesh_queue (legacy world path) are left to draw_meshes.
 void draw_viewport_cameras() {
 #ifdef _WIN32
+  g_vp_drawn_texts.clear();
   if (!g_dev || g_cameras.empty()) return;
   std::vector<std::pair<int32_t, void*>> cams;
   for (const auto& kv : g_cameras) {
@@ -1302,9 +1414,14 @@ void draw_viewport_cameras() {
                        xit != g_mesh_xforms.end() ? xit->second.parent : nullptr, xit != g_mesh_xforms.end() ? xit->second.tree_parent : nullptr,
                        b0 ? "y" : "n", b0 ? b0->px : 0.f, b0 ? b0->py : 0.f, b0 ? b0->pz : 0.f, bit != g_mesh_bones.end() ? bit->second.size() : (size_t)0);
         }
-        std::fprintf(stderr, "[render]   member %p pos=(%g,%g,%g) bmin=(%g,%g,%g) bmax=(%g,%g,%g) subs=%zu\n",
+        const char* tex_label = "";
+        if (!ms.subs.empty() && ms.subs[0].texture_key) {
+          auto tit = g_textures.find(ms.subs[0].texture_key);
+          if (tit != g_textures.end()) tex_label = tit->second.label.c_str();
+        }
+        std::fprintf(stderr, "[render]   member %p pos=(%g,%g,%g) bmin=(%g,%g,%g) bmax=(%g,%g,%g) subs=%zu tex=%s\n",
                      members[i], w.m[3][0], w.m[3][1], w.m[3][2], ms.bmin[0], ms.bmin[1], ms.bmin[2],
-                     ms.bmax[0], ms.bmax[1], ms.bmax[2], ms.subs.size());
+                     ms.bmax[0], ms.bmax[1], ms.bmax[2], ms.subs.size(), tex_label);
       }
       g_fold_own_bone0 = false;
     }
@@ -1342,10 +1459,26 @@ void draw_viewport_cameras() {
     }
     g_dev->SetRenderState(D3DRS_FOGENABLE, FALSE);
     g_dev->Clear(0, nullptr, D3DCLEAR_ZBUFFER, 0, 1.f, 0);
+    if (std::getenv("SLRR_RENDER_TRACE") && g_vp_pass_trace_budget > 0) {
+      D3DMATRIX view{};
+      g_dev->GetTransform(D3DTS_VIEW, &view);
+      for (size_t i = 0; i < members.size() && i < 12; ++i) {
+        D3DMATRIX w{};
+        resolve_world(members[i], &w, 0);
+        const float wx = w.m[3][0], wy = w.m[3][1], wz = w.m[3][2];
+        const float vx = wx * view.m[0][0] + wy * view.m[1][0] + wz * view.m[2][0] + view.m[3][0];
+        const float vy = wx * view.m[0][1] + wy * view.m[1][1] + wz * view.m[2][1] + view.m[3][1];
+        const float vz = wx * view.m[0][2] + wy * view.m[1][2] + wz * view.m[2][2] + view.m[3][2];
+        const float nx = vz != 0.f ? vx * xs / vz : 0.f;
+        const float ny = vz != 0.f ? vy * ys / vz : 0.f;
+        std::fprintf(stderr, "[render]   ndc %p view=(%g,%g,%g) ndc=(%g,%g)\n", members[i], vx, vy, vz, nx, ny);
+      }
+    }
     g_mesh_queue = members;
     g_draw_meshes_keep_camera = true;
     draw_meshes();
     g_draw_meshes_keep_camera = false;
+    draw_camera_texts(root);
     g_fold_own_bone0 = false;
   }
   g_mesh_queue = saved_queue;
@@ -1851,6 +1984,7 @@ void draw_osd_texts() {
 
   for (const auto& t : g_osd_text) {
     if (!t.visible || !t.font || t.text.empty()) continue;
+    if (g_vp_drawn_texts.count(t.text_key)) continue;  // Fork: camera pass drew it
     auto fit = g_fonts.find(t.font);
     if (fit == g_fonts.end() || !fit->second.ready) continue;
     const FontState& font = fit->second;
