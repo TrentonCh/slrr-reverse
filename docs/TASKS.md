@@ -17,13 +17,13 @@ Old-build regression (from `E:\NFS.SLRR Edition\NFS.SLRR Edition`):
 
 ## Next steps (ordered, 2026-10-09)
 
-1. Main-menu input, remaining piece: after "PRESS ENTER" appears the
-   OSD in focus (`Frontend.inputQueue.lastElement()`) is one whose
-   event mask has no EVENT_HOTKEY (mask 0x0), so ENTER reaches its private
-   SEL hotkey and is dropped; earlier the Gates ENTER hotkey (cmd 34,
-   `osdCommand(AXIS_SELECT)`) fires fine. Find which Osd is in focus then
-   and why its mask is clear (Osd.show/hide setEventMask). Then start a
+1. NEW CAREER: selecting it opens `StringRequesterDialog` (career name)
+   whose `show` unwinds on an evalName failure at node 134 (`this.osd.
+   ...(6 args)`; the field-ref resolve fails and the trace now prints the
+   imm/class). Fix, then type a name (`Input.lastKey` path) and start the
    career from the VM.
+2. Hide the 'a' width-probe text; check why one traced run (stream trace
+   + ENTER) died mid-line with no crash output (untraced runs end cleanly).
 3. Quiet the remaining script errors (`ResourceRef.<init>(null)` chain,
    two `MouseCursor` null field reads).
 4. Field initialisers for classes without an explicit `<init>` (confirm
@@ -71,6 +71,7 @@ comes after the menu is up.
 | Typed elements for primitive arrays (int[]/float[]) | 0200c16 | ControlSet key maps were all zero; 132 `user_Add` now |
 | Scripted key presses `SLRR_PE_BOOT_KEYS`, hotkey table-slot sampling, hotkey event on a VM thread | 4c5ff31 | ENTER reaches `Gates.osdCommand(34)` |
 | Physical input only when the window is foreground | 1c7d850 | unfocused test runs read the user's typing as game keys |
+| `string_is()`: String `==` only for real strings | 9282e8f | `Object.equals` said two Osds were equal, focus queue dropped the wrong Osd; ENTER now reaches the menu |
 
 ## In progress
 
@@ -105,6 +106,12 @@ comes after the menu is up.
 - Frame dump at loop end shows the icon strip slid into view with the
   logos and the gradient background. Item label texts are the script's
   placeholders until a selection happens.
+- ENTER works end to end (9282e8f): prompt -> `Gates.osdCommand(34)`
+  -> `showPrimaryVisuals` -> `SlidingMenu.teleport`, label "NEW CAREER";
+  ENTER again -> `SlidingMenu.click` -> `osdCommand(CMD_NEW_CAREER)`.
+  The earlier "mask 0" symptom was the focus queue removing the wrong Osd
+  (`Object.equals` compared any two objects as equal because the string
+  text helper answered for non-strings).
 - Input (4c5ff31): the control set loads (`save/controls/active_control_set`,
   SDAT/CTRL v16; keys 34 ENTER/SPACE/NUMPADENTER, 35 ESC, 55-58 arrows as
   logical axes), `Input.checkHotkeys` samples the registered slot and

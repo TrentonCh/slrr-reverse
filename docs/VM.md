@@ -342,3 +342,14 @@ host samples the slot values recorded at registration (the scripts rewrite
 `SLRR_PE_BOOT_KEYS` injects DIK presses for unattended runs; physical input
 is ignored while the window is not in the foreground (background
 DirectInput was reading the user's typing in other windows).
+
+Follow-up (9282e8f): the string `==` change first compared *any* two
+objects through `string_cstr`, which reads an object's first field as a
+char* and is not a type test, so `Object.equals` returned true for two
+different Osds and `Vector.lastIndexOf` in `Osd.hide` removed the wrong
+`Frontend.inputQueue` entry; the hidden Osd (event mask cleared) stayed in
+focus and swallowed ENTER. `string_is()` (registry of string_new objects)
+now gates the text compare. ENTER on the prompt reaches
+`Gates.osdCommand(AXIS_SELECT)`, the sliding menu teleports in and a second
+ENTER clicks the item (NEW CAREER opens `StringRequesterDialog`, whose
+`show` still unwinds on a field-ref resolve).
