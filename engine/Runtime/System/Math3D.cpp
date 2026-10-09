@@ -284,27 +284,22 @@ bool ypr_is(InvObject* o) {
 }
 
 void vec3_get(InvObject* o, float* x, float* y, float* z) {
-  std::lock_guard<std::mutex> lock(g_mu);
-  Vec3* v = vget(o);
-  if (!v) {
-    *x = *y = *z = 0;
-    return;
-  }
-  *x = v->x;
-  *y = v->y;
-  *z = v->z;
+  // Fork: Build 940 constructs Vector3 in script (fields x/y/z) — fall back
+  // to the TREE fields when there is no host record (load_vec3).
+  float vx = 0.f, vy = 0.f, vz = 0.f;
+  load_vec3(o, vx, vy, vz);
+  *x = vx;
+  *y = vy;
+  *z = vz;
 }
 
 void ypr_get(InvObject* o, float* y, float* p, float* r) {
-  std::lock_guard<std::mutex> lock(g_mu);
-  Ypr* t = yget(o);
-  if (!t) {
-    *y = *p = *r = 0;
-    return;
-  }
-  *y = t->y;
-  *p = t->p;
-  *r = t->r;
+  // Fork: script-constructed Ypr (fields y/p/r) — see vec3_get.
+  float ty = 0.f, tp = 0.f, tr = 0.f;
+  load_ypr(o, ty, tp, tr);
+  *y = ty;
+  *p = tp;
+  *r = tr;
 }
 
 void vec3_set(InvObject* o, float x, float y, float z) {

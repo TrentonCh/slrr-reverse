@@ -157,7 +157,7 @@ void render_ref_apply_flare_soft(InvObject* self, InvObject* glowtexture,
 }
 
 void java_render_Camera_create(InvObject* self, InvObject* parent, InvObject* vp, int32_t pri, float aov, float dmin, float dmax, float lodBias, float lodAmp, int32_t oc, int32_t pt) {
-  if (std::getenv("SLRR_PE_STREAM_TRACE")) std::fprintf(stderr, "[native] Camera.create self=%p parent=%p vp=%p pri=%d aov=%g dmin=%g dmax=%g oc=%d pt=%d\n", (void*)self, (void*)parent, (void*)vp, pri, aov, dmin, dmax, oc, pt);
+  if (std::getenv("SLRR_PE_STREAM_TRACE")) std::fprintf(stderr, "[native] Camera.create self=%p parent=%p(%s) vp=%p pri=%d aov=%g dmin=%g dmax=%g oc=%d pt=%d\n", (void*)self, (void*)parent, parent && tree_host_class(parent) ? tree_host_class(parent) : "", (void*)vp, pri, aov, dmin, dmax, oc, pt);
   // PE @ 0x004861E0 size 0x243 (int_convert 579). UnboxArg
   // (Ljava.util.resource.ResourceRef;Ljava.render.Viewport;IFFFFFII)V:
   // this, parent, vp, pri, aov, dmin, dmax, lodBias, lodAmp, oc, pt.

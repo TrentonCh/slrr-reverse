@@ -430,6 +430,7 @@ void render_d3d9_mesh_set_transform(void* key, float px, float py, float pz,
                                     float yaw, float pitch, float roll,
                                     float sx, float sy, float sz);
 void render_d3d9_mesh_set_parent(void* key, void* parent);
+void render_d3d9_mesh_set_tree_parent(void* key, void* parent);  // Fork
 void render_d3d9_mesh_set_attach_bone(void* key, int32_t bone_id);
 void* render_d3d9_mesh_get_parent(void* key);
 int32_t render_d3d9_mesh_get_attach_bone(void* key);

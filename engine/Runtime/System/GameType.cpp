@@ -72,6 +72,7 @@ static_assert(sizeof(HostGameTypeNativeInst) == 28, "PE malloc(28)");
 
 GameTypeState& st(InvObject* self) { return g_gt[self]; }
 
+
 void sync(InvObject* self) {
   if (!self) return;
   GameTypeState& s = st(self);
@@ -735,6 +736,14 @@ void java_lang_GameType_unregisterCallbacks(InvObject* self) {
   if (!self) return;
   const int32_t handle = tree_field_get_int(self, "ptr");  // Native.ptr
   (void)handle;  // stock always calls Engine_unregisterAllGameInstanceCallbacks
+}
+
+// Fork: parent recorded by createNativeInstance (renderer root walk).
+InvObject* gametype_get_parent(InvObject* self) {
+  if (!self) return nullptr;
+  std::lock_guard<std::mutex> lock(g_mu);
+  auto it = g_gt.find(self);
+  return it == g_gt.end() ? nullptr : it->second.parent;
 }
 
 void java_lang_GameType_createNativeInstance(InvObject* self, InvObject* parent,

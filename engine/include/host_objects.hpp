@@ -258,6 +258,9 @@ void frontend_loading_screen_hide();
 int32_t frontend_loading_screen_visible();
 // Phase 2.118: Frontend.render singleton; flush Present → Object.notify.
 InvObject* frontend_gfx_engine();
+// Fork: GameRef parent link (nullptr when unbound).
+InvObject* gameref_get_parent(InvObject* o);
+InvObject* gametype_get_parent(InvObject* o);  // GameType.createNativeInstance parent
 void frontend_gfx_engine_frame_notify();
 // Phase 2.119: stock LoadingScreen.run pacing loop (host).
 void frontend_loading_screen_run(InvObject* self);

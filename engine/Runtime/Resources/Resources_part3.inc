@@ -219,7 +219,7 @@ void java_util_resource_RenderRef_setMatrix(InvObject* self, int32_t bone_id,
 }
 void java_util_resource_RenderRef_setMatrix_1(InvObject* self, InvObject* pos,
                                               InvObject* ori) {
-  if (std::getenv("SLRR_PE_STREAM_TRACE")) std::fprintf(stderr, "[native] RenderRef.setMatrix self=%p\n", (void*)self);
+  if (std::getenv("SLRR_PE_STREAM_TRACE")) std::fprintf(stderr, "[native] RenderRef.setMatrix self=%p(%s) pos=(%g,%g,%g)\n", (void*)self, tree_host_class(self) ? tree_host_class(self) : "", pos ? tree_field_get_float(pos, "x") : 0.f, pos ? tree_field_get_float(pos, "y") : 0.f, pos ? tree_field_get_float(pos, "z") : 0.f);
   // PE @ 0x00481240 size 0x184: Unbox this, pos, ori. Handle 0 → Mighty
   // ERROR (host: ret). Null pos/ori → 0,0,0. Vec3_store YPR. Then
   // RenderRef_bindBone(handle, "bone00") @ 0x0048BC40 + 
@@ -251,6 +251,7 @@ InvObject* java_util_resource_RenderRef_getPos(InvObject* self) {
 void java_util_resource_RenderRef_changeResource(InvObject* self,
                                                  InvObject* oldtexture,
                                                  InvObject* newtexture) {
+  if (std::getenv("SLRR_PE_STREAM_TRACE")) std::fprintf(stderr, "[native] RenderRef.changeResource self=%p old=%p(ready=%d) new=%p(ready=%d) self_ready=%d\n", (void*)self, (void*)oldtexture, oldtexture ? (render_d3d9_mesh_ready(oldtexture) ? 1 : 0) : -1, (void*)newtexture, newtexture ? (render_d3d9_mesh_ready(newtexture) ? 1 : 0) : -1, render_d3d9_mesh_ready(self) ? 1 : 0);
   // PE @ 0x00480220: Unbox this+old+new (defaults 0). Handle + native+0xC.
   // native+0x4C!=1 → vtable+0x14(1.0). sub_5447D0(0x80000001,0,0) LOD gate
   // not mirrored. slot=vtable+0x0C(1.0); slot.vtable+8(old,new) replace by

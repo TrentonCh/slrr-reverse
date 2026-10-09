@@ -1272,6 +1272,18 @@ void apply_instance_pose(InvObject* o, const float pose[6]) {
 }
 
 
+// Fork: parent link of a GameRef stand-in (renderer root walk across
+// Group / Dummy nodes that have no mesh transform parent).
+InvObject* gameref_get_parent(InvObject* o) {
+  if (!o) return nullptr;
+  {
+    std::lock_guard<std::mutex> lock(g_gr_mu);
+    auto it = g_refs.find(o);
+    if (it != g_refs.end() && it->second.parent) return it->second.parent;
+  }
+  return gametype_get_parent(o);  // Dummy/Group: createNativeInstance(parent, ...)
+}
+
 InvObject* gameref_new() {
   // Fork: carry the class tag so script calls on the stand-in resolve as
   // java.util.resource.GameRef (id/set natives) instead of the caller class.

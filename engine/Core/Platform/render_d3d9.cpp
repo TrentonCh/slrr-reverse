@@ -1,10 +1,12 @@
 #include "render_d3d9.hpp"
 #include "host_objects.hpp"
+#include "tree_interp.hpp"  // Fork: tree_host_class in render traces
 #include "Resources.h"
 #include "rpak.hpp"
 #include "input_win32.hpp"
 #include "video_fmv.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <cstring>

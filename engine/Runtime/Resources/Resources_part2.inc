@@ -1581,6 +1581,7 @@ void java_util_resource_ResourceRef_makeSound(InvObject* self, InvObject* parent
 }
 void java_util_resource_ResourceRef_scaleMesh(InvObject* self, float x, float y,
                                               float z) {
+  if (std::getenv("SLRR_PE_STREAM_TRACE")) { float a[3]{}, b[3]{}; render_d3d9_mesh_local_bounds(self, a, b); std::fprintf(stderr, "[native] ResourceRef.scaleMesh self=%p(%s) s=(%g,%g,%g) ready=%d bmin=(%g,%g,%g) bmax=(%g,%g,%g)\n", (void*)self, tree_host_class(self) ? tree_host_class(self) : "", x, y, z, render_d3d9_mesh_ready(self) ? 1 : 0, a[0], a[1], a[2], b[0], b[1], b[2]); }
   // PE @ 0x00480390: Unbox this+FFF. Handle else Mighty ERROR (not mirrored).
   // ResourceRef_applyScaleMesh @ 0x0048E7F0 (unique xref): native+0xC, LOD
   // vtable+0x14(1.0f) if +0x4C!=1, sub_5447D0(0x80000000) not mirrored,
@@ -1591,7 +1592,8 @@ void java_util_resource_ResourceRef_scaleMesh(InvObject* self, float x, float y,
   render_d3d9_mesh_scale_vertices(self, x, y, z);
 }
 void java_util_resource_ResourceRef_duplicate(InvObject* self, InvObject* src) {
-  // PE @ 0x004802C0 → ResourceHandle_bindOrClone @ 0x0048D860.
+   if (std::getenv("SLRR_PE_STREAM_TRACE")) { float a[3]{}, b[3]{}; if (src) render_d3d9_mesh_local_bounds(src, a, b); std::string ep; int32_t sid = 0, styp = 0; if (src) { std::lock_guard<std::mutex> lock(g_mu); ep = R(src).entry_path; sid = R(src).id; styp = R(src).type; } std::fprintf(stderr, "[native] ResourceRef.duplicate self=%p(%s) src=%p(%s) src_id=%d type=%d path=%s ready=%d bmin=(%g,%g,%g) bmax=(%g,%g,%g)\n", (void*)self, tree_host_class(self) ? tree_host_class(self) : "", (void*)src, src && tree_host_class(src) ? tree_host_class(src) : "", sid, styp, ep.c_str(), src ? (render_d3d9_mesh_ready(src) ? 1 : 0) : -1, a[0], a[1], a[2], b[0], b[1], b[2]); }
+ // PE @ 0x004802C0 → ResourceHandle_bindOrClone @ 0x0048D860.
   // Types 5/7/13/14 (mesh/tex/light/render-obj): Resource_cloneNative then bind.
   // Else share like set(ResourceRef). Null this/src = no-op.
   if (!self || !src) return;
@@ -1617,7 +1619,7 @@ void java_util_resource_ResourceRef_duplicate(InvObject* self, InvObject* src) {
 // ---- RenderRef ----
 void java_util_resource_RenderRef_create(InvObject* self, InvObject* parent,
                                          InvObject* type, InvObject* alias) {
-  if (std::getenv("SLRR_PE_STREAM_TRACE")) std::fprintf(stderr, "[native] RenderRef.create self=%p parent=%p type=%p alias=%s\n", (void*)self, (void*)parent, (void*)type, alias ? string_cstr(alias) : "");
+  if (std::getenv("SLRR_PE_STREAM_TRACE")) std::fprintf(stderr, "[native] RenderRef.create self=%p(%s) parent=%p(%s) type=%p(%s) alias=%s type_ready=%d\n", (void*)self, tree_host_class(self) ? tree_host_class(self) : "", (void*)parent, parent && tree_host_class(parent) ? tree_host_class(parent) : "", (void*)type, type && tree_host_class(type) ? tree_host_class(type) : "", alias ? string_cstr(alias) : "", type ? (render_d3d9_mesh_ready(type) ? 1 : 0) : -1);
   // PE @ 0x00480EE0: Unbox this+parent+type+alias. Handle/parent/type else
   // Mighty ERROR; parent+0xC==0 silent ret. ResourceEngine_type_renderinst
   // factory type=3 INSTANCE_RENDER; alias default "_renderinst"; bindBone
@@ -1650,6 +1652,7 @@ void java_util_resource_RenderRef_create(InvObject* self, InvObject* parent,
   }
   if (type && render_d3d9_mesh_ready(type))
     render_d3d9_mesh_clone(self, type);
+  render_d3d9_mesh_set_tree_parent(self, parent);
   render_d3d9_mesh_set_parent(self, parent);
   if (parent) {
     const int32_t bone00 = render_d3d9_mesh_get_bone_id(parent, "bone00");

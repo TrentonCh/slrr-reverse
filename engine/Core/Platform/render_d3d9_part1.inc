@@ -493,6 +493,10 @@ struct MeshXform {
   void* parent = nullptr;
   // When parent is set: Local * BoneLocal(parent, attach_bone) * ParentWorld.
   int32_t attach_bone = 0;
+  // Fork: creation parent (RenderRef.create(parent,type,alias)). The PE keeps
+  // the render instance in its parent's tree independently of the bone
+  // link; setMatrix(pos,ori) (bone_ref=0) unlinks the bone parent only.
+  void* tree_parent = nullptr;
   // PE LinkOrUnlinkBone bone[+0xAC] = ResPayload_createBoneParentHook result.
   BoneParentHook* bone_parent_hook = nullptr;
   // Host PeBone for a4==0 / Rebind / indexed-slot splice (not InvObject*).
@@ -558,6 +562,11 @@ void build_local_world(const MeshXform& xf, D3DMATRIX* out) {
 
 // World = Local * ParentWorld (row-vector hierarchy).
 // If attach_bone != 0 (or bone 0 has an explicit pose): insert bone local of parent.
+// Fork: during the per-viewport camera pass an instance's own bone00 local
+// (where RenderRef.setMatrix(pos, ypr) stores a script instance's placement)
+// is folded into its world transform.
+static bool g_fold_own_bone0 = false;
+
 bool resolve_world(void* key, D3DMATRIX* out, int depth) {
   if (!out) return false;
   if (!key || depth > 32) {
@@ -569,15 +578,29 @@ bool resolve_world(void* key, D3DMATRIX* out, int depth) {
   if (it != g_mesh_xforms.end()) xf = it->second;
   D3DMATRIX local{};
   build_local_world(xf, &local);
-  if (!xf.parent) {
+  if (g_fold_own_bone0) {
+    auto bit = g_mesh_bones.find(key);
+    if (bit != g_mesh_bones.end()) {
+      auto b0 = bit->second.find(0);
+      if (b0 != bit->second.end()) {
+        D3DMATRIX own{};
+        build_local_world(b0->second, &own);
+        D3DMATRIX tmp{};
+        mat_mul(own, local, &tmp);
+        local = tmp;
+      }
+    }
+  }
+  void* const xparent = xf.parent ? xf.parent : xf.tree_parent;
+  if (!xparent) {
     *out = local;
     return true;
   }
   D3DMATRIX parent_world{};
-  resolve_world(xf.parent, &parent_world, depth + 1);
+  resolve_world(xparent, &parent_world, depth + 1);
   D3DMATRIX bone_local{};
   mat_identity(&bone_local);
-  auto bit = g_mesh_bones.find(xf.parent);
+  auto bit = g_mesh_bones.find(xparent);
   if (bit != g_mesh_bones.end()) {
     auto b2 = bit->second.find(xf.attach_bone);
     if (b2 != bit->second.end()) build_local_world(b2->second, &bone_local);
@@ -1163,6 +1186,174 @@ void set_lookat_view(float eye_x, float eye_y, float eye_z, float at_x,
 #endif
 }
 
+// Fork: when set, draw_meshes uses the VIEW/PROJECTION already bound
+// instead of auto-framing the queued bounds (per-viewport camera passes).
+static bool g_draw_meshes_keep_camera = false;
+static constexpr float kScxCmToM = 0.01f;  // Fork: SCX cm -> script metres
+static int g_vp_pass_trace_budget = 40;  // SLRR_RENDER_TRACE=1 lines
+
+// Root of a render instance's parent chain (g_mesh_xforms), cycle-guarded.
+static void* mesh_root_of(void* key) {
+  void* cur = key;
+  for (int guard = 0; cur && guard < 64; ++guard) {
+    void* next = nullptr;
+    auto it = g_mesh_xforms.find(cur);
+    if (it != g_mesh_xforms.end() && it->second.parent) next = it->second.parent;
+    if (!next && it != g_mesh_xforms.end()) next = it->second.tree_parent;
+    if (!next) next = gameref_get_parent(static_cast<InvObject*>(cur));  // Group -> Osd
+    if (!next || next == cur) break;
+    cur = next;
+  }
+  return cur;
+}
+
+// Rigid inverse of a world matrix (rotation transpose, translated).
+static void invert_rigid(const D3DMATRIX& m, D3DMATRIX* out) {
+  D3DMATRIX r{};
+  for (int i = 0; i < 3; ++i)
+    for (int j = 0; j < 3; ++j) r.m[i][j] = m.m[j][i];
+  const float tx = m.m[3][0], ty = m.m[3][1], tz = m.m[3][2];
+  r.m[3][0] = -(tx * r.m[0][0] + ty * r.m[1][0] + tz * r.m[2][0]);
+  r.m[3][1] = -(tx * r.m[0][1] + ty * r.m[1][1] + tz * r.m[2][1]);
+  r.m[3][2] = -(tx * r.m[0][2] + ty * r.m[1][2] + tz * r.m[2][2]);
+  r.m[3][3] = 1.f;
+  *out = r;
+}
+
+void draw_meshes();
+
+// Fork: PE per-viewport camera pass (GfxEngine_PresentFrame walks the bound
+// viewports, each hooked camera renders the render instances under its
+// parent tree). Host: every camera whose viewport is active draws the
+// ready meshes that share the camera parent's root, with the camera's own
+// world transform inverted as the view and its aov/dmin/dmax projection.
+// Meshes already in g_mesh_queue (legacy world path) are left to draw_meshes.
+void draw_viewport_cameras() {
+#ifdef _WIN32
+  if (!g_dev || g_cameras.empty()) return;
+  std::vector<std::pair<int32_t, void*>> cams;
+  for (const auto& kv : g_cameras) {
+    if (!kv.second.viewport) continue;
+    auto vit = g_viewports.find(kv.second.viewport);
+    if (vit == g_viewports.end() || !vit->second.active) continue;
+    cams.emplace_back(vit->second.pri, kv.first);
+  }
+  if (cams.empty()) return;
+  std::sort(cams.begin(), cams.end(),
+            [](const auto& a, const auto& b) { return a.first > b.first; });  // high pri first (background)
+  const std::vector<void*> saved_queue = g_mesh_queue;
+  void* const saved_vp = g_active_vp;
+  for (const auto& pc : cams) {
+    void* cam_key = pc.second;
+    const CameraState& cam = g_cameras[cam_key];
+    void* root = mesh_root_of(cam.parent ? cam.parent : cam_key);
+    std::vector<void*> members;
+    for (const auto& mk : g_meshes) {
+      if (!mk.second.ready || mk.first == cam_key) continue;
+      if (std::find(saved_queue.begin(), saved_queue.end(), mk.first) != saved_queue.end()) continue;
+      if (mesh_root_of(mk.first) != root) continue;
+      members.push_back(mk.first);
+    }
+    if (std::getenv("SLRR_RENDER_TRACE") && g_vp_pass_trace_budget > 0 && members.empty() &&
+        g_vp_pass_trace_budget == 40) {
+      // One-time chain dump: how the ready meshes hang together.
+      int shown = 0;
+      for (const auto& mk : g_meshes) {
+        if (!mk.second.ready || shown++ >= 12) continue;
+        void* cur = mk.first;
+        std::string chain;
+        for (int g = 0; cur && g < 8; ++g) {
+          char b[96];
+          const char* cn = tree_host_class(static_cast<InvObject*>(cur));
+          auto xit = g_mesh_xforms.find(cur);
+          void* xp = (xit != g_mesh_xforms.end()) ? xit->second.parent : nullptr;
+          void* tp = (xit != g_mesh_xforms.end()) ? xit->second.tree_parent : nullptr;
+          void* gp = gameref_get_parent(static_cast<InvObject*>(cur));
+          std::snprintf(b, sizeof b, " %p(%s;xf=%p;tp=%p;gr=%p)", cur, cn ? cn : "", xp, tp, gp);
+          chain += b;
+          void* next = xp ? xp : (tp ? tp : gp);
+          if (!next || next == cur) break;
+          cur = next;
+        }
+        std::fprintf(stderr, "[render] chain%s\n", chain.c_str());
+      }
+      std::fprintf(stderr, "[render] cam %p parent %p(%s) gr=%p\n", cam_key, cam.parent,
+                   cam.parent && tree_host_class(static_cast<InvObject*>(cam.parent)) ? tree_host_class(static_cast<InvObject*>(cam.parent)) : "",
+                   gameref_get_parent(static_cast<InvObject*>(cam.parent)));
+    }
+    if (std::getenv("SLRR_RENDER_TRACE") && g_vp_pass_trace_budget > 0 && !members.empty()) {
+      --g_vp_pass_trace_budget;
+      D3DMATRIX cw{};
+      g_fold_own_bone0 = true;
+      resolve_world(cam_key, &cw, 0);
+      std::fprintf(stderr, "[render] vp-pass cam=%p vp=%p vp_pri=%d parent=%p root=%p members=%zu cam_pos=(%g,%g,%g)\n",
+                   cam_key, cam.viewport, pc.first, cam.parent, root, members.size(),
+                   cw.m[3][0], cw.m[3][1], cw.m[3][2]);
+      for (size_t i = 0; i < members.size() && i < 6; ++i) {
+        D3DMATRIX w{}; resolve_world(members[i], &w, 0);
+        const MeshState& ms = g_meshes[members[i]];
+        {
+          auto xit = g_mesh_xforms.find(members[i]);
+          auto bit = g_mesh_bones.find(members[i]);
+          const MeshXform* b0 = nullptr;
+          if (bit != g_mesh_bones.end()) { auto b = bit->second.find(0); if (b != bit->second.end()) b0 = &b->second; }
+          std::fprintf(stderr, "[render]   member-xf %p xf.p=(%g,%g,%g) xf.parent=%p tree=%p bone0=%s(%g,%g,%g) nbones=%zu\n",
+                       members[i], xit != g_mesh_xforms.end() ? xit->second.px : -1.f, xit != g_mesh_xforms.end() ? xit->second.py : -1.f, xit != g_mesh_xforms.end() ? xit->second.pz : -1.f,
+                       xit != g_mesh_xforms.end() ? xit->second.parent : nullptr, xit != g_mesh_xforms.end() ? xit->second.tree_parent : nullptr,
+                       b0 ? "y" : "n", b0 ? b0->px : 0.f, b0 ? b0->py : 0.f, b0 ? b0->pz : 0.f, bit != g_mesh_bones.end() ? bit->second.size() : (size_t)0);
+        }
+        std::fprintf(stderr, "[render]   member %p pos=(%g,%g,%g) bmin=(%g,%g,%g) bmax=(%g,%g,%g) subs=%zu\n",
+                     members[i], w.m[3][0], w.m[3][1], w.m[3][2], ms.bmin[0], ms.bmin[1], ms.bmin[2],
+                     ms.bmax[0], ms.bmax[1], ms.bmax[2], ms.subs.size());
+      }
+      g_fold_own_bone0 = false;
+    }
+    if (members.empty()) continue;
+    // Viewport rect.
+    g_active_vp = cam.viewport;
+    apply_active_viewport();
+    // Projection from the camera (half aov deg, dmin, dmax, vp aspect).
+    float aspect = 4.f / 3.f;
+    {
+      auto vit = g_viewports.find(cam.viewport);
+      const float px_w = vit->second.w * static_cast<float>(g_w > 0 ? g_w : 1);
+      const float px_h = vit->second.h * static_cast<float>(g_h > 0 ? g_h : 1);
+      if (px_h > 0.f) aspect = px_w / px_h;
+    }
+    float half_rad = cam.half_aov_deg * 0.01745329252f;
+    if (half_rad < 0.01f) half_rad = 0.01f;
+    if (half_rad > 1.55f) half_rad = 1.55f;
+    const float ys = 1.f / std::tan(half_rad);
+    const float xs = ys / aspect;
+    const float zn = cam.dmin > 1e-4f ? cam.dmin : 0.1f;
+    const float zf = cam.dmax > zn + 1e-3f ? cam.dmax : zn + 100.f;
+    const float q = zf / (zf - zn);
+    D3DMATRIX proj{};
+    proj.m[0][0] = xs; proj.m[1][1] = ys; proj.m[2][2] = q; proj.m[2][3] = 1.f; proj.m[3][2] = -q * zn;
+    g_dev->SetTransform(D3DTS_PROJECTION, &proj);
+    // View: camera world (own bone00 pose folded) looking down its -Z.
+    g_fold_own_bone0 = true;
+    D3DMATRIX cam_world{};
+    resolve_world(cam_key, &cam_world, 0);
+    {
+      const float ex = cam_world.m[3][0], ey = cam_world.m[3][1], ez = cam_world.m[3][2];
+      const float fx = -cam_world.m[2][0], fy = -cam_world.m[2][1], fz = -cam_world.m[2][2];
+      set_lookat_view(ex, ey, ez, ex + fx, ey + fy, ez + fz);
+    }
+    g_dev->SetRenderState(D3DRS_FOGENABLE, FALSE);
+    g_dev->Clear(0, nullptr, D3DCLEAR_ZBUFFER, 0, 1.f, 0);
+    g_mesh_queue = members;
+    g_draw_meshes_keep_camera = true;
+    draw_meshes();
+    g_draw_meshes_keep_camera = false;
+    g_fold_own_bone0 = false;
+  }
+  g_mesh_queue = saved_queue;
+  g_active_vp = saved_vp;
+  if (g_active_vp) apply_active_viewport();
+#endif
+}
+
 void draw_meshes() {
 #ifdef _WIN32
   if (!g_dev || g_mesh_queue.empty()) return;
@@ -1207,7 +1398,7 @@ void draw_meshes() {
           }
         }
   }
-  if (have_bounds) {
+  if (have_bounds && !g_draw_meshes_keep_camera) {
     const float cx = 0.5f * (bmin[0] + bmax[0]);
     const float cy = 0.5f * (bmin[1] + bmax[1]);
     const float cz = 0.5f * (bmin[2] + bmax[2]);
@@ -1284,6 +1475,13 @@ void draw_meshes() {
     if (it == g_meshes.end() || !it->second.ready) continue;
     D3DMATRIX world{};
     resolve_world(key, &world, 0);
+    if (g_draw_meshes_keep_camera) {
+      // Fork: SCX vertices are centimetres (see GameRef_core extent "cm");
+      // script poses / camera planes are metres. Scale geometry into the
+      // instance's metre-space world for the per-viewport camera pass.
+      for (int r = 0; r < 3; ++r)
+        for (int c = 0; c < 3; ++c) world.m[r][c] *= kScxCmToM;
+    }
     g_dev->SetTransform(D3DTS_WORLD, &world);
 
     const MeshXform* xf = nullptr;
@@ -1796,6 +1994,7 @@ void render_d3d9_flush() {
         g_dev->Clear(0, nullptr, world_clear_flags, kClear, kPeClearZ, 0);
       }
       draw_meshes();
+      draw_viewport_cameras();  // Fork: script Osd / world cameras
       queue_flare_sprites();
       set_fullscreen_viewport();
       draw_osd_rects();

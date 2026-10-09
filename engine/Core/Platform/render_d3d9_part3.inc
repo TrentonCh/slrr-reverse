@@ -1848,6 +1848,12 @@ void render_d3d9_mesh_set_parent(void* key, void* parent) {
   res_handle_maybe_relink_lod(parent);
 }
 
+// Fork: creation parent from RenderRef.create (see MeshXform::tree_parent).
+void render_d3d9_mesh_set_tree_parent(void* key, void* parent) {
+  if (!key) return;
+  g_mesh_xforms[key].tree_parent = (parent == key) ? nullptr : parent;
+}
+
 void render_d3d9_mesh_set_attach_bone(void* key, int32_t bone_id) {
   if (!key) return;
   g_mesh_xforms[key].attach_bone = bone_id < 0 ? 0 : bone_id;
