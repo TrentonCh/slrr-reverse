@@ -2166,6 +2166,10 @@ bool vmthread_op24_eval_name(VmThread* thr, const JvmClass* cls,
       const char* cn = tree_host_class(*self_out);
       if (cn && cn[0]) {
         *class_out = cn;
+      } else if (!first && string_cstr(*self_out)) {
+        // Fork: host strings carry no class tag (GameRef/ResourceRef
+        // stand-ins now do), so an untagged object with text is a String.
+        *class_out = "java.lang.String";
       } else if (!first) {
         // Fork: PE Object_callMethod uses obj+0xC; a host object without
         // a class tag must not inherit the CALLER's class, or

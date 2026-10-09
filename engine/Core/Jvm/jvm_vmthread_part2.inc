@@ -1409,6 +1409,7 @@ static int vmthread_exec_stream_inner(VmThread* thr, const JvmClass* cls_in,
           // String (host InvString has no class tag), else caller class.
           const char* cn = tree_host_class(recv);
           if ((!cn || !cn[0]) && tree_vector_is(recv)) cn = "java.util.Vector";
+          if ((!cn || !cn[0]) && string_cstr(recv)) cn = "java.lang.String";
           if (!cn || !cn[0]) cn = "java.lang.Object";  // PE obj+0xC, never the caller
           const StreamCall sc =
               vmthread_stream_call(thr, recv, cn, mname.c_str());
