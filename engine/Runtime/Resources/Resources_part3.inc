@@ -219,6 +219,7 @@ void java_util_resource_RenderRef_setMatrix(InvObject* self, int32_t bone_id,
 }
 void java_util_resource_RenderRef_setMatrix_1(InvObject* self, InvObject* pos,
                                               InvObject* ori) {
+  if (std::getenv("SLRR_PE_STREAM_TRACE")) std::fprintf(stderr, "[native] RenderRef.setMatrix self=%p\n", (void*)self);
   // PE @ 0x00481240 size 0x184: Unbox this, pos, ori. Handle 0 → Mighty
   // ERROR (host: ret). Null pos/ori → 0,0,0. Vec3_store YPR. Then
   // RenderRef_bindBone(handle, "bone00") @ 0x0048BC40 + 

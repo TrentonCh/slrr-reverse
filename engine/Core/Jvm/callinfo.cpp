@@ -659,15 +659,18 @@ bool call_native(const NativeEntry* entry, CallFrame* frame, std::string* err) {
       }
       w.push_back(v);
     }
-    if (w.size() <= 10) {
-      while (w.size() < 10) w.push_back(0u);
+    // 16 words: Camera.create takes this + 10 params (11 words).
+    if (w.size() <= 16) {
+      while (w.size() < 16) w.push_back(0u);
       using A = uint32_t;
       if (ret == JvmTag::Float) {
-        using Fn = float (*)(A, A, A, A, A, A, A, A, A, A);
-        return finish_f(reinterpret_cast<Fn>(fn)(w[0], w[1], w[2], w[3], w[4], w[5], w[6], w[7], w[8], w[9]));
+        using Fn = float (*)(A, A, A, A, A, A, A, A, A, A, A, A, A, A, A, A);
+        return finish_f(reinterpret_cast<Fn>(fn)(w[0], w[1], w[2], w[3], w[4], w[5], w[6], w[7], w[8], w[9],
+                                                 w[10], w[11], w[12], w[13], w[14], w[15]));
       }
-      using Fn = uint32_t (*)(A, A, A, A, A, A, A, A, A, A);
-      const uint32_t r = reinterpret_cast<Fn>(fn)(w[0], w[1], w[2], w[3], w[4], w[5], w[6], w[7], w[8], w[9]);
+      using Fn = uint32_t (*)(A, A, A, A, A, A, A, A, A, A, A, A, A, A, A, A);
+      const uint32_t r = reinterpret_cast<Fn>(fn)(w[0], w[1], w[2], w[3], w[4], w[5], w[6], w[7], w[8], w[9],
+                                                  w[10], w[11], w[12], w[13], w[14], w[15]);
       if (ret == JvmTag::Obj) return finish_o(reinterpret_cast<InvObject*>(static_cast<std::uintptr_t>(r)));
       if (ret == JvmTag::Int) return finish_i(static_cast<int32_t>(r));
       return finish_v();

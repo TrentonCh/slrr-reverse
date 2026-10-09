@@ -157,6 +157,7 @@ void render_ref_apply_flare_soft(InvObject* self, InvObject* glowtexture,
 }
 
 void java_render_Camera_create(InvObject* self, InvObject* parent, InvObject* vp, int32_t pri, float aov, float dmin, float dmax, float lodBias, float lodAmp, int32_t oc, int32_t pt) {
+  if (std::getenv("SLRR_PE_STREAM_TRACE")) std::fprintf(stderr, "[native] Camera.create self=%p parent=%p vp=%p pri=%d aov=%g dmin=%g dmax=%g oc=%d pt=%d\n", (void*)self, (void*)parent, (void*)vp, pri, aov, dmin, dmax, oc, pt);
   // PE @ 0x004861E0 size 0x243 (int_convert 579). UnboxArg
   // (Ljava.util.resource.ResourceRef;Ljava.render.Viewport;IFFFFFII)V:
   // this, parent, vp, pri, aov, dmin, dmax, lodBias, lodAmp, oc, pt.
@@ -245,6 +246,7 @@ void java_render_Camera_create(InvObject* self, InvObject* parent, InvObject* vp
 }
 
 void java_render_Camera_destroy(InvObject* self) {
+  if (std::getenv("SLRR_PE_STREAM_TRACE")) std::fprintf(stderr, "[native] Camera.destroy self=%p\n", (void*)self);
   // PE @ 0x004864C0 size 0xae (174). UnboxArg ()V: this only.
   // handle = JVM_vm_get_int_field(this, dword_62E008).
   // handle==0 → Mighty ERROR ("!" + "Mighty ERROR" via Engine_strcat_cap
@@ -261,6 +263,7 @@ void java_render_Camera_destroy(InvObject* self) {
 }
 
 void java_render_Camera_activate(InvObject* self, InvObject* vp, int32_t pri) {
+  if (std::getenv("SLRR_PE_STREAM_TRACE")) std::fprintf(stderr, "[native] Camera.activate self=%p vp=%p pri=%d\n", (void*)self, (void*)vp, pri);
   // PE @ 0x00486470 size 0x50 (int_convert 80). UnboxArg
   // (Ljava.render.Viewport;I)V: this, vp, pri. handle =
   // JVM_vm_get_int_field(this, dword_62E008). handle==0 → silent return
@@ -705,6 +708,7 @@ float java_render_Text_getWidthPixels(InvObject* str, InvObject* font) {
 }
 
 void java_render_Viewport_create(InvObject* self, int32_t pri, float x, float y, float w, float h) {
+  if (std::getenv("SLRR_PE_STREAM_TRACE")) std::fprintf(stderr, "[native] Viewport.create self=%p pri=%d x=%g y=%g w=%g h=%g\n", (void*)self, pri, x, y, w, h);
   // PE @ 0x004814E0 size 0x11c (284). UnboxArg (IFFFF)V: this + pri I +
   // x,y,w,h F. handle = JVM_vm_get_int_field(this, dword_62E008).
   // handle==0 → Mighty ERROR ("!" + "Mighty ERROR") on Engine_ErrorLogBuf

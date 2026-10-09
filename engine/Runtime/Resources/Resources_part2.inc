@@ -1617,6 +1617,7 @@ void java_util_resource_ResourceRef_duplicate(InvObject* self, InvObject* src) {
 // ---- RenderRef ----
 void java_util_resource_RenderRef_create(InvObject* self, InvObject* parent,
                                          InvObject* type, InvObject* alias) {
+  if (std::getenv("SLRR_PE_STREAM_TRACE")) std::fprintf(stderr, "[native] RenderRef.create self=%p parent=%p type=%p alias=%s\n", (void*)self, (void*)parent, (void*)type, alias ? string_cstr(alias) : "");
   // PE @ 0x00480EE0: Unbox this+parent+type+alias. Handle/parent/type else
   // Mighty ERROR; parent+0xC==0 silent ret. ResourceEngine_type_renderinst
   // factory type=3 INSTANCE_RENDER; alias default "_renderinst"; bindBone

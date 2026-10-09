@@ -1755,6 +1755,25 @@ JvmValue Jvm::invoke(const char* class_fqn, const char* name, const char* signat
     if (static_cast<size_t>(meth->tree_index) >= c.trees.size()) return false;
     return !c.trees[static_cast<size_t>(meth->tree_index)].nodes.empty();
   };
+  // Fork: a NATIVE method declared on the class itself is the method
+  // (PE ACC_NATIVE → RegisterNative lookup). The super walk below used to
+  // replace Camera.create (native, no tree) with the scripted 3-arg
+  // RenderRef.create wrapper inherited from its superclass, so no camera
+  // ever reached the renderer.
+  if (m && m->is_native && !method_has_tree(*cls, m) &&
+      !(name && std::strcmp(name, "<init>") == 0)) {
+    if (const NativeEntry* ne = resolve_native(class_fqn, name, signature); ne && ne->fn) {
+      CallFrame frame;
+      frame.args = args;
+      soft_unbox_bind_registered_sig(&frame, ne);
+      std::string err;
+      if (!call_native(ne, &frame, &err)) {
+        std::fprintf(stderr, "[jvm] call_native failed: %s\n", err.c_str());
+        return JvmValue::make_void();
+      }
+      return frame.result;
+    }
+  }
   // City: stub/native <init> MTHD + FILD arrays — skip empty body, use Scene.
   if (m && name && std::strcmp(name, "<init>") == 0 && !method_has_tree(*cls, m) &&
       !cls->field_inits.empty()) {
