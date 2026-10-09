@@ -268,3 +268,32 @@ text objects reaching the renderer. Remaining script errors are the
 `ResourceRef.<init>(ResourceRef)` chain with a null argument (PE reports a
 "not found" and skips that ctor; the host calls it) and two MouseCursor
 null field reads. Old-build regression passes.
+
+### 2026-10-09 (session 3, later): the Osd draws
+
+The menu's render instances existed but nothing drew them. The exe's
+`GfxEngine_PresentFrame` walks the bound viewports and each hooked camera
+renders the instances under its parent tree; the host only had the Soft
+auto-framing preview (`draw_meshes`) fed by the legacy world/sky paths. New
+`draw_viewport_cameras()` (render_d3d9_part1.inc) does the per-viewport
+pass: active viewports' cameras sorted by viewport priority, membership by
+shared root (mesh xform parent -> creation parent -> `gameref_get_parent`,
+which is how a Group reaches its Osd), camera world inverted as the view
+looking down -Z, projection from `Camera.create`'s half aov / dmin / dmax.
+
+Three host defects had hidden the instances. `RenderRef.setMatrix(pos,
+ori)` is the 4-arg native with bone_ref=0; its a4==0 unlink path cleared
+the parent that `RenderRef.create` had just set, orphaning every Rectangle
+(`MeshXform::tree_parent` now keeps the creation parent). `vec3_get` and
+`ypr_get` only consulted the host side maps; Build 940 constructs `Vector3`
+and `Ypr` in script, so every pose read as (0,0,0) (they now use the TREE
+field fallback the file already had). Finally the Rectangle template
+`frontend/meshes/etalon_negyzet_alpha.SCX` is a 100 x 100 quad: SCX files
+are centimetres while the scripts place things in metres (background
+rectangle `scaleMesh(3.92, 2.94)` at z=3 from a camera at z=5.48 with a
+30 degree half aov covers exactly the screen once scaled by 0.01).
+
+State at 106e5f3: the frame dump shows the video, version banner, the Osd
+background and the sliding-menu icon strip (part pictures set through
+`menuItem.updateTexture` -> `Rectangle.changeTexture`). Texts are still
+drawn by the legacy screen-space pass. Old-build regression passes.
