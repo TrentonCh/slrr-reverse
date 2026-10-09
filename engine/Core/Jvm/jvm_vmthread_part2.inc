@@ -1035,10 +1035,21 @@ static int vmthread_exec_stream_inner(VmThread* thr, const JvmClass* cls_in,
     if (op <= 0x48) {
       switch (kVmOpcodeCaseMap[op]) {
         case kVmCaseOp4:
-          vmthread_op4_cond_skip(thr);  // extra +8 only; default advance below
+          // PE case 4 @ 0x42116C / 0x562e78: truthy -> PC += 16 (skip the
+          // following jump so the second AND operand is evaluated), else
+          // opDefault_advance. The handler adds the conditional +8 to the
+          // CURRENT PC; the absolute `pc_before + 8` default advance below
+          // discarded it, which made `a && b` evaluate `a` only.
+          vmthread_op4_cond_skip(thr);
+          thr->pe.unk_24 += 8;
+          self_advanced = true;
           break;
         case kVmCaseOp5:
+          // PE case 5 @ 0x4211E0: falsy -> PC += 16 (evaluate the second OR
+          // operand), truthy -> opDefault_advance onto the jump.
           vmthread_op5_cond_skip(thr);
+          thr->pe.unk_24 += 8;
+          self_advanced = true;
           break;
         case kVmCaseOp16:
           vmthread_op16_done(thr);  // PE @ 0x423932 → epilogue
