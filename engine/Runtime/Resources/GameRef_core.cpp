@@ -317,6 +317,10 @@ InvObject* java_util_resource_GameRef_create(InvObject* self, InvObject* parent,
   float pose[6] = {};
   const bool have_pose =
       parse_instance_params(params ? string_cstr(params) : nullptr, pose);
+  if (std::getenv("SLRR_PE_STREAM_TRACE"))
+    std::fprintf(stderr, "[native] GameRef.create type=0x%08X entry=%p fqn='%s' alias='%s' want_vt=%d\n",
+                 static_cast<unsigned>(type_id), static_cast<const void*>(ent), fqn.c_str(),
+                 alias_cstr ? alias_cstr : "", want_vt ? 1 : 0);
 
   auto finish_create = [&](InvObject* inst) {
     // Phase 2.59: world-tree parent → getParentID (Part.addPart install check).

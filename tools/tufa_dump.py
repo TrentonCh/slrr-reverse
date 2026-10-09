@@ -251,6 +251,7 @@ def main():
     ap.add_argument('--method', help='only dump trees for this method name')
     ap.add_argument('--no-cons', action='store_true')
     ap.add_argument('--raw', action='store_true', help='print raw node bytes too')
+    ap.add_argument('--tree', type=int, default=-1, help='also dump this tree index (init trees have no method)')
     a = ap.parse_args()
     data = open(a.file, 'rb').read()
     for bi, blob in enumerate(split_blobs(data)):
@@ -276,6 +277,11 @@ def main():
         if 'FILD' in secs:
             p = secs['FILD']
             print('-- FILD %d bytes: ' % len(p), ' '.join('%08x' % x for x in struct.unpack_from('<%dI' % (len(p) // 4), p, 0)))
+        if 0 <= a.tree < len(trees):
+            print('-- tree %d  <by-index>  (%d nodes)' % (a.tree, len(trees[a.tree])))
+            for ip, (op, slot, imm) in enumerate(trees[a.tree]):
+                immtxt = '' if imm is None else ('imm=%-6d' % imm + ((' (%s)' % cons_str(pool, imm)) if 0 <= imm < len(pool) else ''))
+                print('   %3d: op=0x%02x slot=%-4d %s' % (ip, op, slot, immtxt))
         for name, sig, ti, flags, w in methods:
             if a.method and name != a.method:
                 continue

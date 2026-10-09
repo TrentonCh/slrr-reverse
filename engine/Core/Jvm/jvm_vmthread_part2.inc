@@ -411,12 +411,23 @@ bool vmthread_op1007_literal(VmThread* thr, const JvmClass* cls, int32_t tag,
     if (!vmthread_pop_operand(thr, &r)) r = JvmValue{};
     if (!vmthread_pop_operand(thr, &l)) l = JvmValue{};
     if (l.tag == JvmTag::Obj || r.tag == JvmTag::Obj) {
-      const char* ls =
-          (l.tag == JvmTag::Obj && l.v.o) ? string_cstr(l.v.o) : nullptr;
-      const char* rs =
-          (r.tag == JvmTag::Obj && r.v.o) ? string_cstr(r.v.o) : nullptr;
-      std::string cat = ls ? ls : "";
-      if (rs) cat += rs;
+      // Fork: PE Value_add with a String side converts the other side to
+      // its text (int decimal, float %g) — `"(build " + System.buildNumber()`
+      // must stay a String, not collapse to the int.
+      auto side = [](const JvmValue& v) -> std::string {
+        char b[48];
+        switch (v.tag) {
+          case JvmTag::Int: std::snprintf(b, sizeof b, "%d", v.v.i); return b;
+          case JvmTag::Float: std::snprintf(b, sizeof b, "%g", v.v.f); return b;
+          case JvmTag::Obj: {
+            if (!v.v.o) return "null";
+            const char* cs = string_cstr(v.v.o);
+            return cs ? cs : "";
+          }
+          default: return "";
+        }
+      };
+      const std::string cat = side(l) + side(r);
       vmthread_value_stack_push(thr, JvmValue::make_obj(string_new(cat.c_str())));
       return true;
     }

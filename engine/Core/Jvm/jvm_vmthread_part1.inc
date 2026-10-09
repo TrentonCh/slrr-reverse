@@ -929,6 +929,25 @@ JvmValue vmthread_assign_op_result(const JvmValue& dst, const JvmValue& src,
       return JvmValue::make_int(r == 0 ? 0 : (as_i(dst) % r));
     }
     case '\'': {  // += Value_add @ 0x41B4D0
+      // Fork: a String side concatenates (PE Value_add String path);
+      // Gates.show did `s += " [WARNING...]"` and got an int back.
+      if (dst.tag == JvmTag::Obj || src.tag == JvmTag::Obj) {
+        auto side = [](const JvmValue& v) -> std::string {
+          char b[48];
+          switch (v.tag) {
+            case JvmTag::Int: std::snprintf(b, sizeof b, "%d", v.v.i); return b;
+            case JvmTag::Float: std::snprintf(b, sizeof b, "%g", v.v.f); return b;
+            case JvmTag::Obj: {
+              if (!v.v.o) return "null";
+              const char* cs = string_cstr(v.v.o);
+              return cs ? cs : "";
+            }
+            default: return "";
+          }
+        };
+        const std::string cat = side(dst) + side(src);
+        return JvmValue::make_obj(string_new(cat.c_str()));
+      }
       if (dst.tag == JvmTag::Float || src.tag == JvmTag::Float)
         return JvmValue::make_float(as_f(dst) + as_f(src));
       return JvmValue::make_int(as_i(dst) + as_i(src));
@@ -1065,8 +1084,8 @@ StreamCall vmthread_stream_call(VmThread* thr, InvObject* self,
   VmPendingInvoke saved = thr->pending;
   const int ret = vmthread_thread_call_method(thr, self, class_fqn, method);
   if (vm_trace_on())
-    std::fprintf(stderr, "[pe-stream]   call %s.%s ret=%d before=%p cur=%p frames=%zu pc=%u\n",
-                 class_fqn, method, ret, static_cast<void*>(before),
+    std::fprintf(stderr, "[pe-stream]   call %s.%s self=%p ret=%d before=%p cur=%p frames=%zu pc=%u\n",
+                 class_fqn, method, static_cast<void*>(self), ret, static_cast<void*>(before),
                  static_cast<void*>(thr->curr_frame),
                  thr->frame_list ? thr->frame_list->frames.size() : size_t{0}, thr->pe.unk_24);
   if (ret == 0 && thr->pending.live) {
