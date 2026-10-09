@@ -237,8 +237,8 @@ def parse_mthd(p, pool):
     for mi in range(n_total):
         w = struct.unpack_from('<5I', p, off)
         off += 20
-        if mi < n_name_first:
-            name, sig, tree_i, flags = cons_str(pool, w[0]), cons_str(pool, w[1]), w[2], w[3]
+        if mi < n_name_first:  # first container = static methods
+            name, sig, tree_i, flags = cons_str(pool, w[0]), cons_str(pool, w[1]), w[2], w[3] | 0x8
         else:
             flags, name, sig, tree_i = w[0], cons_str(pool, w[1]), cons_str(pool, w[2]), w[3]
         out.append((name, sig, tree_i, flags, w))

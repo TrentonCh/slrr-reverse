@@ -336,6 +336,7 @@ bool tufa_parse(const uint8_t* data, size_t size, JvmClass* out, std::string* er
   out->const_strings.assign(pool.entries.size(), {});
   out->const_mref_name.assign(pool.entries.size(), {});
   out->const_mref_sig.assign(pool.entries.size(), {});
+  out->const_mref_class.assign(pool.entries.size(), {});
   out->const_ints.assign(pool.entries.size(), 0);
   out->const_int_valid.assign(pool.entries.size(), 0);
   out->const_rid_pack.assign(pool.entries.size(), {});
@@ -367,6 +368,7 @@ bool tufa_parse(const uint8_t* data, size_t size, JvmClass* out, std::string* er
       out->const_mref_sig[i] = pool.get_str(b);
     } else if (kind == 5 || kind == 6) {  // mref/fref → nat
       if (a < pool.entries.size()) {
+        out->const_mref_class[i] = pool.get_str(a);
         // try b as nat index first (SLRR mref is (class, nat))
         if (b < pool.entries.size()) {
           if (auto* natb =
@@ -495,10 +497,15 @@ bool tufa_parse(const uint8_t* data, size_t size, JvmClass* out, std::string* er
           uint32_t tree_i = 0;
           uint32_t flags = 0;
           if (mi < n_name_first) {
+            // PE JVM_addClass_fromChunks (940 @ 0x554F4F): MTHD holds two
+            // containers read back to back, STATIC methods (class+0x58)
+            // then instance methods (class+0x50). The leading count is the
+            // static count, so every row in this first vector is static
+            // (VMThread_invokeMethod tests method+4 & 8).
             name = pool.get_str(w0);
             sig = pool.get_str(w1);
             tree_i = w2;
-            flags = (w3 == 0xFFFFFFFFu) ? 0 : w3;
+            flags = ((w3 == 0xFFFFFFFFu) ? 0 : w3) | 0x8u;
             if (!is_mname(name) && is_mname(pool.get_str(w1))) {
               name = pool.get_str(w1);
               sig = pool.get_str(w2);

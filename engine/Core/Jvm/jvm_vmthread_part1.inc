@@ -1827,9 +1827,18 @@ bool vmthread_op24_eval_name(VmThread* thr, const JvmClass* cls,
       ctx_class = cls;
       ctx_obj = frame_this;
     } else {
-      // PE @ 0x42099B: previous payload must be a live object.
-      if (prev.tag != JvmTag::Obj || !prev.v.o) { if (vm_trace_on()) std::fprintf(stderr, "[pe-stream]   op24 fail L%d\n", __LINE__); return false; }
-      ctx_obj = prev.v.o;
+      // PE @ 0x42099B: "Thread::evalName: null.methodcall()" ScriptError.
+      // Fork: remember it and keep walking so the PC lands on the method
+      // terminator; the call site then skips the call and yields null.
+      if (prev.tag != JvmTag::Obj || !prev.v.o) {
+        if (vm_trace_on())
+          std::fprintf(stderr, "[pe-stream]   script error: null.methodcall() in %s\n",
+                       cls->name.c_str());
+        thr->null_recv_error = true;
+        ctx_obj = nullptr;
+      } else {
+        ctx_obj = prev.v.o;
+      }
     }
 
     if (op == 0x1001) {  // PE @ 0x420B62 locals[imm]
@@ -1895,8 +1904,14 @@ bool vmthread_op24_eval_name(VmThread* thr, const JvmClass* cls,
       *method_out = mname;
       if (recv) {
         *self_out = recv;
+        // PE: obj->clazz. A host-created object (Viewport from GfxEngine)
+        // may carry no class tag; the methodref's own class is then the
+        // right owner (viewport.getHeight() -> java.render.Viewport).
         const char* cn = tree_host_class(recv);
-        *class_out = (cn && cn[0]) ? cn : ctx_class->name;
+        const std::string mc = (n.imm < cls->const_mref_class.size())
+                                   ? cls->const_mref_class[n.imm]
+                                   : std::string();
+        *class_out = (cn && cn[0]) ? cn : (!mc.empty() ? mc : ctx_class->name);
       } else {
         *self_out = nullptr;
         *class_out = ctx_class->name;

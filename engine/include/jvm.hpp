@@ -94,6 +94,8 @@ struct JvmClass {
   // Fork: descriptor of the nat behind an mref/fref (or the nat itself),
   // e.g. "(Ljava.lang.String;I)Ljava.lang.String;" — empty when unknown.
   std::vector<std::string> const_mref_sig;
+  // Fork: class named by an mref/fref entry (CP kind 5/6 first word).
+  std::vector<std::string> const_mref_class;
   // Parallel int constants (RID / INT pool entries); valid[i]==1 when set.
   std::vector<int32_t> const_ints;
   std::vector<uint8_t> const_int_valid;
@@ -275,6 +277,9 @@ struct VmThread {
   // Fork: descriptor carried from a 0x101A methodref to the call resolver
   // so overloads resolve exactly (FindFile.first(String) wraps first(String,I)).
   std::string call_sig_hint;
+  // Fork: set by Thread_evalName when a segment dereferenced null; the op
+  // 0x24 site then skips the call and pushes null (script error).
+  bool null_recv_error = false;
 };
 
 // PE VMThread_init @ 0x41F340 — CallNamedMethod uses prio=10, sync=0|1.

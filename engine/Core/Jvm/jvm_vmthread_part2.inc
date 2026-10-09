@@ -1008,6 +1008,25 @@ int vmthread_exec_stream(VmThread* thr, const JvmClass* cls,
             return kVmStreamUnsupported;
           }
           thr->pe.unk_24 = walk_pc;  // ON the terminator (0x101A / utf8)
+          if (thr->null_recv_error) {
+            // Fork: script error path — drop the packed args + argc box,
+            // yield null, continue past the terminator.
+            thr->null_recv_error = false;
+            thr->call_sig_hint.clear();
+            if (thr->curr_frame && !thr->curr_frame->operand.empty() &&
+                thr->curr_frame->operand.back().tag == JvmTag::Int) {
+              const int argc = thr->curr_frame->operand.back().v.i;
+              auto& mop = thr->curr_frame->operand;
+              const size_t drop = static_cast<size_t>(argc < 0 ? 0 : argc) + 1;
+              mop.resize(mop.size() > drop ? mop.size() - drop : 0);
+              auto& mref = thr->curr_frame->operand_ref;
+              if (mref.size() > mop.size()) mref.resize(mop.size());
+            }
+            vmthread_value_stack_push(thr, JvmValue::make_obj(nullptr));
+            thr->pe.unk_24 += 8;
+            self_advanced = true;
+            break;
+          }
           const StreamCall sc = vmthread_stream_call(
               thr, self, class_fqn.c_str(), method.c_str());
           if (sc == StreamCall::Fail) {
