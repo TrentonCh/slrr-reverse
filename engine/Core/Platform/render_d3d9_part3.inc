@@ -202,6 +202,16 @@ void render_d3d9_osd_remove_rect(void* key) {
   }
 }
 
+void render_d3d9_debug_dump(FILE* out) {
+  if (!out) return;
+  size_t ready = 0, queued_ready = 0;
+  for (const auto& kv : g_meshes) if (kv.second.ready) ++ready;
+  for (void* k : g_mesh_queue) { auto it = g_meshes.find(k); if (it != g_meshes.end() && it->second.ready) ++queued_ready; }
+  std::fprintf(out, "[render-dbg] meshes=%zu ready=%zu queue=%zu queued_ready=%zu textures=%zu viewports=%zu active_vp=%p cameras=%zu active_cam=%p osd_rects=%zu osd_texts=%zu\n",
+               g_meshes.size(), ready, g_mesh_queue.size(), queued_ready, g_textures.size(),
+               g_viewports.size(), g_active_vp, g_cameras.size(), g_active_cam, g_osd.size(), g_osd_text.size());
+}
+
 int32_t render_d3d9_osd_count() {
   return static_cast<int32_t>(g_osd.size());
 }

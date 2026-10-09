@@ -9,6 +9,7 @@
 #include "tree_interp_internal.hpp"
 #include "host_objects.hpp"
 #include <chrono>
+#include <unordered_map>
 #include "runtime.hpp"
 #include "natives.hpp"
 #include "rpak.hpp"

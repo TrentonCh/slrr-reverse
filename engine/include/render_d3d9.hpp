@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdio>
 #include <cstddef>
 #include <cstdint>
 
@@ -351,6 +352,7 @@ void render_d3d9_text_set_visible(void* key, int32_t visible);
 const char* render_d3d9_text_get_string(void* key);
 void render_d3d9_text_update(void* key);
 int32_t render_d3d9_osd_text_count();
+void render_d3d9_debug_dump(FILE* out);  // Fork: counts for the script boot report
 
 // W26B/W36 soft — AsyncLoad_Mesh_UploadVbFvf @ 0x503400 /
 // UploadIbTris @ 0x5038E0 (ParseInvoChunks case4/5). Key = host handle for

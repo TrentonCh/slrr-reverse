@@ -42,19 +42,29 @@ comes after the menu is up.
 | Untagged receivers resolve as Object/String, recursion guard | d827a92 / e9bbb81 | CareerEvent.init recursion |
 | Pack slot cap 1024, packs looked up by relative path | f138803 / 8b22678 | every rid literal resolves |
 | Crash handler + linker map | f138803 | `[crash]` lines, slrr_engine.map |
+| Real printScreen (BMP back-buffer dump), SLRR_WINDOW_NOACTIVATE, SLRR_PE_BOOT_SHOT | 325e978 | frame capture without desktop screenshots |
+| Profiling: SLRR_PE_NATIVE_PROF (natives, pump, per-thread), renderer debug dump | (this commit) | `[prof]` / `[render-dbg]` at loop end |
 
 ## In progress
 
 ### 1. Draw the main menu
 
-- Texts reach the renderer (`txt` in the loop-end report). Rectangles and
-  buttons are 3D mesh render instances (`RectangleTemplate` -> `RenderRef`
-  create/changeResource/scaleMesh/setMatrix) drawn through the Osd viewport
-  and camera; `osd=0` only counts the legacy C++ OSD rect list.
-- Plan: screenshot the window during the loop, check `render_d3d9_mesh_ready`
-  for the frontend rect mesh, the Osd `Viewport.create` / `Camera.create`
-  natives, and whether `Group.activate` / `Osd.show` visibility is honoured.
-
+- Verified with the engine's own frame dump (`SLRR_PE_BOOT_SHOT`): the
+  animated background video and the version banner render in the right
+  font; the sliding-menu items (icon rectangles + labels) do not.
+- Init finishes in ~9 s; `Gates.buildSlidingMenu` runs and the 'sliding
+  menu animation thread' exists. The renderer dump at loop end shows
+  meshes=63 ready=63 textures=57 viewports=11 but queue=0 and cameras=0.
+- Two gaps: (a) script-made render instances (`RenderRef.create` clones)
+  are never queued for drawing (`render_d3d9_mesh_queue_add` is only
+  called by the legacy world/sky paths); (b) `draw_meshes` is a Soft
+  auto-framing preview (look-at around all queued bounds), not the exe's
+  per-viewport draw with the hooked camera, and the Osd's cameras are
+  gone by loop end (`Camera.destroy`), so there is nothing to draw with.
+- Plan: draw per active viewport with its camera (ortho-like OSD camera
+  from `Camera.create` aov/dmin/dmax), queue render instances when they
+  become ready under a viewport, and find out who destroys the Osd camera
+  (`Osd.hide` from `Gates.run`?).
 ### 2. `ResourceRef.<init>(ResourceRef)` called with a null argument (574/run)
 
 - `GameType.<init>()` calls `super()`; GameRef only declares

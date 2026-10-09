@@ -227,6 +227,20 @@ static void vm_sched_unlink(VmThread* thr) {
 // Fork: PE Engine_GetTimeMs is a float relative to engine start. GetTickCount
 // (absolute, 16 ms granularity) rounded an 8 ms budget to nothing at float
 // precision, so the pump visited ~1 thread per frame.
+static std::unordered_map<std::string, std::pair<double, int>> g_native_prof;
+static uint64_t g_vm_step_count = 0;
+
+void vmthread_native_prof_dump(FILE* out) {
+  if (!out || g_native_prof.empty()) return;
+  std::vector<std::pair<std::string, std::pair<double, int>>> v(g_native_prof.begin(), g_native_prof.end());
+  std::sort(v.begin(), v.end(), [](const auto& a, const auto& b) { return a.second.first > b.second.first; });
+  double total = 0; for (const auto& e : v) total += e.second.first;
+  std::fprintf(out, "[prof] native wall time total %.0f ms\n", total / 1000.0);
+  for (size_t i = 0; i < v.size() && i < 25; ++i)
+    std::fprintf(out, "[prof]   %10.1f ms %8d calls  %s\n", v[i].second.first / 1000.0,
+                 v[i].second.second, v[i].first.c_str());
+}
+
 static float vm_now_ms() {
   static const auto t0 = std::chrono::steady_clock::now();
   const auto d = std::chrono::steady_clock::now() - t0;
@@ -383,7 +397,21 @@ int vmthread_invoke_method(VmThread* thr, InvObject* self, const char* class_fqn
                      class_fqn, method);
     }
     unbox_native_ptr_args(j, &args, /*skip_self=*/has_self, ne);
+    // Fork: SLRR_PE_NATIVE_PROF=1 accumulates wall time per native.
+    static const bool prof_on = [] {
+      const char* e = std::getenv("SLRR_PE_NATIVE_PROF");
+      return e && e[0] == '1';
+    }();
+    const auto prof_t0 = prof_on ? std::chrono::steady_clock::now()
+                                 : std::chrono::steady_clock::time_point{};
     JvmValue result = j->invoke(class_fqn, method, signature, args, false);
+    if (prof_on) {
+      const double us = std::chrono::duration<double, std::micro>(
+                            std::chrono::steady_clock::now() - prof_t0).count();
+      auto& slot = g_native_prof[std::string(class_fqn) + "." + method];
+      slot.first += us;
+      slot.second += 1;
+    }
     fr->operand.push_back(result);
     fr->pe.op_count = static_cast<uint32_t>(fr->operand.size());
     // Fork: hand the result to whoever pops this leaf frame.

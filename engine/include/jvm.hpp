@@ -383,6 +383,9 @@ int jvm_run_threads_budgeted(float budget_ms, int32_t min_prio = 0);
 VmThread* vmthread_current();                       // thread whose stream is executing
 // Fork: print the current VM thread's script frames (crash handler).
 void vmthread_crash_dump(FILE* out);
+void vmthread_native_prof_dump(FILE* out);
+uint64_t vmthread_step_count();
+void vmthread_pump_stats_dump(FILE* out);  // Fork: SLRR_PE_NATIVE_PROF=1
 bool vmthread_wait_current(InvObject* monitor);     // WAITING + enqueue; false = no VM thread
 int vmthread_monitor_notify(InvObject* monitor, bool all);  // wakes 1 / all; returns count
 bool vmthread_sleep_current(float ms);              // SLEEP until deadline; false = no VM thread

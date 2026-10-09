@@ -736,18 +736,24 @@ int game_interactive_run(Jvm& jvm, const char* game_root,
     report("Init done", 0);
     input_live_enable(true);
     int32_t pe_frames = 0;
+    double pe_t_render = 0.0, pe_t_vm = 0.0;
     int32_t pe_max_frames = max_frames;
     if (const char* fenv = std::getenv("SLRR_PE_BOOT_FRAMES"))
       pe_max_frames = static_cast<int32_t>(std::strtol(fenv, nullptr, 10));
     while (!render_d3d9_quit_requested()) {
       // PE Engine_MainLoop presents every iteration; the Present path wakes
       // Frontend.render.wait() (LoadingScreen pacing).
+      const auto t_a = std::chrono::steady_clock::now();
       render_d3d9_flush();
       render_d3d9_pump(0);
       input_live_poll();
       java_lang_GameType_pollTimers();
       game_boot_mainloop_resource_pumps();
+      const auto t_b = std::chrono::steady_clock::now();
       jvm_run_threads_budgeted(8.f);
+      const auto t_c = std::chrono::steady_clock::now();
+      pe_t_render += std::chrono::duration<double, std::milli>(t_b - t_a).count();
+      pe_t_vm += std::chrono::duration<double, std::milli>(t_c - t_b).count();
       ++pe_frames;
       if (pe_max_frames > 0 && pe_frames >= pe_max_frames) break;
       // Fork: SLRR_PE_BOOT_SECONDS=N bounds the loop by wall time instead.
@@ -766,6 +772,11 @@ int game_interactive_run(Jvm& jvm, const char* game_root,
                   render_d3d9_print_screen(shot) ? 1 : 0);
     }
     report("loop end", pe_frames);
+    std::printf("[pe-boot] loop time: render+pumps %.0f ms, vm %.0f ms, vm steps %llu\n",
+                pe_t_render, pe_t_vm, static_cast<unsigned long long>(vmthread_step_count()));
+    vmthread_native_prof_dump(stdout);
+    vmthread_pump_stats_dump(stdout);
+    render_d3d9_debug_dump(stdout);
     return 0;
   }
 

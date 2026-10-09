@@ -882,6 +882,7 @@ int vmthread_exec_stream(VmThread* thr, const JvmClass* cls_in,
 
 static thread_local VmThread* g_vm_current = nullptr;  // per OS thread: legacy harness still runs OS workers
 VmThread* vmthread_current() { return g_vm_current; }
+uint64_t vmthread_step_count() { return g_vm_step_count; }
 
 void vmthread_crash_dump(FILE* out) {
   VmThread* thr = g_vm_current;
@@ -1013,6 +1014,7 @@ static int vmthread_exec_stream_inner(VmThread* thr, const JvmClass* cls_in,
     const uint16_t op = vmthread_pe_opcode(insn);
     const int32_t imm = static_cast<int32_t>(insn.imm);
     const uint32_t pc_before = thr->pe.unk_24;
+    ++g_vm_step_count;  // Fork: SLRR_PE_NATIVE_PROF counter
     // Fork diagnostic: SLRR_PE_STREAM_STEPS=<class substring> dumps each step.
     {
       static const char* steps_env = std::getenv("SLRR_PE_STREAM_STEPS");
@@ -1926,8 +1928,37 @@ void vmthread_destroy(VmThread* thr) {
 //   VMThread_run (PE always; host: pending.live → TREE + op42/43/16);
 //   inside !&0x82: 0x40&!1 → |=STOP; THEN advance cursor via thr+4;
 //   STOP&!RUNNING → vtbl dtor(1). saw_run (PE bl) only on VMThread_run.
+static uint64_t g_pump_stat_calls = 0, g_pump_stat_runs = 0, g_pump_stat_deadline = 0,
+                g_pump_stat_nosaw = 0, g_pump_stat_empty = 0, g_pump_stat_visits = 0;
+static double g_pump_stat_run_ms = 0.0;
+static std::unordered_map<VmThread*, std::pair<uint64_t, double>> g_pump_stat_per_thread;
+static std::unordered_map<VmThread*, uint64_t> g_pump_stat_skips;
+void vmthread_pump_stats_dump(FILE* out) {
+  if (!out) return;
+  for (VmThread* t = g_vm_sched_head; t; t = t->sched_next) {
+    const VmCallFrame* cf = t->curr_frame;
+    const auto it = g_pump_stat_per_thread.find(t);
+    std::fprintf(out, "[prof]   thread %p '%s' flags=0x%x sleep_left=%.0f prio=%d pending=%d resumable=%d runs=%llu run_ms=%.0f skips=%llu cur=%s.%s depth=%zu\n",
+                 static_cast<void*>(t), t->name_storage.c_str(), t->pe.flags,
+                 (t->pe.flags & kVmThreadFlagSleep) ? (t->pe.sleep_deadline - vm_now_ms()) : 0.f,
+                 t->pe.priority, t->pending.live ? 1 : 0, vmthread_resumable(t) ? 1 : 0,
+                 (unsigned long long)(it == g_pump_stat_per_thread.end() ? 0 : it->second.first),
+                 it == g_pump_stat_per_thread.end() ? 0.0 : it->second.second,
+                 (unsigned long long)g_pump_stat_skips[t],
+                 cf && cf->host_cls ? cf->host_cls->name.c_str() : "?",
+                 cf && cf->host_method ? cf->host_method->name.c_str() : "?",
+                 t->frame_list ? t->frame_list->frames.size() : size_t{0});
+  }
+  std::fprintf(out, "[prof] pump calls=%llu visits=%llu runs=%llu run_ms=%.0f exits: deadline=%llu nosaw=%llu empty=%llu\n",
+               (unsigned long long)g_pump_stat_calls, (unsigned long long)g_pump_stat_visits,
+               (unsigned long long)g_pump_stat_runs, g_pump_stat_run_ms,
+               (unsigned long long)g_pump_stat_deadline, (unsigned long long)g_pump_stat_nosaw,
+               (unsigned long long)g_pump_stat_empty);
+}
+
 int jvm_run_threads_budgeted(float budget_ms, int32_t min_prio) {
   const bool unlimited = (budget_ms == 0.f);
+  ++g_pump_stat_calls;
   float deadline = vm_now_ms() + budget_ms;
   float slice = 10.f;  // PE v17 / flt_5E7334 = 10.0f
   if (!unlimited && budget_ms < 10.f) slice = budget_ms;
@@ -1936,16 +1967,17 @@ int jvm_run_threads_budgeted(float budget_ms, int32_t min_prio) {
   bool saw_run = true;
   while (true) {
     // PE @ 0x4169A7..0x4169B5: budget cut (skipped when a2==0).
-    if (!unlimited && vm_now_ms() >= deadline) return 1;
+    if (!unlimited && vm_now_ms() >= deadline) { ++g_pump_stat_deadline; return 1; }
 
     // PE @ 0x4169BB..0x4169DC: cursor null → reload list head; !saw_run→1.
     if (!g_vm_sched_cursor) {
       g_vm_sched_cursor = g_vm_sched_head;  // PE *(JVM+0x18)+8 gated
-      if (!saw_run) return 1;
+      if (!saw_run) { ++g_pump_stat_nosaw; return 1; }
       saw_run = false;
     }
     VmThread* cur = g_vm_sched_cursor;
-    if (!cur) return 0;  // PE @ 0x4169E3 empty → ret 0
+    if (!cur) { ++g_pump_stat_empty; return 0; }  // PE @ 0x4169E3 empty → ret 0
+    ++g_pump_stat_visits;
     {
       static const bool pump_trace = [] {
         const char* e = std::getenv("SLRR_PE_PUMP_TRACE");
@@ -1986,8 +2018,15 @@ int jvm_run_threads_budgeted(float budget_ms, int32_t min_prio) {
           // PE @ 0x416A70..0x416A81: deadline = deadline - slice + scaled.
           if (!unlimited) deadline = deadline - slice + scaled;
           // PE always VMThread_run; host pending → TREE + op42/43/16 slice.
+          if (!(cur->pending.live || vmthread_resumable(cur))) ++g_pump_stat_skips[cur];
           if (cur->pending.live || vmthread_resumable(cur)) {
+            const float t0 = vm_now_ms();
             vmthread_run(cur, unlimited ? 0.f : scaled);
+            g_pump_stat_run_ms += vm_now_ms() - t0;
+            ++g_pump_stat_runs;
+            auto& pt = g_pump_stat_per_thread[cur];
+            ++pt.first;
+            pt.second += vm_now_ms() - t0;
             saw_run = true;  // PE bl=1 @ 0x416A8C only here
           }
         }
