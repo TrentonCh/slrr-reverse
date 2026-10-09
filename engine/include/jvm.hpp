@@ -3,6 +3,7 @@
 #include "natives.hpp"
 
 #include <cstddef>
+#include <cstdio>
 #include <cstdint>
 #include <deque>
 #include <string>
@@ -380,6 +381,8 @@ int jvm_run_threads_budgeted(float budget_ms, int32_t min_prio = 0);
 // Fork: cooperative green threads (PE Thread_markWaiting @ 0x41F650 /
 // Thread_notify @ 0x41F6F0 / Thread_setSleepDeadline @ 0x41F630).
 VmThread* vmthread_current();                       // thread whose stream is executing
+// Fork: print the current VM thread's script frames (crash handler).
+void vmthread_crash_dump(FILE* out);
 bool vmthread_wait_current(InvObject* monitor);     // WAITING + enqueue; false = no VM thread
 int vmthread_monitor_notify(InvObject* monitor, bool all);  // wakes 1 / all; returns count
 bool vmthread_sleep_current(float ms);              // SLEEP until deadline; false = no VM thread

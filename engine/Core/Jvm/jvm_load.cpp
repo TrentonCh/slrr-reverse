@@ -149,11 +149,12 @@ bool Jvm::load_class_file_named(const char* path, std::string* first_fqn) {
 }
 
 void Jvm::upsert_class(JvmClass cls) {
+  // Fork: PE JVM_findLoadedClass wins — a class is loaded once. Replacing
+  // the object in place (a .class file bundling an already-loaded class,
+  // e.g. CareerEvent inside every CareerEvents/*.class) left every live
+  // frame's JvmMethod/TreeBody pointer dangling (Init ended early).
   for (auto& c : classes_) {
-    if (c.name == cls.name) {
-      c = std::move(cls);
-      return;
-    }
+    if (c.name == cls.name) return;
   }
   classes_.push_back(std::move(cls));
 }

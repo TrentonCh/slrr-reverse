@@ -550,6 +550,9 @@ bool vmthread_op1007_literal(VmThread* thr, const JvmClass* cls, int32_t tag,
       if (imm < cls->const_rid_pack.size() && !cls->const_rid_pack[imm].empty())
         path = cls->const_rid_pack[imm].c_str();
       const uint32_t rid = resource_engine_remap_from_path(path, local);
+      if (vm_trace_on() && (!rid || !path))
+        std::fprintf(stderr, "[pe-stream]   rid literal cp=%u path='%s' local=%u -> 0x%08X\n",
+                     imm, path ? path : "", local, rid);
       vmthread_value_stack_push(
           thr, JvmValue::make_int(static_cast<int32_t>(rid ? rid : local)));
       return true;
@@ -879,6 +882,32 @@ int vmthread_exec_stream(VmThread* thr, const JvmClass* cls_in,
 
 static thread_local VmThread* g_vm_current = nullptr;  // per OS thread: legacy harness still runs OS workers
 VmThread* vmthread_current() { return g_vm_current; }
+
+void vmthread_crash_dump(FILE* out) {
+  VmThread* thr = g_vm_current;
+  if (!out) return;
+  if (!thr) {
+    std::fprintf(out, "[crash] no VM thread current\n");
+    return;
+  }
+  std::fprintf(out, "[crash] VM thread %p flags=0x%x pc=%u pending=%d\n",
+               static_cast<void*>(thr), thr->pe.flags, thr->pe.unk_24, thr->pending.live ? 1 : 0);
+  if (thr->pending.live)
+    std::fprintf(out, "[crash]   pending %s.%s%s\n", thr->pending.class_fqn.c_str(),
+                 thr->pending.method.c_str(), thr->pending.signature.c_str());
+  if (!thr->frame_list) return;
+  const auto& frames = thr->frame_list->frames;
+  for (size_t i = frames.size(); i-- > 0;) {
+    const VmCallFrame* f = frames[i];
+    if (!f) continue;
+    std::fprintf(out, "[crash]   frame[%zu] %s.%s%s pc=%u%s\n", i,
+                 f->host_cls ? f->host_cls->name.c_str() : "?",
+                 f->host_method ? f->host_method->name.c_str() : "?",
+                 f->host_method ? f->host_method->signature.c_str() : "",
+                 f == thr->curr_frame ? thr->pe.unk_24 : f->pe.code,
+                 f == thr->curr_frame ? " <current>" : "");
+  }
+}
 
 // Monitor wait queues (PE T_Container @ InvObject+0x14).
 static std::unordered_map<InvObject*, std::vector<VmThread*>> g_vm_monitors;

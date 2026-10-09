@@ -91,6 +91,7 @@ target_include_directories(slrr_engine PRIVATE include)
 if(MSVC)
   target_compile_options(slrr_engine PRIVATE /W3 /utf-8)
   target_compile_definitions(slrr_engine PRIVATE _CRT_SECURE_NO_WARNINGS)
+  target_link_options(slrr_engine PRIVATE /MAP)  # crash handler offsets -> slrr_engine.map
   target_link_libraries(slrr_engine PRIVATE d3d9 dinput8 dxguid dsound winmm
                         user32 gdi32 windowscodecs ole32 oleaut32 strmiids)
 else()

@@ -1600,7 +1600,7 @@ constexpr uint32_t kLodChunkRsd = 0x00445352u;   // 'RSD\0' imm @ 0x53E0CB
 // slot, +0xFFE94 indexed slots stride 0x70. Host logical stand-in (no 1MB
 // eng blob). Init@535EF4: ResourcePack_InitSlot(FFFF, unk_765F38); count=0.
 constexpr size_t kPackSlotStride = 0x70;
-constexpr size_t kMaxPackSlots = 64;  // host cap (PE grows via LoadPack)
+constexpr size_t kMaxPackSlots = 1024;  // host cap (PE grows via LoadPack; Build 940 opens 126 packs at boot)
 struct HostPackSlot {
   uint8_t raw[kPackSlotStride]{};
 };

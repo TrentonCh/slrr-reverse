@@ -1049,6 +1049,12 @@ bool vmthread_ref_assign(VmThread* thr, const VmValueRef& dst,
 void vmthread_pop_frame_restore_pc(VmThread* thr) {
   if (!thr) return;
   VmCallFrame* dying = thr->curr_frame;
+  if (vm_trace_on() && dying)
+    std::fprintf(stderr, "[pe-stream]   pop frame %s.%s (thread %p, %zu frames)\n",
+                 dying->host_cls ? dying->host_cls->name.c_str() : "?",
+                 dying->host_method ? dying->host_method->name.c_str() : "?",
+                 static_cast<void*>(thr),
+                 thr->frame_list ? thr->frame_list->frames.size() : size_t{0});
   if (!dying) {
     thr->pe.unk_24 = 0;  // PE PC @ +0x24
     return;

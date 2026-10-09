@@ -156,8 +156,12 @@ uint32_t host_resource_engine_remap_from_path(const char* path,
     const char* sp = reinterpret_cast<const char*>(slot + 0x0C);
     if (sp[0] == '\0') continue;
     if (_stricmp(sp, path) != 0) continue;
-    if (host_resource_pack_ensure_index(slot) == 0) return 0;  // @ 0x5384F0
-    return host_res_pack_remap_local_id(slot, local);           // @ 0x53850A
+    const int ei0 = host_resource_pack_ensure_index(slot);
+    const uint32_t out0 = ei0 == 0 ? 0u : host_res_pack_remap_local_id(slot, local);
+    if (std::getenv("SLRR_PE_STREAM_TRACE"))
+      std::fprintf(stderr, "[native] RemapFromPath '%s' local=%u slot=%u ensure=%d -> 0x%08X (walk)\n",
+                   path, local, i, ei0, out0);
+    return out0;
   }
 
   // LABEL_7 @ 0x538480: InitSlot at pack_count (PE index = count).

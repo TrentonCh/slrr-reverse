@@ -42,11 +42,36 @@ const char* find_game_root() {
 
 }  // namespace
 
+#if defined(_WIN32)
+// Fork: a segfault used to leave nothing behind. Print the exception, the
+// faulting address as a module offset (resolve with slrr_engine.map), a raw
+// return-address walk, and the VM's current script frames.
+static LONG WINAPI slrr_crash_filter(EXCEPTION_POINTERS* ep) {
+  const DWORD code = ep && ep->ExceptionRecord ? ep->ExceptionRecord->ExceptionCode : 0;
+  const void* addr = ep && ep->ExceptionRecord ? ep->ExceptionRecord->ExceptionAddress : nullptr;
+  const char* base = reinterpret_cast<const char*>(GetModuleHandleA(nullptr));
+  std::fprintf(stderr, "[crash] exception 0x%08lX at %p (module+0x%08lX)\n",
+               static_cast<unsigned long>(code), addr,
+               static_cast<unsigned long>(reinterpret_cast<const char*>(addr) - base));
+  void* frames[32];
+  const USHORT n = CaptureStackBackTrace(0, 32, frames, nullptr);
+  for (USHORT i = 0; i < n; ++i) {
+    const char* f = reinterpret_cast<const char*>(frames[i]);
+    std::fprintf(stderr, "[crash]   stack[%u] %p module+0x%08lX\n", i, frames[i],
+                 static_cast<unsigned long>(f - base));
+  }
+  inv::vmthread_crash_dump(stderr);
+  std::fflush(stderr);
+  return EXCEPTION_EXECUTE_HANDLER;
+}
+#endif
+
 int main(int argc, char** argv) {
   using namespace inv;
 #if defined(_WIN32)
   setvbuf(stdout, nullptr, _IONBF, 0);
   setvbuf(stderr, nullptr, _IONBF, 0);
+  SetUnhandledExceptionFilter(slrr_crash_filter);
 #endif
 
   const bool want_boot = (argc >= 2 && std::strcmp(argv[1], "--boot") == 0);
