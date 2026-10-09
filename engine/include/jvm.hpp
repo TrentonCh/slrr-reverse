@@ -270,6 +270,10 @@ struct VmThread {
   std::string name_storage;
   // Host mirrors of packArgs vec (malloc 12) + pushCallFrame operand stack.
   std::vector<JvmValue> pack_vec;
+  // Fork: declared type of each packed arg when the VALUE cannot tell
+  // (null from a typed array slot / field / static). PE Values carry their
+  // typeDesc, so a null String still resolves write(String), not write(L).
+  std::vector<std::string> pack_types;
   std::vector<JvmValue> operand;
   VmCallFrame* curr_frame = nullptr;
   VmFrameList* frame_list = nullptr;

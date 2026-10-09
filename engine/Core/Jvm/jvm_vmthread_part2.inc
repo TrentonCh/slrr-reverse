@@ -1340,16 +1340,33 @@ static int vmthread_exec_stream_inner(VmThread* thr, const JvmClass* cls_in,
             return kVmStreamUnsupported;
           InvObject* recv =
               (recv_v.tag == JvmTag::Obj) ? recv_v.v.o : nullptr;
-          if (!recv) return kVmStreamUnsupported;
           if (imm < 0 ||
               static_cast<size_t>(imm) >= cls->const_strings.size())
             return kVmStreamUnsupported;
           const std::string& mname =
               cls->const_strings[static_cast<size_t>(imm)];
           if (mname.empty()) return kVmStreamUnsupported;
+          if (!recv) {
+            // Fork: PE Object_callMethod on a null payload is a ScriptError
+            // ("null.methodcall()") and the walker continues; the argc box
+            // and args are dropped and null stands in for the result.
+            if (vm_trace_on())
+              std::fprintf(stderr, "[pe-stream]   script error: null.methodcall() %s in %s (0x4025)%s",
+                           mname.c_str(), cls->name.c_str(), "\n");
+            if (thr->curr_frame && !thr->curr_frame->operand.empty() &&
+                thr->curr_frame->operand.back().tag == JvmTag::Int) {
+              const int argc = thr->curr_frame->operand.back().v.i;
+              auto& mop = thr->curr_frame->operand;
+              const size_t drop = static_cast<size_t>(argc < 0 ? 0 : argc) + 1;
+              mop.resize(mop.size() > drop ? mop.size() - drop : 0);
+              auto& mref = thr->curr_frame->operand_ref;
+              if (mref.size() > mop.size()) mref.resize(mop.size());
+            }
+            vmthread_value_stack_push(thr, JvmValue::make_obj(nullptr));
+            break;
+          }
           // PE clazz = obj+0xC. Soft: host_class, else Vector bag, else
-          // caller class (prior bug: VehicleType.size when preferredColorIndexes
-          // lost its host tag).
+          // String (host InvString has no class tag), else caller class.
           const char* cn = tree_host_class(recv);
           if ((!cn || !cn[0]) && tree_vector_is(recv)) cn = "java.util.Vector";
           if (!cn || !cn[0]) cn = cls->name.c_str();

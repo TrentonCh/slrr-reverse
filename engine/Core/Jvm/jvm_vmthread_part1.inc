@@ -321,6 +321,7 @@ int vmthread_invoke_method(VmThread* thr, InvObject* self, const char* class_fqn
   if (self) args.push_back(JvmValue::make_obj(self));
   for (const JvmValue& v : thr->pack_vec) args.push_back(v);
   thr->pack_vec.clear();  // Fork: consumed; never reuse stale args
+  thr->pack_types.clear();
 
   // Copy packed args onto new frame locals (PE pops operand → locals).
   fr->locals = args;
@@ -418,6 +419,40 @@ static std::string pe_value_type(const JvmValue& v) {
       return "L;";
     }
     default: return "L;";
+  }
+}
+
+// Fork: declared type of the storage an operand ref names, in descriptor
+// form ("Ljava.lang.String;", "I", "[I"). Empty when unknown.
+static std::string pe_ref_declared_type(Jvm* j, const VmValueRef& ref) {
+  auto decl_type = [&](const JvmClass* c, const std::string& name,
+                       bool is_static) -> std::string {
+    for (int guard = 0; c && guard < 64; ++guard) {
+      const auto& fields = is_static ? c->static_fields : c->instance_fields;
+      for (const JvmFieldDecl& fd : fields)
+        if (fd.name == name) return fd.type;
+      if (c->super_name.empty()) break;
+      if (!j->find_class(c->super_name.c_str())) j->load_class(c->super_name.c_str());
+      c = j->find_class(c->super_name.c_str());
+    }
+    return {};
+  };
+  switch (ref.kind) {
+    case VmRefKind::Elem: {
+      const char* hc = ref.obj ? tree_host_class(ref.obj) : nullptr;
+      if (hc && hc[0] == '[') return std::string(hc + 1);
+      return {};
+    }
+    case VmRefKind::Field: {
+      if (!j || !ref.obj) return {};
+      const char* hc = tree_host_class(ref.obj);
+      const JvmClass* c = (hc && hc[0]) ? j->find_class(hc) : nullptr;
+      return decl_type(c, ref.name, false);
+    }
+    case VmRefKind::Static:
+      return j ? decl_type(ref.owner, ref.name, true) : std::string();
+    default:
+      return {};
   }
 }
 
@@ -539,7 +574,9 @@ static const JvmMethod* pe_find_method(Jvm* j, const char* class_fqn,
         tie = true;
       }
     }
-    if (cls->super_name.empty() || cls->super_name == "java.lang.Object") break;
+    // Fork: java.lang.Object is a script class too (equals, osdCommand,
+    // handleOsdEvent plus the native wait/notify/toString); walk into it.
+    if (cls->super_name.empty()) break;
     if (!j->find_class(cls->super_name.c_str())) j->load_class(cls->super_name.c_str());
     cls = j->find_class(cls->super_name.c_str());
   }
@@ -605,6 +642,19 @@ int vmthread_thread_call_method(VmThread* thr, InvObject* self,
       const int argc = op.back().v.i;
       if (argc >= 0 && static_cast<std::size_t>(argc) < op.size()) {
         thr->pack_vec.assign(op.end() - 1 - argc, op.end() - 1);
+        // Fork: remember the declared type behind each null arg (see
+        // VmThread::pack_types). Only refs can tell; plain values cannot.
+        thr->pack_types.assign(static_cast<std::size_t>(argc), std::string());
+        {
+          const auto& refs = thr->curr_frame->operand_ref;
+          const std::size_t base = op.size() - 1 - static_cast<std::size_t>(argc);
+          for (std::size_t a = 0; a < static_cast<std::size_t>(argc); ++a) {
+            const JvmValue& av = op[base + a];
+            if (av.tag != JvmTag::Obj || av.v.o != nullptr) continue;
+            if (base + a >= refs.size()) continue;
+            thr->pack_types[a] = pe_ref_declared_type(j, refs[base + a]);
+          }
+        }
         // Fork: PE NativeSigDesc_ctorFromOperands @ 0x41DCB0 pops the argc
         // box and CallFrame_ctor moves the args into the callee locals, so
         // the caller operand stack loses argc+1 entries here. Without this
@@ -634,7 +684,14 @@ int vmthread_thread_call_method(VmThread* thr, InvObject* self,
     callsig = thr->call_sig_hint;
   } else {
     callsig = "(";
-    for (const JvmValue& v : thr->pack_vec) callsig += pe_value_type(v);
+    for (std::size_t a = 0; a < thr->pack_vec.size(); ++a) {
+      const JvmValue& v = thr->pack_vec[a];
+      if (v.tag == JvmTag::Obj && !v.v.o && a < thr->pack_types.size() &&
+          !thr->pack_types[a].empty())
+        callsig += thr->pack_types[a];  // typed null (PE Value typeDesc)
+      else
+        callsig += pe_value_type(v);
+    }
     callsig += ")V";
   }
   thr->call_sig_hint.clear();
