@@ -763,8 +763,7 @@ int main(int argc, char** argv) {
         std::fabs(npos_z) < 0.01f && std::fabs(nori_y) < 0.01f &&
         std::fabs(nori_p) < 0.01f && std::fabs(nori_r) < 0.01f &&
         physics_shape(phy) == 1 && hx > 0.4f && hy > 0.2f && hz > 0.9f &&
-        ppx > 4.9f && ppx < 5.1f &
-        & ppy > 0.20f && ppy < 0.30f && pvx > 9.9f &&
+        ppx > 4.9f && ppx < 5.1f && ppy > 0.20f && ppy < 0.30f && pvx > 9.9f &&
         spd1 > 99.f && spd1 < 101.f && spd2 < 0.01f && std::fabs(ppx2) < 0.01f &&
         std::fabs(ppy2) < 0.01f && std::fabs(ppz2) < 0.01f;
     std::printf("phys box ok=%d null=%d unposed=%d shape=%d ext=(%.1f,%.1f,%.1f) "
