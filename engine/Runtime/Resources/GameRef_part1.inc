@@ -1190,7 +1190,20 @@ std::string script_fqn_for_res(int32_t res_id, const RpakEntry* e) {
     while (end < blob.size() && blob[end] != 13 && blob[end] != 10) ++end;
     std::string path(reinterpret_cast<const char*>(blob.data()) + 7, end - 7);
     while (!path.empty() && path.back() == ' ') path.pop_back();
-    if (!path.empty()) return script_fqn_from_script_path(path);
+    if (!path.empty()) {
+      // PE loads the file named by the entry; the TUFA CLSS name is the
+      // class (CareerEvents/JuniorCurcuit.class declares java.game.JuniorCurcuit).
+      if (Jvm* j = jvm_active()) {
+        std::string full = j->game_root();
+        if (!full.empty() && full.back() != '/' && full.back() != 92) full.push_back('/');
+        full += path;
+        for (char& c : full)
+          if (c == 92) c = '/';
+        std::string fqn;
+        if (j->load_class_file_named(full.c_str(), &fqn) && !fqn.empty()) return fqn;
+      }
+      return script_fqn_from_script_path(path);
+    }
   }
   return script_fqn_for_entry(e);
 }
@@ -1260,7 +1273,9 @@ void apply_instance_pose(InvObject* o, const float pose[6]) {
 
 
 InvObject* gameref_new() {
-  auto* o = reinterpret_cast<InvObject*>(new InvString{nullptr});
+  // Fork: carry the class tag so script calls on the stand-in resolve as
+  // java.util.resource.GameRef (id/set natives) instead of the caller class.
+  InvObject* o = tree_host_new("java.util.resource.GameRef");
   {
     std::lock_guard<std::mutex> lock(g_gr_mu);
     g_refs[o] = GameRefState{};

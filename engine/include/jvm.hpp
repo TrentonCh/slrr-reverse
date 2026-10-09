@@ -4,6 +4,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <deque>
 #include <string>
 #include <vector>
 
@@ -110,6 +111,9 @@ class Jvm {
 
   bool load_index(const char* path);
   bool load_class_file(const char* path);
+  // Fork: load a .class file by path (PE JavaMachine_loadClass on a
+  // `script <path>` entry) and report the first blob's class name.
+  bool load_class_file_named(const char* path, std::string* first_fqn);
   // Resolve FQN via classpath map and load the stock .class.
   bool load_class(const char* fqn);
 
@@ -130,7 +134,10 @@ class Jvm {
  private:
   void upsert_class(JvmClass cls);
   std::string game_root_;
-  std::vector<JvmClass> classes_;
+  // Fork: deque — every live frame / field ref holds a const JvmClass*;
+  // a vector reallocation on the 257th class (Build 940 loads classes
+  // mid-boot) left them dangling.
+  std::deque<JvmClass> classes_;
 };
 
 // Active JVM for natives that need to invoke TREE (GameRef.create → *_VT.<init>).

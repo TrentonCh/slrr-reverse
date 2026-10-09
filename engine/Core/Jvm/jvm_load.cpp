@@ -136,7 +136,16 @@ bool resolve_classpath_file(const char* game_root, const char* fqn,
 
 void Jvm::set_game_root(const char* root) {
   game_root_ = root ? root : "";
-  classes_.reserve(256);  // avoid realloc invalidating tree_eval snapshots
+}
+
+bool Jvm::load_class_file_named(const char* path, std::string* first_fqn) {
+  if (!path || !path[0]) return false;
+  std::vector<JvmClass> all;
+  std::string err;
+  if (!tufa_load_file_all(path, &all, &err) || all.empty()) return false;
+  if (first_fqn) *first_fqn = all.front().name;
+  if (find_class(all.front().name.c_str())) return true;
+  return load_class_file(path);
 }
 
 void Jvm::upsert_class(JvmClass cls) {

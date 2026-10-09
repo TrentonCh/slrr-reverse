@@ -1109,6 +1109,13 @@ enum class StreamCall : int8_t {
 StreamCall vmthread_stream_call(VmThread* thr, InvObject* self,
                                 const char* class_fqn, const char* method) {
   if (!thr || !class_fqn || !method || !method[0]) return StreamCall::Fail;
+  // Fork: runaway recursion guard (the PE would exhaust its CallFrame pool).
+  if (vmthread_frame_depth(thr) > 512) {
+    if (vm_trace_on())
+      std::fprintf(stderr, "[pe-stream]   script error: stack overflow calling %s.%s\n",
+                   class_fqn, method);
+    return StreamCall::Fail;
+  }
   VmCallFrame* before = thr->curr_frame;
   VmPendingInvoke saved = thr->pending;
   const int ret = vmthread_thread_call_method(thr, self, class_fqn, method);
@@ -2151,7 +2158,15 @@ bool vmthread_op24_eval_name(VmThread* thr, const JvmClass* cls,
     *class_out = ctx_class->name;
     if (*self_out) {
       const char* cn = tree_host_class(*self_out);
-      if (cn && cn[0]) *class_out = cn;
+      if (cn && cn[0]) {
+        *class_out = cn;
+      } else if (!first) {
+        // Fork: PE Object_callMethod uses obj+0xC; a host object without
+        // a class tag must not inherit the CALLER's class, or
+        // `track.init()` inside CareerEvent.init re-enters CareerEvent.init
+        // on the track object forever. Only java.lang.Object resolves.
+        *class_out = "java.lang.Object";
+      }
     }
     // PC stays ON the name carrier (PE returns without advancing).
     return true;

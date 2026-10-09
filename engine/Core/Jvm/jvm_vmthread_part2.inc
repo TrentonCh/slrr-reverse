@@ -1380,10 +1380,24 @@ static int vmthread_exec_stream_inner(VmThread* thr, const JvmClass* cls_in,
           // String (host InvString has no class tag), else caller class.
           const char* cn = tree_host_class(recv);
           if ((!cn || !cn[0]) && tree_vector_is(recv)) cn = "java.util.Vector";
-          if (!cn || !cn[0]) cn = cls->name.c_str();
+          if (!cn || !cn[0]) cn = "java.lang.Object";  // PE obj+0xC, never the caller
           const StreamCall sc =
               vmthread_stream_call(thr, recv, cn, mname.c_str());
-          if (sc == StreamCall::Fail) return kVmStreamUnsupported;
+          if (sc == StreamCall::Fail) {
+            // PE ScriptError "not found" → ret -1 → opDefault_advance; the
+            // argc box + args stay consumed and null stands in for a result.
+            if (thr->curr_frame && !thr->curr_frame->operand.empty() &&
+                thr->curr_frame->operand.back().tag == JvmTag::Int) {
+              const int argc = thr->curr_frame->operand.back().v.i;
+              auto& mop = thr->curr_frame->operand;
+              const size_t drop = static_cast<size_t>(argc < 0 ? 0 : argc) + 1;
+              mop.resize(mop.size() > drop ? mop.size() - drop : 0);
+              auto& mref = thr->curr_frame->operand_ref;
+              if (mref.size() > mop.size()) mref.resize(mop.size());
+            }
+            vmthread_value_stack_push(thr, JvmValue::make_obj(nullptr));
+            break;
+          }
           self_advanced = (sc == StreamCall::SelfAdvanced || sc == StreamCall::Switched);
           break;
         }

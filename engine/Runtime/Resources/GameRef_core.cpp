@@ -418,7 +418,27 @@ InvObject* java_util_resource_GameRef_create(InvObject* self, InvObject* parent,
   // Generic GameRef bind (non-scripted / unknown alias).
   // PE still returns GameType* at +0x50; host returns bound GameRef as
   // script stand-in (no separate THRD-CREATE object).
-  inst = gameref_new();
+  // Fork: when the entry names a script class (payload `script <path>`),
+  // PE Class_boxObject + <init> run for it (THRD-CREATE); the plain GameRef
+  // stand-in left GameLogic.careerEvents full of classless objects.
+  const JvmClass* script_cls = nullptr;
+  Jvm* jvm_for_create = jvm_active();
+  // Only on the script boot: the legacy C++ harness expects plain GameRef
+  // stand-ins here and its shims hang when the script constructors run.
+  static const bool script_boot_create = [] {
+    const char* e = std::getenv("SLRR_PE_BOOT_INIT");
+    return e && e[0] == '1';
+  }();
+  if (jvm_for_create && script_boot_create && !fqn.empty()) {
+    if (!jvm_for_create->find_class(fqn.c_str())) jvm_for_create->load_class(fqn.c_str());
+    script_cls = jvm_for_create->find_class(fqn.c_str());
+  }
+  if (script_cls) {
+    inst = tree_host_new(fqn.c_str());
+    resref_ensure(inst);
+  } else {
+    inst = gameref_new();
+  }
   java_util_resource_ResourceRef_set(inst, type_id);
   java_util_resource_ResourceRef_set(self, type_id);
   // Keep type_id distinct from instance id for GII_TYPE (Phase 2.96).
@@ -432,6 +452,15 @@ InvObject* java_util_resource_GameRef_create(InvObject* self, InvObject* parent,
     bind_gameref(inst, parent, fqn, alias_cstr);
     bind_gameref(self, parent, fqn, alias_cstr);
     ref(self).script = inst;
+  }
+  if (script_cls) {
+    // PE THRD-CREATE: <init>(I) with the instance rid when declared, else
+    // the no-arg constructor.
+    if (jvm_for_create->find_method(*script_cls, "<init>", "(I)V"))
+      jvm_for_create->invoke(fqn.c_str(), "<init>", "(I)V",
+                             {JvmValue::make_obj(inst), JvmValue::make_int(type_id)}, false);
+    else
+      jvm_for_create->invoke(fqn.c_str(), "<init>", "()V", {JvmValue::make_obj(inst)}, false);
   }
   finish_create(inst);
   return inst;
