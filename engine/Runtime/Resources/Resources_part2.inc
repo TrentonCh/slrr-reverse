@@ -171,9 +171,12 @@ uint32_t host_resource_engine_remap_from_path(const char* path,
   if (idx >= kMaxPackSlots) return 0;
   host_resource_pack_init_slot(g_pack_eng.slots[idx].raw, idx, path);
   if (idx >= g_pack_eng.pack_count) g_pack_eng.pack_count = idx + 1;
-  if (host_resource_pack_ensure_index(g_pack_eng.slots[idx].raw) == 0)
-    return 0;
-  return host_res_pack_remap_local_id(g_pack_eng.slots[idx].raw, local);
+  const int ei = host_resource_pack_ensure_index(g_pack_eng.slots[idx].raw);
+  const uint32_t out = ei == 0 ? 0u : host_res_pack_remap_local_id(g_pack_eng.slots[idx].raw, local);
+  if (std::getenv("SLRR_PE_STREAM_TRACE"))
+    std::fprintf(stderr, "[native] RemapFromPath '%s' local=%u pack_id=%d idx=%u ensure=%d -> 0x%08X\n",
+                 path, local, rp ? rp->pack_id : -1, idx, ei, out);
+  return out;
 }
 
 // Soft stand-ins for BSS ResHandles cloneHdr binds (@ 0x43EDF1..0x43EE56).
@@ -1157,7 +1160,9 @@ void resref_set_parent(InvObject* self, InvObject* parent) {
 }
 
 InvObject* resref_new() {
-  auto* o = reinterpret_cast<InvObject*>(new InvString{nullptr});
+  // Fork: carry the class tag so script calls on host-made refs
+  // (mapStack[i].id()) resolve as java.util.resource.ResourceRef.
+  InvObject* o = tree_host_new("java.util.resource.ResourceRef");
   std::lock_guard<std::mutex> lock(g_mu);
   g_res[o] = ResState{};
   return o;
