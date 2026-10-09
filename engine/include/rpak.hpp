@@ -65,6 +65,8 @@ int32_t rpak_open(const char* lib_path);
 
 const RpakPack* rpak_get(int32_t pack_id);
 const RpakPack* rpak_find_by_name(const char* basename);  // "frontend.rpk" or "frontend"
+// Fork: match by relative path ("multibot/maps/A1Ring/t_data.rpk").
+const RpakPack* rpak_find_by_path(const char* rel_path);
 size_t rpak_count();
 
 // Decode resource id = (pack_id << 16) | type_id (entry.type_id).

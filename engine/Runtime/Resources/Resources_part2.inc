@@ -53,8 +53,11 @@ int host_resource_pack_ensure_index(void* slot) {
 
   const char* path = reinterpret_cast<const char*>(p + 0x0C);
   if (path[0] != '\0') {
-    if (const RpakPack* by = rpak_find_by_name(path)) {
+    const RpakPack* by = rpak_find_by_path(path);
+    if (!by) by = rpak_find_by_name(path);
+    if (by) {
       if (by->parsed_entries || by->is_registry) {
+        *reinterpret_cast<uint32_t*>(p + 8) = static_cast<uint32_t>(by->pack_id);
         *reinterpret_cast<int*>(p + 0x50) = 2;
         return 2;
       }
@@ -145,8 +148,12 @@ uint32_t host_resource_engine_remap_from_path(const char* path,
                                               uint32_t local) {
   if (!path || !path[0]) return 0;
   // Soft EnsureIndex cold: open pack so PathEq / rpak_get can succeed.
-  if (!rpak_find_by_name(path)) (void)rpak_open(path);
-  const RpakPack* rp = rpak_find_by_name(path);
+  // Fork: look the pack up by its relative path (t_data.rpk is not unique).
+  const RpakPack* rp = rpak_find_by_path(path);
+  if (!rp) {
+    const int32_t pid = rpak_open(path);
+    rp = pid > 0 ? rpak_get(pid) : rpak_find_by_path(path);
+  }
 
   host_pack_eng_sync_from_rpak();
 

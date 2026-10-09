@@ -1,5 +1,6 @@
 #include "rpak.hpp"
 
+#include <cctype>
 #include <cstdio>
 #include <cstring>
 #include <fstream>
@@ -448,6 +449,25 @@ const RpakPack* rpak_find_by_name(const char* basename) {
     if (p.name.size() > 4 && p.name.substr(p.name.size() - 4) == ".rpk") {
       if (p.name.substr(0, p.name.size() - 4) == want) return &p;
     }
+  }
+  return nullptr;
+}
+
+// Fork: PE PathEq matches the pack by its relative PATH, not by basename —
+// every track pack is called t_data.rpk (multibot/maps/<track>/t_data.rpk).
+const RpakPack* rpak_find_by_path(const char* rel_path) {
+  if (!rel_path || !rel_path[0]) return nullptr;
+  std::string want = norm_path(rel_path);
+  for (char& c : want) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+  while (!want.empty() && (want[0] == '.' || want[0] == '/')) want.erase(want.begin());
+  std::lock_guard<std::mutex> lock(g_mu);
+  for (const auto& p : g_packs) {
+    std::string have = norm_path(p.path.c_str());
+    for (char& c : have) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    if (have.size() >= want.size() &&
+        have.compare(have.size() - want.size(), want.size(), want) == 0 &&
+        (have.size() == want.size() || have[have.size() - want.size() - 1] == '/'))
+      return &p;
   }
   return nullptr;
 }
