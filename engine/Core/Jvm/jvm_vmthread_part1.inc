@@ -120,15 +120,44 @@ bool class_inherits_native(Jvm* j, const char* fqn) {
 }
 
 // PE Object_getField(obj,"ptr")+8 → Native.ptr (aPtr @ 0x60C338).
+// Fork: host natives are declared with their Java parameter types
+// ("ResourceRef parent, ResourceRef charset, float x") and take objects as
+// InvObject*. Only a parameter declared as an integer type receives the
+// PE Native.ptr int; unboxing every Native-derived arg handed Text.create a
+// null charset (Native.ptr is 0 for script-made ResourceRefs).
+static std::vector<bool> native_int_params(const NativeEntry* ne) {
+  std::vector<bool> out;
+  if (!ne || !ne->java_signature) return out;
+  const char* p = std::strchr(ne->java_signature, '(');
+  if (!p) return out;
+  ++p;
+  while (*p && *p != ')') {
+    while (*p == ' ') ++p;
+    const char* ts = p;
+    while (*p && *p != ' ' && *p != ',' && *p != ')') ++p;
+    const std::string type(ts, p);
+    out.push_back(type == "int" || type == "boolean" || type == "long" ||
+                  type == "short" || type == "byte" || type == "char");
+    while (*p && *p != ',' && *p != ')') ++p;  // skip the name
+    if (*p == ',') ++p;
+  }
+  return out;
+}
+
 void unbox_native_ptr_args(Jvm* j, std::vector<JvmValue>* args,
-                           bool skip_self = false) {
+                           bool skip_self = false,
+                           const NativeEntry* ne = nullptr) {
   if (!j || !args) return;
+  const std::vector<bool> int_params = native_int_params(ne);
   size_t ai = 0;
   for (JvmValue& a : *args) {
     // Fork: host natives take the receiver as InvObject*, never as the
     // PE Native.ptr int (FindFile.first(self, ...) received Int 0).
-    if (ai++ == 0 && skip_self) continue;
+    const size_t idx = ai++;
+    if (idx == 0 && skip_self) continue;
     if (a.tag != JvmTag::Obj || !a.v.o) continue;
+    const size_t pi = skip_self ? idx - 1 : idx;
+    if (ne && (pi >= int_params.size() || !int_params[pi])) continue;
     const char* cn = tree_host_class(a.v.o);
     if (!class_inherits_native(j, cn)) continue;
     // PE: if obj+8 (payload) != 0 → box Int(ptr); else leave/zero.
@@ -353,7 +382,7 @@ int vmthread_invoke_method(VmThread* thr, InvObject* self, const char* class_fqn
         std::fprintf(stderr, "[pe-stream]   static native %s.%s via instance: receiver dropped\n",
                      class_fqn, method);
     }
-    unbox_native_ptr_args(j, &args, /*skip_self=*/has_self);
+    unbox_native_ptr_args(j, &args, /*skip_self=*/has_self, ne);
     JvmValue result = j->invoke(class_fqn, method, signature, args, false);
     fr->operand.push_back(result);
     fr->pe.op_count = static_cast<uint32_t>(fr->operand.size());

@@ -1,4 +1,5 @@
 #include "jvm.hpp"
+#include <cstdlib>
 #include <chrono>
 #include <thread>
 // Split from natives_generated_world.cpp — RenderNatives.cpp
@@ -507,6 +508,10 @@ void java_render_Text_create(InvObject* self, InvObject* parent, InvObject* char
     if (!render_d3d9_font_load_from_rid(charset, rid))
       render_d3d9_font_load(charset, "simple20");
   }
+  if (std::getenv("SLRR_PE_STREAM_TRACE"))
+    std::fprintf(stderr, "[native] Text.create self=%p parent=%p charset=%p font_ready=%d x=%g z=%g\n",
+                 static_cast<void*>(self), static_cast<void*>(parent), static_cast<void*>(charset),
+                 charset ? (render_d3d9_font_ready(charset) ? 1 : 0) : -1, x, z);
   render_d3d9_text_create(self, charset, x, z);
   if (self) {
     tree_field_set_int(self, "_text_kind", 1);  // PE type "r_text"
@@ -680,6 +685,9 @@ void java_render_Text_update(InvObject* self) {
     render_d3d9_text_set_string(self, string_cstr(s));
   else
     render_d3d9_text_set_string(self, "");
+  if (std::getenv("SLRR_PE_STREAM_TRACE"))
+    std::fprintf(stderr, "[native] Text.update self=%p text='%.40s' osd_texts=%d\n",
+                 static_cast<void*>(self), render_d3d9_text_get_string(self), render_d3d9_osd_text_count());
   render_d3d9_text_update(self);
 }  // PE @ 0x00487350
 

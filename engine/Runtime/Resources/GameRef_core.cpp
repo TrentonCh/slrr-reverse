@@ -318,9 +318,17 @@ InvObject* java_util_resource_GameRef_create(InvObject* self, InvObject* parent,
   const bool have_pose =
       parse_instance_params(params ? string_cstr(params) : nullptr, pose);
   if (std::getenv("SLRR_PE_STREAM_TRACE"))
-    std::fprintf(stderr, "[native] GameRef.create type=0x%08X entry=%p fqn='%s' alias='%s' want_vt=%d\n",
-                 static_cast<unsigned>(type_id), static_cast<const void*>(ent), fqn.c_str(),
-                 alias_cstr ? alias_cstr : "", want_vt ? 1 : 0);
+    std::fprintf(stderr, "[native] GameRef.create type=0x%08X entry='%s' path='%s' fqn='%s' alias='%s' want_vt=%d\n",
+                 static_cast<unsigned>(type_id), ent ? ent->name.c_str() : "", ent ? ent->path.c_str() : "",
+                 fqn.c_str(), alias_cstr ? alias_cstr : "", want_vt ? 1 : 0);
+  if (std::getenv("SLRR_PE_STREAM_TRACE") && ent) {
+    std::vector<uint8_t> blob;
+    if (rpak_read_entry(type_id, &blob)) {
+      std::string head(blob.begin(), blob.begin() + (blob.size() < 160 ? blob.size() : 160));
+      for (char& c : head) if (c == 13 || c == 10) c = '|'; else if (c < 32 || c > 126) c = '.';
+      std::fprintf(stderr, "[native]   entry payload (%zu bytes): %s\n", blob.size(), head.c_str());
+    }
+  }
 
   auto finish_create = [&](InvObject* inst) {
     // Phase 2.59: world-tree parent → getParentID (Part.addPart install check).
