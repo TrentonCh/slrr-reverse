@@ -226,3 +226,15 @@ inits, `ResourceRef.<init>(ResourceRef)` with a null argument.
 
 Old-build regression (E:) still passes: vehicleTypes=25, menu chrome=1,
 hub EXIT ok=1, exit 5.
+
+Later in session 3: array elements are assignable (op 0x20 pushes an
+element reference; `a[i] = x` stores through it) and `array.length` answers
+the element count, which makes the script `java.util.Vector` work
+(addElement / lastElement / ensureCapacityHelper). With that, every
+`Osd.createButton` / `createHotkey` / `changeSelection` null error is gone,
+but `Osd.changeSelection(II)` (reached from `Osd.show` -> `resetSelection`)
+now loops forever at node 121: a cursor search over `group.gadget`
+(`elementAt(i)`, `.disabled`, OR-chains at nodes 99-103 / 122-125) never
+finds an acceptable gadget. Next: step-trace `java.render.Osd` into
+`changeSelection` and compare the `disabled` / `active` reads with the
+dump. Old-build regression still passes.

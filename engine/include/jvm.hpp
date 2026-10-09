@@ -212,11 +212,14 @@ static_assert(sizeof(VmCallFramePe) == kCallFrameBlobSize, "PE CallFrame 64B");
 // and tree_eval, so widening it is not an option. Instead each operand slot
 // carries a parallel descriptor naming where the value came from; pure
 // r-values leave it None, matching a plain Value on the PE stack.
-enum class VmRefKind : uint8_t { None, Local, Field, Static };
+// Fork: Elem = array element (PE Value_getArrayElement hands back a
+// ValueField on the SoftArray slot, so `a[i] = x` assigns through it).
+enum class VmRefKind : uint8_t { None, Local, Field, Static, Elem };
 
 struct VmValueRef {
   VmRefKind kind = VmRefKind::None;
   uint32_t local_index = 0;        // Local: index into VmCallFrame::locals
+  int32_t index = 0;               // Elem: element index (obj = array)
   InvObject* obj = nullptr;        // Field: receiver
   const JvmClass* owner = nullptr; // Static: class owning the Instance @ +0x1D0
   std::string name;                // Field / Static: field name

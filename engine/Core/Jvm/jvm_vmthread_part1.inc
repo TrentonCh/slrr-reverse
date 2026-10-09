@@ -925,6 +925,14 @@ bool vmthread_ref_assign(VmThread* thr, const VmValueRef& dst,
         return true;
       }
       return false;
+    case VmRefKind::Elem: {
+      // Fork: SoftArray element slot. Host arrays hold InvObject* only, so a
+      // primitive element is OOS (stored as null, like the legacy arrayInit).
+      if (!dst.obj || dst.index < 0) return false;
+      if (dst.index >= tree_vector_size(dst.obj)) return false;
+      tree_vector_set(dst.obj, dst.index, src.tag == JvmTag::Obj ? src.v.o : nullptr);
+      return true;
+    }
     case VmRefKind::None:
     default:
       return false;  // PE "stack access: value on top (instead of variable)"
@@ -1171,7 +1179,15 @@ void vmthread_op32_array_access(VmThread* thr) {
           : (idx.tag == JvmTag::Float ? static_cast<int32_t>(idx.v.f) : 0);
   if (arr.tag == JvmTag::Obj && arr.v.o && i >= 0)
     elem = tree_vector_element_at(arr.v.o, i);  // PE @ 0x421437
-  vmthread_value_stack_push(thr, JvmValue::make_obj(elem));
+  // Fork: PE pushes a ValueField on the element, so the operand stays
+  // assignable (`elementData[elementCount++] = obj` in Vector.addElement).
+  VmValueRef ref;
+  if (arr.tag == JvmTag::Obj && arr.v.o && i >= 0) {
+    ref.kind = VmRefKind::Elem;
+    ref.obj = arr.v.o;
+    ref.index = i;
+  }
+  vmthread_value_stack_push_ref(thr, JvmValue::make_obj(elem), ref);
   thr->pe.unk_24 += 8;  // PE @ 0x4214B7 → VMThread_opDefault_advance
 }
 
@@ -1548,6 +1564,12 @@ namespace {
 // TREE bag is untyped, so probe obj → int → float and settle on 0.
 JvmValue vmthread_field_value(InvObject* obj, const std::string& name) {
   if (!obj || name.empty()) return JvmValue::make_obj(nullptr);
+  // Fork: PE Instance_getArrayElement / SoftArray `length` field — an array
+  // object answers its element count (Vector.elementData.length).
+  if (name == "length") {
+    const char* hc = tree_host_class(obj);
+    if (hc && hc[0] == '[') return JvmValue::make_int(tree_vector_size(obj));
+  }
   // Fork: the bag slot is typed once written; read it as-is. An unwritten
   // field takes the default of its DECLARED type (PE ValueField ctor with
   // the FILD type): null for L/[ , 0.f for F, 0 otherwise. The old probe

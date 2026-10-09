@@ -990,7 +990,7 @@ static int vmthread_exec_stream_inner(VmThread* thr, const JvmClass* cls_in,
           if (v.tag == JvmTag::Obj) {
             if (!v.v.o) return "null";
             const char* hc = tree_host_class(v.v.o);
-            if (hc && hc[0]) { std::snprintf(b, sizeof b, "<%s>", hc); return b; }
+            if (hc && hc[0]) { std::snprintf(b, sizeof b, "<%s@%p>", hc, static_cast<void*>(v.v.o)); return b; }
             const char* sc = string_cstr(v.v.o);
             if (sc) { std::snprintf(b, sizeof b, "\"%.20s\"", sc); return b; }
             return "obj";
