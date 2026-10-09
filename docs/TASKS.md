@@ -17,11 +17,11 @@ Old-build regression (from `E:\NFS.SLRR Edition\NFS.SLRR Edition`):
 
 ## Next steps (ordered, 2026-10-09)
 
-1. Finish the main menu: route the Osd texts through the Osd camera pass
-   (they still go through the legacy screen-space text pass), check the
-   item labels/animation over a longer run, confirm the icon strip against
-   the real game. Verify with `SLRR_PE_BOOT_SHOT`.
-2. Hotkeys and mouse into the sliding menu (start a career from the VM).
+1. Hotkeys and mouse into the main menu: Gates sits in its "PRESS ENTER"
+   state waiting for `osdCommand` (Osd.createHotkey x52, `HotkeyWatcher`
+   thread). Find which natives the watcher polls, feed real keys from the
+   window, add a scripted key injection for unattended runs, then start a
+   career from the VM.
 3. Quiet the remaining script errors (`ResourceRef.<init>(null)` chain,
    two `MouseCursor` null field reads).
 4. Field initialisers for classes without an explicit `<init>` (confirm
@@ -63,6 +63,9 @@ comes after the menu is up.
 | RenderRef.create parent survives setMatrix(pos,ori) (`tree_parent`) | 106e5f3 | instances were orphaned, members=0 |
 | vec3_get/ypr_get read script-built Vector3/Ypr fields | 106e5f3 | every setMatrix pose was (0,0,0) |
 | SCX centimetres scaled to script metres in the camera pass | 106e5f3 | 392x294 cm background = full screen at the Osd camera |
+| String `==` compares text (the exe interns String payloads) | faa15eb | `Rectangle.validAxle` returned -1, no OSD animation ever ran |
+| Camera-pass texts (world-space glyph quads under the Osd camera) | faa15eb | `draw_camera_texts()` |
+| Step trace filter by `Class.method`, comma list | faa15eb | `SLRR_PE_STREAM_STEPS=java.game.Gates.run,java.util.Vector.elementAt` |
 
 ## In progress
 
@@ -85,11 +88,19 @@ comes after the menu is up.
   script-built `Vector3`/`Ypr` (Build 940 constructs them in script) read
   as zero; the Rectangle template (`etalon_negyzet_alpha.SCX`) is a 100 cm
   quad while the script works in metres.
-- Remaining: the 11 Osd texts are still drawn by the legacy screen-space
-  text pass (`draw_osd_texts`) rather than under the Osd camera; the item
-  label texts seen so far are the script's placeholders ('a', ' ');
-  confirm the strip layout/animation against the real game over a longer
-  run (items sit at x = 3.57..7.37, sliding in from the right).
+- Done (faa15eb): texts under an Osd camera draw in the camera pass.
+  The menu animations run: `Rectangle.validAxle` compares the axle string
+  with literals from another class's pool, and the exe interns every
+  String payload (`FUN_0055b980` looks the text up in a string table
+  before allocating), so its pointer compare is content equality. With
+  the host doing the same, the item rescale and the two logo slides run
+  (`Rectangle.run` steps them, `a_finished_x` goes to 1), `Gates.run`
+  reaches `message.changeText("PRESS ENTER")` and then polls
+  `showMenu` / `messageSeek`, which only `osdCommand` (hotkeys) changes.
+- Frame dump at loop end shows the icon strip slid into view with the
+  logos and the gradient background. Item label texts are the script's
+  placeholders until a selection happens.
+- Next: input. See "Next steps" 1.
 ### 2. `ResourceRef.<init>(ResourceRef)` called with a null argument (574/run)
 
 - `GameType.<init>()` calls `super()`; GameRef only declares

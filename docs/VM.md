@@ -297,3 +297,25 @@ State at 106e5f3: the frame dump shows the video, version banner, the Osd
 background and the sliding-menu icon strip (part pictures set through
 `menuItem.updateTexture` -> `Rectangle.changeTexture`). Texts are still
 drawn by the legacy screen-space pass. Old-build regression passes.
+
+### 2026-10-09 (session 3, later): String equality
+
+Why nothing in the menu animated: `Rectangle.validAxle(String)` fills a
+`String[] {"X","Y","XY","S"}` and returns the index whose element `==` the
+argument. The argument is a literal from another class's constant pool, so
+the host (a fresh `string_new` per 0x4009 push, pointer compare in
+`Value_eq`) never matched and every `setupAnimation` was skipped. In the
+940 exe `Value_boxCString` (FUN_0055ba60) builds the payload through
+FUN_0055b980, which looks the text up in the VM's string table
+(FUN_00561020) and reuses the existing payload; Value_eq (FUN_0055d930)
+then compares `L` values by payload pointer, which is content equality for
+strings. The host now compares two String objects by text in
+`vmthread_soft_value_eq` (faa15eb). After that the item rescale ("S") and
+the logo slides ("X") run on their animator threads, and `Gates.run`
+advances to "PRESS ENTER" where it waits for `osdCommand`.
+
+Thread method queue: `Thread.addMethod/methodStatus/controlMethod` are
+script code over `methods/executed/exeTimer` Vectors (created only by the
+3-arg `Thread(Runnable, String, int)` ctor); `methodStatus(i)` =
+`executed.elementAt(i).intValue()`. Reads before the first `addMethod`
+return null (harmless).
