@@ -238,3 +238,33 @@ now loops forever at node 121: a cursor search over `group.gadget`
 finds an acceptable gadget. Next: step-trace `java.render.Osd` into
 `changeSelection` and compare the `disabled` / `active` reads with the
 dump. Old-build regression still passes.
+
+### 2026-10-09 (session 3, later): resources and natives
+
+After the array fixes the boot exposed host-side problems rather than VM
+ones: `Osd.changeSelection` looped because the AND/OR short-circuit ops lost
+their conditional skip (the loop's absolute default advance overwrote it);
+`File.write(null String)` resolved to `write(Vector)` and recursed because
+null arguments carried no type (PE Values do: the array slot / field / static
+declared type now rides along as `pack_types`); string `+`/`+=` dropped
+numeric operands; every Native-derived native argument was replaced by its
+Native.ptr int so `Text.create` got a null charset; `GameLogic.EVENT_ROOT`
+listed the brake parts as career events because the rpk child walk matched
+parent ids by local id only (now resolved through the pack's remap table);
+the 64-entry pack slot table silently zeroed every rid literal past the 64th
+pack (Build 940 opens 126); `t_data.rpk` packs were looked up by basename;
+loading a class mid-boot reallocated the class vector (now a deque) and a
+bundled duplicate replaced a live class in place (classes load once);
+`GameRef.create` for a scripted GameType entry (payload `script <path>`)
+now loads that file and constructs the script object; an untagged host
+receiver resolves as java.lang.Object (or String when it carries text)
+instead of inheriting the caller's class, with a 512-frame recursion guard.
+A crash handler prints the exception, module offset (see the linker map)
+and the VM's script frames.
+
+State: 940 boots to `GameLogic.actualState = MainMenu` in ~10 s with the
+career events constructed, fonts loaded from frontend.rpk and the menu's
+text objects reaching the renderer. Remaining script errors are the
+`ResourceRef.<init>(ResourceRef)` chain with a null argument (PE reports a
+"not found" and skips that ctor; the host calls it) and two MouseCursor
+null field reads. Old-build regression passes.

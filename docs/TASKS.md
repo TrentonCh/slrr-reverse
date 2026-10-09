@@ -37,39 +37,38 @@ comes after the menu is up.
 | String concat stringifies numbers (`+`, `+=`) | fd7f949 | version text |
 | rpk child lookup resolves parent ids through the remap table | 9084e7d | EVENT_ROOT children were brakes |
 | Native.ptr unboxing only for integer params | 1ab8920 | script texts reach the renderer (txt=11) |
+| GameRef.create constructs scripted GameType entries (payload `script <path>`) | d827a92 | career events |
+| Class table is a deque; classes load once | d827a92 / f138803 | dangling frame pointers |
+| Untagged receivers resolve as Object/String, recursion guard | d827a92 / e9bbb81 | CareerEvent.init recursion |
+| Pack slot cap 1024, packs looked up by relative path | f138803 / 8b22678 | every rid literal resolves |
+| Crash handler + linker map | f138803 | `[crash]` lines, slrr_engine.map |
 
 ## In progress
 
-### 1. Career events: `careerEvents[i].init()` reports GameLogic.init not found
+### 1. Draw the main menu
 
-- `GameRef.create` now derives `java.game.CareerEvents.JuniorCurcuit` from the
-  entry payload's `script <path>` line (`script_fqn_for_res`), but the node's
-  script class is seeded elsewhere (`host_mid_seed_script_class` callers in
-  Resources_part2.inc:1083 and Resources_part4.inc:1761) so the created
-  object still has no class and `init()` resolves against the caller.
-- Plan: route both seeds through `script_fqn_for_res`, confirm the class
-  loads from `sl/Scripts/game/CareerEvents/*.class`, then `careerComplete`.
+- Texts reach the renderer (`txt` in the loop-end report). Rectangles and
+  buttons are 3D mesh render instances (`RectangleTemplate` -> `RenderRef`
+  create/changeResource/scaleMesh/setMatrix) drawn through the Osd viewport
+  and camera; `osd=0` only counts the legacy C++ OSD rect list.
+- Plan: screenshot the window during the loop, check `render_d3d9_mesh_ready`
+  for the frontend rect mesh, the Osd `Viewport.create` / `Camera.create`
+  natives, and whether `Group.activate` / `Osd.show` visibility is honoured.
 
-### 2. Draw the main menu
+### 2. `ResourceRef.<init>(ResourceRef)` called with a null argument (574/run)
 
-- 11 OSD texts reach the renderer now; rectangles/buttons (`osd=0`) do not.
-  Check `Rectangle.create` / `RenderRef.create` natives feed `g_osd` and
-  whether `Osd.show` / `Group.activate` visibility is honoured.
+- `GameType.<init>()` calls `super()`; GameRef only declares
+  `<init>(GameRef)` and `<init>(GameRef,GameRef,String,String)`. The exe's
+  callMethod finds no 0-arg ctor and reports "not found"; the host still
+  selects `<init>(GameRef)` and runs it with null. Find which resolution
+  path admits the arity mismatch (pe_type_score Int->ResourceRef?).
 
 ### 3. Classes without an explicit `<init>`
 
-- `GfxEngine`, `Steam`, `HotkeyWatcher`, `MainMenu`, `InventoryItem` report
-  `<init>()V not found`; field initialisers only run on the `<init>` path.
-- Plan: confirm in the exe whether Class_newInstance runs the FILD trees.
+- Field initialisers only run on the `<init>` path; confirm in the exe
+  whether Class_newInstance runs the FILD trees (MainMenu, GfxEngine, ...).
 
-### 4. `ResourceRef.<init>(ResourceRef)` with a null argument (132/run)
-
-- From `GameType.<init>()` -> `GameRef.<init>(GameRef)`; probably harmless.
-
-### 5. `Thread.methodStatus` null before `addMethod` (3/run)
-
-- `Gates.run` polls `mmaThread.methodStatus(k)` before the ctor finished
-  `addMethod`; the budgeted scheduler interleaves. Harmless race.
+### 4. `Thread.methodStatus` null before `addMethod` (race, harmless)
 ## Backlog
 
 - Missing natives seen so far: `Steam.initAPI`, `Thread.run`.
