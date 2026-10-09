@@ -308,7 +308,7 @@ InvObject* java_util_resource_GameRef_create(InvObject* self, InvObject* parent,
   const RpakEntry* ent = type_id ? rpak_find_entry(type_id) : nullptr;
   // PE null alias → "_gameinst"; host keeps empty for VehicleType detect.
   const char* alias_cstr = alias ? string_cstr(alias) : "";
-  const std::string fqn = script_fqn_for_entry(ent);
+  const std::string fqn = script_fqn_for_res(type_id, ent);
   const bool want_vt =
       (alias_cstr && std::strstr(alias_cstr, "VehicleType")) ||
       (!fqn.empty() && fqn.size() >= 3 &&

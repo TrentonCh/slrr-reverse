@@ -32,39 +32,44 @@ comes after the menu is up.
 | Steady VM clock (budget rounding fix) | 5e4f63a | |
 | Static native via instance drops the receiver | 5e4f63a | `this.sleep(300)` |
 | Array element references + `array.length` | 500ceb9 | script `java.util.Vector` works |
+| AND/OR short-circuit keeps its conditional skip | 3c9fb4b | fixed Osd.changeSelection loop |
+| Typed null args, resolution walks into java.lang.Object, null by-name call | 64cc4da | File.write(String) overload, Osd.equals |
+| String concat stringifies numbers (`+`, `+=`) | fd7f949 | version text |
+| rpk child lookup resolves parent ids through the remap table | 9084e7d | EVENT_ROOT children were brakes |
+| Native.ptr unboxing only for integer params | 1ab8920 | script texts reach the renderer (txt=11) |
 
 ## In progress
 
-### 1. `Osd.changeSelection(II)` loops forever (blocks the whole run)
+### 1. Career events: `careerEvents[i].init()` reports GameLogic.init not found
 
-- Reached from `Osd.show()` -> `show(I)` -> `resetSelection()` ->
-  `changeSelection(II)`, right after the Gates menu is built.
-- Node 121 calls `group.gadget.elementAt(i)` and tests `.disabled`
-  (nodes 122-125 are an OR chain); the search never finds an acceptable
-  gadget, so the run hits the timeout with no `loop end`.
-- Plan: step-trace `java.render.Osd` into `changeSelection`, compare the
-  `disabled` / `active` reads and the loop counter with the dump
-  (`tools/tufa_dump.py .../render/Osd.class --method changeSelection`).
-- Suspects: a gadget field never set (field inits on Button/Gadget), the
-  `0x1c` member-access-on-TOS op, or the loop counter store.
+- `GameRef.create` now derives `java.game.CareerEvents.JuniorCurcuit` from the
+  entry payload's `script <path>` line (`script_fqn_for_res`), but the node's
+  script class is seeded elsewhere (`host_mid_seed_script_class` callers in
+  Resources_part2.inc:1083 and Resources_part4.inc:1761) so the created
+  object still has no class and `init()` resolves against the caller.
+- Plan: route both seeds through `script_fqn_for_res`, confirm the class
+  loads from `sl/Scripts/game/CareerEvents/*.class`, then `careerComplete`.
 
-### 2. Classes without an explicit `<init>`
+### 2. Draw the main menu
 
-- `GfxEngine`, `Steam`, `HotkeyWatcher` (and earlier `MainMenu`,
-  `InventoryItem`) report `Thread::callMethod: X.<init>()V not found`.
-- The object is still created, but field initialisers are only applied on
-  the `<init>` path, so such objects keep null fields.
-- Plan: confirm in the exe whether Class_newInstance runs the FILD trees
-  (then move `jvm_apply_field_inits_chain` to op 0x21 NEW), or whether the
-  compiler always emits a ctor and these classes are special.
+- 11 OSD texts reach the renderer now; rectangles/buttons (`osd=0`) do not.
+  Check `Rectangle.create` / `RenderRef.create` natives feed `g_osd` and
+  whether `Osd.show` / `Group.activate` visibility is honoured.
 
-### 3. `ResourceRef.<init>(ResourceRef)` with a null argument
+### 3. Classes without an explicit `<init>`
 
-- 31-51 "illegal fieldaccess null.<seg 1> in ResourceRef" per run, from
-  `GameType.<init>()` -> `GameRef.<init>(GameRef)` -> `ResourceRef.<init>(ResourceRef)`.
-- Probably harmless (the exe would also script-error and continue), but
-  verify the ctor overload picked is the one the exe picks.
+- `GfxEngine`, `Steam`, `HotkeyWatcher`, `MainMenu`, `InventoryItem` report
+  `<init>()V not found`; field initialisers only run on the `<init>` path.
+- Plan: confirm in the exe whether Class_newInstance runs the FILD trees.
 
+### 4. `ResourceRef.<init>(ResourceRef)` with a null argument (132/run)
+
+- From `GameType.<init>()` -> `GameRef.<init>(GameRef)`; probably harmless.
+
+### 5. `Thread.methodStatus` null before `addMethod` (3/run)
+
+- `Gates.run` polls `mmaThread.methodStatus(k)` before the ctor finished
+  `addMethod`; the budgeted scheduler interleaves. Harmless race.
 ## Backlog
 
 - Missing natives seen so far: `Steam.initAPI`, `Thread.run`.

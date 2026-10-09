@@ -3,6 +3,7 @@
 #include "runtime.hpp"
 #include "rpak.hpp"
 #include "jvm.hpp"
+#include "jvm_bridge.hpp"  // Fork: kClasspathMap
 #include "tree_interp.hpp"
 #include "tree_interp_internal.hpp"  // Fork: tree_static_slot
 #include "render_d3d9.hpp"
@@ -15,6 +16,7 @@
 #include "../Parts/Body/Chassis.h"
 
 #include <algorithm>
+#include <cctype>
 #include <array>
 #include <cmath>
 #include <cstdint>

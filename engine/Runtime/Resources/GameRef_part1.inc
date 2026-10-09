@@ -1142,6 +1142,59 @@ void gameref_world_tree_link(InvObject* self) {
 
 // ground_sync_fields → GroundRef_traffic.cpp
 
+// Fork: PE Engine_LoadGameInit reads the GameType entry payload, whose first
+// line is `script <path-to-.class>` (e.g. `script sl/Scripts/game// CareerEvents/JuniorCurcuit.class`), and loads that class. Map the path
+// back to a class name through the classpath table; fall back to the entry
+// name rule below when the payload has no script line.
+std::string script_fqn_from_script_path(const std::string& raw_path) {
+  std::string p = raw_path;
+  for (char& c : p)
+    if (c == 92) c = '/';  // backslash
+  while (!p.empty() && (p.front() == '/' || p.front() == '.')) p.erase(p.begin());
+  if (p.size() > 6 && p.compare(p.size() - 6, 6, ".class") == 0) p.resize(p.size() - 6);
+  auto lower = [](std::string s) {
+    for (char& c : s) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    return s;
+  };
+  const std::string lp = lower(p);
+  const ClasspathMapEntry* best = nullptr;
+  size_t best_len = 0;
+  for (size_t i = 0; i < kClasspathMapCount; ++i) {
+    const std::string pre = lower(kClasspathMap[i].filesystem_prefix) + "/";
+    if (lp.compare(0, pre.size(), pre) == 0 && pre.size() > best_len) {
+      best = &kClasspathMap[i];
+      best_len = pre.size();
+    }
+  }
+  std::string fqn;
+  if (best) {
+    fqn = std::string(best->java_package) + ".";
+    std::string rest = p.substr(best_len);
+    for (char& c : rest)
+      if (c == '/') c = '.';
+    fqn += rest;
+    return fqn;
+  }
+  // cars/racers/<X>_Data/scripts/<X>_VT.class → java.game.cars.<X>_VT
+  const size_t slash = p.find_last_of('/');
+  const std::string base = slash == std::string::npos ? p : p.substr(slash + 1);
+  if (lp.compare(0, 5, "cars/") == 0) return "java.game.cars." + base;
+  return "java.game." + base;
+}
+
+std::string script_fqn_for_res(int32_t res_id, const RpakEntry* e) {
+  std::vector<uint8_t> blob;
+  if (res_id != 0 && rpak_read_entry(res_id, &blob) && blob.size() > 7 &&
+      std::memcmp(blob.data(), "script ", 7) == 0) {
+    size_t end = 7;
+    while (end < blob.size() && blob[end] != 13 && blob[end] != 10) ++end;
+    std::string path(reinterpret_cast<const char*>(blob.data()) + 7, end - 7);
+    while (!path.empty() && path.back() == ' ') path.pop_back();
+    if (!path.empty()) return script_fqn_from_script_path(path);
+  }
+  return script_fqn_for_entry(e);
+}
+
 std::string script_fqn_for_entry(const RpakEntry* e) {
   if (!e || e->name.empty()) return {};
   // Racer VT scripts live in package java.game.cars (Baiern_VT, …).

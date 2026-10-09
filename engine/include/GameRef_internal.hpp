@@ -306,6 +306,9 @@ void gameref_list_unlink(InvObject* child);
 void gameref_list_link(InvObject* child, InvObject* parent);
 void gameref_world_tree_link(InvObject* self);
 std::string script_fqn_for_entry(const RpakEntry* e);
+// Fork: class name from the entry payload's `script <path>` line.
+std::string script_fqn_for_res(int32_t res_id, const RpakEntry* e);
+std::string script_fqn_from_script_path(const std::string& raw_path);
 InvObject* make_vt_host(const char* fqn);
 void bind_gameref(InvObject* o, InvObject* parent, const std::string& fqn,
                   const char* alias);
