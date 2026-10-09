@@ -5,6 +5,7 @@
 #include <cstring>
 #include <list>
 #include <mutex>
+#include <unordered_set>
 #include <string>
 
 #ifdef _WIN32
@@ -112,13 +113,23 @@ void request_exit() {
   g_exit = true;
 }
 
+// Fork: registry of string objects for string_is (identity set).
+static std::unordered_set<const void*> g_string_objects;
+
 InvObject* string_new(const char* utf8) {
   std::lock_guard<std::mutex> lock(g_mu);
   g_string_storage.emplace_back(utf8 ? utf8 : "");
   // Store pointer to stable string; header unused for now.
   auto* s = new InvString();
   s->utf8 = g_string_storage.back().c_str();
+  g_string_objects.insert(s);
   return reinterpret_cast<InvObject*>(s);
+}
+
+bool string_is(InvObject* obj) {
+  if (!obj) return false;
+  std::lock_guard<std::mutex> lock(g_mu);
+  return g_string_objects.count(obj) != 0;
 }
 
 const char* string_cstr(InvObject* obj) {

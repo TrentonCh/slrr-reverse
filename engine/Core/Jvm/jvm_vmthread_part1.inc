@@ -1503,7 +1503,7 @@ bool vmthread_soft_value_eq(const JvmValue& a, const JvmValue& b) {
     // Fork: PE Value_eq compares two String payloads by text (scripts
     // rely on `axle == "S"` across classes' literal pools, e.g.
     // Rectangle.validAxle); other objects by identity.
-    if (a.v.o && b.v.o) {
+    if (a.v.o && b.v.o && string_is(a.v.o) && string_is(b.v.o)) {
       const char* sa = string_cstr(a.v.o);
       const char* sb = string_cstr(b.v.o);
       if (sa && sb) return std::strcmp(sa, sb) == 0;
@@ -2190,13 +2190,13 @@ bool vmthread_op24_eval_name(VmThread* thr, const JvmClass* cls,
       const JvmClass* owner = nullptr;
       if (!vmthread_resolve_field_ref(cls, ctx_class, n.imm, &fname, &is_static,
                                       &owner))
-        { if (vm_trace_on()) std::fprintf(stderr, "[pe-stream]   op24 fail L%d\n", __LINE__); return false; }
+        { if (vm_trace_on()) std::fprintf(stderr, "[pe-stream]   op24 fail L%d (fieldref imm=%u in %s, ctx %s)\n", __LINE__, n.imm, cls->name.c_str(), ctx_class ? ctx_class->name.c_str() : "?"); return false; }
       if (is_static) {
         JvmValue* slot = tree_static_slot(owner, fname, false);
-        if (!slot) { if (vm_trace_on()) std::fprintf(stderr, "[pe-stream]   op24 fail L%d\n", __LINE__); return false; }
+        if (!slot) { if (vm_trace_on()) std::fprintf(stderr, "[pe-stream]   op24 fail L%d (static %s.%s)\n", __LINE__, owner ? owner->name.c_str() : "?", fname.c_str()); return false; }
         prev = *slot;
       } else {
-        if (!ctx_obj) { if (vm_trace_on()) std::fprintf(stderr, "[pe-stream]   op24 fail L%d\n", __LINE__); return false; }
+        if (!ctx_obj) { if (vm_trace_on()) std::fprintf(stderr, "[pe-stream]   op24 fail L%d (no ctx for %s)\n", __LINE__, fname.c_str()); return false; }
         prev = vmthread_field_value(ctx_obj, fname);
       }
       *pc += 8;

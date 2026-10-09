@@ -774,6 +774,16 @@ int game_interactive_run(Jvm& jvm, const char* game_root,
           return v;
         }();
         const double el = std::chrono::duration<double>(std::chrono::steady_clock::now() - boot_t0).count();
+        {
+          // Fork: heartbeat every 2 s (SLRR_PE_STREAM_TRACE) — shows whether the
+          // frame loop itself keeps turning.
+          static double next_beat = 2.0;
+          if (el >= next_beat) {
+            next_beat = el + 2.0;
+            if (std::getenv("SLRR_PE_STREAM_TRACE"))
+              std::fprintf(stderr, "[pe-boot] heartbeat t=%.1f s frame=%u\n", el, pe_frames);
+          }
+        }
         for (KeyAt& k : keys) {
           const bool want = el >= k.t && el < k.t + 0.15;
           if (want == k.down) continue;

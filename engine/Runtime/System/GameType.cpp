@@ -5,6 +5,7 @@
 #include "System.h"
 #include "Resources.h"
 
+#include <chrono>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
@@ -340,8 +341,13 @@ void engine_dispatch_script_call_named_args(InvObject* handler, const char* name
   if (!thr) return;
   for (const JvmValue& a : args) thr->pack_vec.push_back(a);
   vmthread_push_call_frame(thr);
+  const bool tr = std::getenv("SLRR_PE_STREAM_TRACE") != nullptr;
+  const auto t0 = std::chrono::steady_clock::now();
   const int inv = vmthread_invoke_method(thr, handler, cn, name, sig);
   if (inv == 0) vmthread_run(thr, /*budget_ms=*/0.f);
+  if (tr)
+    std::fprintf(stderr, "[pe-thread] named call %s.%s inv=%d inline %.1f ms\n", cn, name, inv,
+                 std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count());
   if (inv != 0) {
     vmthread_request_stop(thr);
     vmthread_destroy(thr);

@@ -13,6 +13,9 @@ struct InvString {
 
 InvObject* string_new(const char* utf8);
 const char* string_cstr(InvObject* obj);
+// Fork: true only for objects made by string_new (string_cstr on any other
+// object reads its first field as a char* and is not a type test).
+bool string_is(InvObject* obj);
 
 // Registry-only extras not always present in Java inventory.
 int32_t java_lang_Object_hashCode(InvObject* self);
