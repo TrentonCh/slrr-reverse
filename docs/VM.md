@@ -159,3 +159,30 @@ Confirmed semantics (decompiled 2026-10-09):
   a tie at the best score logs "more matching methods found".
 - VMThread_invokeMethod pops argc values from the caller operand stack into
   the callee locals (top first), after `this` for instance methods.
+
+### 2026-10-09 (session 2, Ghidra online)
+
+Ghidra 12.1.4 + pyghidra installed; project `slrr940` analysed (6,630
+functions). `tools/ghidra940.py` queries it headlessly. Decompiled and
+ported: Class_findMethodSlot / compatScore (scored overload resolution),
+Thread_evalName (receiver rules), T_Container_pop at 0x1003 (locals),
+JVM_addClass_fromChunks (MTHD = static container then instance container).
+
+Loader fixes: static methods marked from the first MTHD container;
+`const_mref_class` exported. VM fixes: Int resource ids accepted for
+ResourceRef params; typed defaults for unset fields and fresh locals;
+null receiver on a field path or method call is a script error that
+yields null; unresolved script methods are "not found" with no call;
+inherited natives resolve on the declaring class.
+
+State: with all switches on, Build 940 boots through pack scanning, all
+25 vehicle types, the Gates/Dialog constructors and `createText` on the
+VM. Remaining failures are reads of state the host never sets because its
+C++ boot replaces the scripts' `Init(int)`: `Frontend.*Font` statics are
+null (Text/Osd calls), `GameLogic.player`/`goals` are null (careerComplete,
+Gates.show node 200, createButton node 142).
+
+Next milestone: boot through the script `Init(int)` -> `Frontend.init()`,
+`Sound.init()`, `Input.initControllers()`, `new GameLogic()` on the VM and
+retire the Soft splash/menu/GameLogic shims in `game_boot_part*.inc` and
+`GameRef_part3.inc`. Natives those paths touch must then be real.
