@@ -170,6 +170,7 @@ const NativeEntry kNativeTable[] = {
   {"java.lang.Object", "notifyAll", "void notifyAll()", false, reinterpret_cast<void*>(&java_lang_Object_notifyAll)},
   {"java.lang.Object", "toString", "String toString()", false, reinterpret_cast<void*>(&java_lang_Object_toString)},
   {"java.lang.Object", "hashCode", "int hashCode()", false, reinterpret_cast<void*>(&java_lang_Object_hashCode)},
+  {"java.lang.Object", "finalize", "void finalize()", false, reinterpret_cast<void*>(&java_lang_Object_finalize)},
   {"java.lang.Object", "enableGC", "void enableGC()", false, reinterpret_cast<void*>(&java_lang_Object_enableGC)},
   {"java.lang.Object", "disableGC", "void disableGC()", false, reinterpret_cast<void*>(&java_lang_Object_disableGC)},
   {"java.lang.String", "finalize", "void finalize()", false, reinterpret_cast<void*>(&java_lang_String_finalize)},

@@ -1065,6 +1065,10 @@ void java_lang_Object_disableGC(InvObject* self) {
   tree_field_set_int(self, "gc_disabled", 1);
 }
 
+// PE java.lang.Object.finalize: no native state to release; scripts call
+// super.finalize() from every finalizer, so an unbound native logged 12x/run.
+void java_lang_Object_finalize(InvObject* self) { (void)self; }
+
 int32_t java_lang_Object_hashCode(InvObject* self) {
   // PE @ 0x0047C900 size 0x17 (int_convert 23). Unbox this
   // (JVM_UnboxArg @ 0x0045D910): dest0=&arg_0 overwrites CallInfo with

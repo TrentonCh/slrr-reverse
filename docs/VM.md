@@ -353,3 +353,49 @@ now gates the text compare. ENTER on the prompt reaches
 `Gates.osdCommand(AXIS_SELECT)`, the sliding menu teleports in and a second
 ENTER clicks the item (NEW CAREER opens `StringRequesterDialog`, whose
 `show` still unwinds on a field-ref resolve).
+
+### 2026-10-09 (session 4): the career starts
+
+Overload resolution (bb4baa7): `vmthread_thread_call_method` hands the
+(owner, method) slot that `pe_find_method` picked to the invoke
+(`VmPendingInvoke.owner_fqn/method_ptr`), as PE VMThread_invokeMethod
+uses its lookup box. The old by-name fallback re-resolved inherited
+methods on the receiver class and picked the wrong overload (0-arg
+`super()` ran `<init>(GameRef)` with null, 577 errors per run). A VM
+thread is no longer deleted while it is the pump's current thread
+(`vmthread_destroy` defers when RUNNING; the heap corruption after NEW
+CAREER was a double delete). `Text`/`Rectangle` instances are destroyed
+with their `ResourceRef`. The pump has a re-entry guard and a wall cap
+(`SLRR_PE_PUMP_CAP_MS`, default 50) so traced runs cannot starve the
+frame loop.
+
+Frame loop (9674d59): the PE boot loop now matches Engine_MainLoop:
+`input_tick(dt)`, `engine_simulate_frame()` (sim objects, timers),
+resource pumps, `Jvm_PumpFrame(10)`, then
+`engine_dispatch_animate_events()`. `GameType.registerCallback(28)` keeps
+the GII_ANIMATE list and the dispatcher calls `animate()V` by name once
+per frame on each registrant whose class chain overrides it with a body
+(only `Osd`). `Osd.animate` is the one reader of `Input.lastKey`, so
+until now typing could never reach the dialog. Injected keys
+(`SLRR_PE_BOOT_KEYS`) also push onto the lastKey queue, and
+`ResourceRef.getFirstChild/getNextChild` enumerate runtime children by
+creation order when the rpak tree has none (the MouseCursor null reads
+came from a `RID_CURSOR` GameRef child that only the host tree knew).
+
+ASCII (438a265): `Input_lastKeyEvent` returns `scan | (ascii << 16)` and
+`Osd.animate` only forwards keys with an ASCII half to `StringInput.key`.
+The injected ENTER had none, so the dialog never finished; the queue path
+now uses the same ToAsciiEx translation as the DirectInput path.
+
+Result: ENTER, ENTER (NEW CAREER), t e d, ENTER -> `Dialog.display`
+returns, `GameLogic` creates the player and `actualState` becomes
+`java.game.Garage` within 40 s (211 meshes, 168 textures, 9 cameras, 29
+viewports, 46 texts). The frame dump shows the garage OSD (MOVE PARTS,
+lift arm height, prestige/day/time/money, the welcome dialog) but no 3D
+garage yet, the main-menu dialog texts are still drawn (legacy
+`draw_osd_texts` ignores hidden OSDs) and the dialog subtree is rotated
+180 degrees. New script errors on the career path: `String.getParams`
+native missing (`GameLogic.updateCodeROC`), `Object.finalize` unbound,
+compiled classes missing for `camera`, `cursor`, `SplashScreen`,
+`lift_support/cfg`, `stock_Battery_silver` (the exe compiles sources on
+demand).

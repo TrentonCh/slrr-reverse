@@ -15,20 +15,49 @@ Old-build regression (from `E:\NFS.SLRR Edition\NFS.SLRR Edition`):
 `timeout 150 slrr_engine.exe --game --no-wait` must print vehicleTypes=25,
 `hub EXIT ok=1` and exit 5. Delete `tree_rpk_scan_boot` after every run.
 
-## Next steps (ordered, 2026-10-09)
+## Next steps (ordered, 2026-10-09 late)
 
-1. NEW CAREER: selecting it opens `StringRequesterDialog` (career name)
-   whose `show` unwinds on an evalName failure at node 134 (`this.osd.
-   ...(6 args)`; the field-ref resolve fails and the trace now prints the
-   imm/class). Fix, then type a name (`Input.lastKey` path) and start the
-   career from the VM.
-2. Hide the 'a' width-probe text; check why one traced run (stream trace
-   + ENTER) died mid-line with no crash output (untraced runs end cleanly).
-3. Quiet the remaining script errors (`ResourceRef.<init>(null)` chain,
-   two `MouseCursor` null field reads).
-4. Field initialisers for classes without an explicit `<init>` (confirm
+Where it stands: the 940 scripts boot to the main menu, ENTER opens the
+sliding menu, NEW CAREER opens the name dialog, typing works, ENTER
+confirms and `GameLogic.actualState` becomes `java.game.Garage` (garage
+OSD drawn: lift, money, day, welcome dialog). Unattended check:
+`SLRR_PE_BOOT_KEYS="13:0x1C,16:0x1C,19:0x14,19.4:0x12,19.8:0x20,22:0x1C"`
+with `SLRR_PE_BOOT_SECONDS=40`.
+
+1. UI pass (one renderer change, keep the E: path green):
+   - Texts become render instances built from the font SCX (glyph quads
+     in cm, one `TextInst` per `Text`, rebuilt on changeText / colour /
+     scale / align; `Text.setScale` native), so they take the owner
+     camera's view like rectangles do. Drops `draw_camera_texts` and the
+     atlas glyph path.
+   - fade.SCX and other non-font charsets load as plain meshes (the
+     darken curtain currently draws as the letter 'a').
+   - Alpha from the instance colour; units folded into `resolve_world`.
+   - Hidden instances are not drawn: WORLDTREELEAF / `Osd.hide` state.
+     The Garage frame still shows the main-menu dialog texts and the 'a'
+     width probe because the legacy `draw_osd_texts` draws every text.
+   - One `draw_present_frame()` over the bound viewports (persistent
+     clear flags, viewport order) replacing draw_meshes /
+     draw_viewport_cameras / draw_camera_texts / draw_osd_texts; keep the
+     legacy auto-framing only when no viewport is bound (old build).
+   - Dialog subtree draws rotated 180 degrees (OK/CANCEL mirrored at the
+     top, title below the box): check the dialog camera / group pose sign
+     convention (ypr) in `resolve_world`.
+2. Garage scene: the state reaches `java.game.Garage` (211 meshes, 9
+   cameras, 29 viewports) but the frame shows no 3D garage. Check the
+   garage camera/viewport binding and the resource loads once the present
+   pass is in.
+3. Mouse: `MouseCursor` (Controller `Mouse` device axes, `getPos`,
+   `getPickedPos`, EVENT_CURSOR to the Osd), `Osd.hoverEffect` /
+   `click` / `mapClickPosH`, pointer visibility.
+4. Career-path script errors: `String.getParams` native missing
+   (`GameLogic.updateCodeROC` -> `null.trim()`), `Object.finalize` has no
+   binding (12 warnings per run), compiled classes missing (`camera`,
+   `cursor`, `SplashScreen`, `lift_support/cfg`, `stock_Battery_silver`;
+   the exe compiles .java on demand, the host cannot).
+5. Field initialisers for classes without an explicit `<init>` (confirm
    Class_newInstance behaviour in the exe).
-5. Retire the C++ Soft boot shims; then physics / FFB behind the native
+6. Retire the C++ Soft boot shims; then physics / FFB behind the native
    contract (FORK.md).
 
 ## Goal
@@ -72,6 +101,10 @@ comes after the menu is up.
 | Scripted key presses `SLRR_PE_BOOT_KEYS`, hotkey table-slot sampling, hotkey event on a VM thread | 4c5ff31 | ENTER reaches `Gates.osdCommand(34)` |
 | Physical input only when the window is foreground | 1c7d850 | unfocused test runs read the user's typing as game keys |
 | `string_is()`: String `==` only for real strings | 9282e8f | `Object.equals` said two Osds were equal, focus queue dropped the wrong Osd; ENTER now reaches the menu |
+| Foreground gate for GetAsyncKeyState, errors-only trace, pump wall cap, crossing-based key injection | 191ad2e | `SLRR_PE_STREAM_ERRORS=1`, `SLRR_PE_PUMP_CAP_MS` |
+| Invoke runs the resolved (owner, method) slot; deferred VM thread delete; text instance destroy; pump re-entry guard | bb4baa7 | by-name fallback picked the wrong overload; heap corruption after NEW CAREER; 577 `ResourceRef.<init>(null)` errors gone |
+| PE frame loop (SimulateFrame + Input tick + animate dispatch), GII_ANIMATE registry, scripted keys in `Input.lastKey`, runtime `ResourceRef` children | 9674d59 | `Osd.animate` runs every frame; typing reaches `StringInput.key`; MouseCursor null errors gone |
+| Scripted keys carry the ToAsciiEx character | 438a265 | ENTER (13) finishes the name dialog; career starts, `actualState = Garage` |
 
 ## In progress
 
@@ -122,13 +155,15 @@ comes after the menu is up.
 - Note: earlier runs saved a zeroed control set back to disk (the int[]
   bug round-tripped through `ControlSet.save`); it was restored from
   `save/controls/Defaults` (same format). Keep the `Defaults` file.
-### 2. `ResourceRef.<init>(ResourceRef)` called with a null argument (574/run)
+### 2. `ResourceRef.<init>(ResourceRef)` called with a null argument
 
-- `GameType.<init>()` calls `super()`; GameRef only declares
-  `<init>(GameRef)` and `<init>(GameRef,GameRef,String,String)`. The exe's
-  callMethod finds no 0-arg ctor and reports "not found"; the host still
-  selects `<init>(GameRef)` and runs it with null. Find which resolution
-  path admits the arity mismatch (pe_type_score Int->ResourceRef?).
+- Gone since bb4baa7: the invoke now runs the (owner, method) slot that
+  `pe_find_method` resolved instead of re-resolving by name, so the
+  0-arg `super()` no longer lands on `<init>(GameRef)`.
+- Side effect: parts whose compiled class is missing now reach the
+  `Part.addStockParts` native (no binding) and `GameRef.setWear/setTear/
+  setTexture/addStockParts not found` (2 per run) instead of being
+  silently skipped. Missing-class limitation, not a resolver bug.
 
 ### 3. Classes without an explicit `<init>`
 
@@ -141,8 +176,8 @@ comes after the menu is up.
 - Missing natives seen so far: `Steam.initAPI`, `Thread.run`.
 - `careerComplete` unwinds (null `GameLogic.player`) - check once the menu
   draws whether the player object is created by the script path.
-- Primitive arrays: host arrays hold objects only; `int[]` element stores
-  become null (`VmRefKind::Elem` in `vmthread_ref_assign`).
+- `String.getParams(Vector)` native (ROC prize code), `Object.finalize`
+  no-op binding.
 - Retire the Soft boot shims (`game_boot_part*.inc`, `GameRef_part3.inc`)
   once the script boot draws the menu.
 - Physics/FFB behind the native contract (FORK.md).
@@ -172,3 +207,10 @@ comes after the menu is up.
   trace on the boot is ~2x slower; "PRESS ENTER" shows at ~20 s instead
   of ~12 s, schedule keys accordingly.
 - The exe interns String payloads: `==` on strings is content equality.
+- `Input.lastKey` returns `scan | (ascii << 16)` and `Osd.animate` only
+  forwards keys with an ASCII half to `StringInput.key`; injected keys
+  go through `input_scan_to_ascii` (ToAsciiEx, no modifiers).
+- `SLRR_PE_STREAM_ERRORS=1` hides the per-frame `Osd.animate` named call;
+  the full trace shows it (one line per frame).
+- `ResourceRef.getFirstChild/getNextChild` fall back to runtime children
+  (creation order, `ResState.seq`) when the rpak walk has none.

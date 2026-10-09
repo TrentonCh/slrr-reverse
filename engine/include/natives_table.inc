@@ -168,6 +168,7 @@ void java_lang_Object_notify(InvObject* self);
 void java_lang_Object_notifyAll(InvObject* self);
 InvObject* java_lang_Object_toString(InvObject* self);
 int32_t java_lang_Object_hashCode(InvObject* self);
+void java_lang_Object_finalize(InvObject* self);  // PE no-op (Object has no native state)
 void java_lang_Object_enableGC(InvObject* self);
 void java_lang_Object_disableGC(InvObject* self);
 void java_lang_String_finalize(InvObject* self);
