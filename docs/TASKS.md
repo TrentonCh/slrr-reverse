@@ -15,6 +15,20 @@ Old-build regression (from `E:\NFS.SLRR Edition\NFS.SLRR Edition`):
 `timeout 150 slrr_engine.exe --game --no-wait` must print vehicleTypes=25,
 `hub EXIT ok=1` and exit 5. Delete `tree_rpk_scan_boot` after every run.
 
+## Next steps (ordered, 2026-10-09)
+
+1. Draw the menu items: queue script render instances when ready under a
+   viewport, draw per viewport with its hooked camera instead of the
+   auto-framing preview, find who destroys the Osd camera. Verify with
+   `SLRR_PE_BOOT_SHOT`.
+2. Hotkeys and mouse into the sliding menu (start a career from the VM).
+3. Quiet the remaining script errors (`ResourceRef.<init>(null)` chain,
+   two `MouseCursor` null field reads).
+4. Field initialisers for classes without an explicit `<init>` (confirm
+   Class_newInstance behaviour in the exe).
+5. Retire the C++ Soft boot shims; then physics / FFB behind the native
+   contract (FORK.md).
+
 ## Goal
 
 Boot the Steam Build 940 scripts to a drawn main menu on the faithful VM
