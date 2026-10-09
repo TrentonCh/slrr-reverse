@@ -699,9 +699,19 @@ namespace {
 // Soft PE Input_pollDevices keyboard case 1 @ 0x00556D98.
 // GetDeviceState(256, i+401); on fail Acquire (vt+28); Acquire fail →
 // memset 64 dwords; else retry GetDeviceState (PE does not check 2nd hr).
+// Fork: the host polls DirectInput in background (non-exclusive) mode, so
+// an unfocused window (SLRR_WINDOW_NOACTIVATE test runs) would read the
+// user's typing in other applications as game input. Only the foreground
+// window's keyboard/mouse count; scripted keys (SLRR_PE_BOOT_KEYS) bypass
+// this through the overlay in IO.cpp.
+static bool input_window_is_foreground() {
+  HWND hwnd = di_hwnd();
+  return hwnd && GetForegroundWindow() == hwnd;
+}
+
 void input_di_poll_keyboard_slot(InputDiSlotSoft& slot) {
   IDirectInputDevice8A* dev = slot.device ? slot.device : g_di_kb;
-  if (!dev) {
+  if (!dev || !input_window_is_foreground()) {
     std::memset(slot.state, 0, 256);
     return;
   }
@@ -745,7 +755,7 @@ bool input_di_mouse_get_state_soft(IDirectInputDevice8A* dev,
 
 void input_di_poll_mouse_slot(InputDiSlotSoft& slot) {
   IDirectInputDevice8A* dev = slot.device ? slot.device : g_di_mouse;
-  if (!input_di_mouse_get_state_soft(dev, slot)) {
+  if (!input_window_is_foreground() || !input_di_mouse_get_state_soft(dev, slot)) {
     // PE @ 0x00556CFF: zero state dwords 401..404 (lX/lY/lZ/buttons).
     slot.state[0] = slot.state[1] = slot.state[2] = slot.state[3] = 0;
     g_mouse_rel_x = g_mouse_rel_y = g_mouse_rel_z = 0.f;

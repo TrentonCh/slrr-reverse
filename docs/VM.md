@@ -319,3 +319,26 @@ script code over `methods/executed/exeTimer` Vectors (created only by the
 3-arg `Thread(Runnable, String, int)` ctor); `methodStatus(i)` =
 `executed.elementAt(i).intValue()`. Reads before the first `addMethod`
 return null (harmless).
+
+### 2026-10-09 (session 3, later): input
+
+Primitive arrays: the host SoftArray held `InvObject*` only, so every
+`int[]`/`float[]` element store was dropped and read back as null.
+`ControlSet.define/load` (save/controls/active_control_set, SDAT/CTRL v16)
+therefore produced zero mappings and `Controller.activateState` never
+called `user_Add`. Typed elements now live in a side table keyed by the
+array object (`vm_array_elem_get/set`, jvm_vmthread_part1.inc). One
+casualty: the zeroed set had been written back by `ControlSet.save`; the
+file was restored from `Defaults`.
+
+Hotkeys: `Osd.createHotkey` -> `Hotkey.activate` -> `Input.createHotkey`
+registers logical axes (34 = ENTER/SPACE/NUMPADENTER, 35 = ESC, 55-58 =
+arrows); `HotkeyWatcher.run` calls `Input.checkHotkeys(controller, osd in
+focus)` every 50 ms; an edge queues EVENT_HOTKEY to the owner Osd whose
+script `handleEvent(Hotkey)` either runs a private menu command
+(PRIVATEEVENT | CMD_MENU_*) or `hk.handler.osdCommand(hk.command)`. The
+host samples the slot values recorded at registration (the scripts rewrite
+`hk.key` afterwards) and dispatches the event on a VM thread.
+`SLRR_PE_BOOT_KEYS` injects DIK presses for unattended runs; physical input
+is ignored while the window is not in the foreground (background
+DirectInput was reading the user's typing in other windows).

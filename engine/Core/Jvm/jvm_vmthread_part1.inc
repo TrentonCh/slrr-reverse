@@ -1949,6 +1949,14 @@ bool vmthread_op1011_eval_name(VmThread* thr, const JvmClass* cls,
       } else {
         if (!recv) { if (vm_trace_on()) std::fprintf(stderr, "[pe-stream]   op1011 fail L%d\n", __LINE__); return false; }
         *out = vmthread_field_value(recv, fname);
+        // Fork diagnostic: SLRR_PE_FIELDPATH_TRACE=<class substring>.
+        static const char* fp_trace = std::getenv("SLRR_PE_FIELDPATH_TRACE");
+        if (fp_trace && fp_trace[0] && cls->name.find(fp_trace) != std::string::npos) {
+          const char* rc = tree_host_class(recv);
+          std::fprintf(stderr, "[pe-stream]   fieldpath %s: recv=%p(%s).%s -> tag=%d obj=%p\n",
+                       cls->name.c_str(), static_cast<void*>(recv), rc ? rc : "", fname.c_str(),
+                       static_cast<int>(out->tag), out->tag == JvmTag::Obj ? static_cast<void*>(out->v.o) : nullptr);
+        }
         out_ref->kind = VmRefKind::Field;
         out_ref->obj = recv;
         out_ref->owner = nullptr;

@@ -17,10 +17,12 @@ Old-build regression (from `E:\NFS.SLRR Edition\NFS.SLRR Edition`):
 
 ## Next steps (ordered, 2026-10-09)
 
-1. Hotkeys and mouse into the main menu: Gates sits in its "PRESS ENTER"
-   state waiting for `osdCommand` (Osd.createHotkey x52, `HotkeyWatcher`
-   thread). Find which natives the watcher polls, feed real keys from the
-   window, add a scripted key injection for unattended runs, then start a
+1. Main-menu input, remaining piece: after "PRESS ENTER" appears the
+   OSD in focus (`Frontend.inputQueue.lastElement()`) is one whose
+   event mask has no EVENT_HOTKEY (mask 0x0), so ENTER reaches its private
+   SEL hotkey and is dropped; earlier the Gates ENTER hotkey (cmd 34,
+   `osdCommand(AXIS_SELECT)`) fires fine. Find which Osd is in focus then
+   and why its mask is clear (Osd.show/hide setEventMask). Then start a
    career from the VM.
 3. Quiet the remaining script errors (`ResourceRef.<init>(null)` chain,
    two `MouseCursor` null field reads).
@@ -66,6 +68,9 @@ comes after the menu is up.
 | String `==` compares text (the exe interns String payloads) | faa15eb | `Rectangle.validAxle` returned -1, no OSD animation ever ran |
 | Camera-pass texts (world-space glyph quads under the Osd camera) | faa15eb | `draw_camera_texts()` |
 | Step trace filter by `Class.method`, comma list | faa15eb | `SLRR_PE_STREAM_STEPS=java.game.Gates.run,java.util.Vector.elementAt` |
+| Typed elements for primitive arrays (int[]/float[]) | 0200c16 | ControlSet key maps were all zero; 132 `user_Add` now |
+| Scripted key presses `SLRR_PE_BOOT_KEYS`, hotkey table-slot sampling, hotkey event on a VM thread | 4c5ff31 | ENTER reaches `Gates.osdCommand(34)` |
+| Physical input only when the window is foreground | 7f0c2a1 | unfocused test runs read the user's typing as game keys |
 
 ## In progress
 
@@ -100,7 +105,16 @@ comes after the menu is up.
 - Frame dump at loop end shows the icon strip slid into view with the
   logos and the gradient background. Item label texts are the script's
   placeholders until a selection happens.
-- Next: input. See "Next steps" 1.
+- Input (4c5ff31): the control set loads (`save/controls/active_control_set`,
+  SDAT/CTRL v16; keys 34 ENTER/SPACE/NUMPADENTER, 35 ESC, 55-58 arrows as
+  logical axes), `Input.checkHotkeys` samples the registered slot and
+  fires `Osd.handleEvent(Hotkey)` on a VM thread. Hotkeys are only sampled
+  for the OSD in focus; the Gates ENTER hotkey (cmd 34) lives on the Osd
+  that is in focus before the prompt, the OSD in focus afterwards has
+  event mask 0. Placeholder text 'a' (width probe) is still drawn.
+- Note: earlier runs saved a zeroed control set back to disk (the int[]
+  bug round-tripped through `ControlSet.save`); it was restored from
+  `save/controls/Defaults` (same format). Keep the `Defaults` file.
 ### 2. `ResourceRef.<init>(ResourceRef)` called with a null argument (574/run)
 
 - `GameType.<init>()` calls `super()`; GameRef only declares
@@ -144,3 +158,10 @@ comes after the menu is up.
   bone parent only. The creation parent lives in `MeshXform::tree_parent`.
 - A Windows exe does not understand Git Bash `/tmp`; pass
   `$(cygpath -w /tmp/x.bmp)` to `SLRR_PE_BOOT_SHOT`.
+- The host polls DirectInput in background mode. Physical keyboard/mouse
+  are ignored unless the game window is the foreground window; use
+  `SLRR_PE_BOOT_KEYS="t:dik,..."` (DIK codes, e.g. 0x1C ENTER, 0xC8 UP,
+  0xD0 DOWN, 0xCB LEFT, 0xCD RIGHT) for unattended runs. With the stream
+  trace on the boot is ~2x slower; "PRESS ENTER" shows at ~20 s instead
+  of ~12 s, schedule keys accordingly.
+- The exe interns String payloads: `==` on strings is content equality.
