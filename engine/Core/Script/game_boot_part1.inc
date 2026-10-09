@@ -755,6 +755,33 @@ int game_interactive_run(Jvm& jvm, const char* game_root,
       pe_t_render += std::chrono::duration<double, std::milli>(t_b - t_a).count();
       pe_t_vm += std::chrono::duration<double, std::milli>(t_c - t_b).count();
       ++pe_frames;
+      // Fork: SLRR_PE_BOOT_KEYS="t:dik[,t:dik...]" presses DirectInput key
+      // `dik` for 150 ms at `t` seconds after loop start (unattended runs).
+      {
+        struct KeyAt { double t; int32_t dik; bool down; };
+        static std::vector<KeyAt> keys = [] {
+          std::vector<KeyAt> v;
+          const char* e = std::getenv("SLRR_PE_BOOT_KEYS");
+          while (e && *e) {
+            char* end = nullptr;
+            const double t = std::strtod(e, &end);
+            if (end == e || *end != ':') break;
+            const long dik = std::strtol(end + 1, &end, 0);
+            v.push_back({t, static_cast<int32_t>(dik), false});
+            if (*end != ',') break;
+            e = end + 1;
+          }
+          return v;
+        }();
+        const double el = std::chrono::duration<double>(std::chrono::steady_clock::now() - boot_t0).count();
+        for (KeyAt& k : keys) {
+          const bool want = el >= k.t && el < k.t + 0.15;
+          if (want == k.down) continue;
+          k.down = want;
+          input_inject_key(k.dik, want);
+          std::printf("[pe-boot] key 0x%02x %s at %.2f s\n", k.dik, want ? "down" : "up", el);
+        }
+      }
       if (pe_max_frames > 0 && pe_frames >= pe_max_frames) break;
       // Fork: SLRR_PE_BOOT_SECONDS=N bounds the loop by wall time instead.
       static const double boot_secs = [] {

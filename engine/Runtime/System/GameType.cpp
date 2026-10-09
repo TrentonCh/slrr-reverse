@@ -325,6 +325,30 @@ void erase_oneshot_watch(InvObject* handler, InvObject* ref, int32_t etype) {
 
 }  // namespace
 
+// Fork: PE CallNamedMethod with caller-supplied packed args (EVENT_HOTKEY
+// -> Osd.handleEvent(Hotkey)). Same thread mechanics as the event path above.
+void engine_dispatch_script_call_named_args(InvObject* handler, const char* name,
+                                            const char* sig,
+                                            const std::vector<JvmValue>& args) {
+  if (!handler || !name || !name[0] || !sig) return;
+  Jvm* j = jvm_active();
+  const char* cn = tree_host_class(handler);
+  if (!j || !cn || !cn[0]) return;
+  char thr_name[64];
+  std::snprintf(thr_name, sizeof(thr_name), "THRD-RUNVMI .%s", name);
+  VmThread* thr = vmthread_init(j, /*priority=*/10, /*sync_flags=*/0, thr_name);
+  if (!thr) return;
+  for (const JvmValue& a : args) thr->pack_vec.push_back(a);
+  vmthread_push_call_frame(thr);
+  const int inv = vmthread_invoke_method(thr, handler, cn, name, sig);
+  if (inv == 0) vmthread_run(thr, /*budget_ms=*/0.f);
+  if (inv != 0) {
+    vmthread_request_stop(thr);
+    vmthread_destroy(thr);
+  }
+}
+
+
 void java_lang_GameType_remNotification(InvObject* self, InvObject* ref,
                                         int32_t etype) {
   // PE @ 0x0047E000 size 0x4b (75): Unbox dest0=this, dest1=GameRef,

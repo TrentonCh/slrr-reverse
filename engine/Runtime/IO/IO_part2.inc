@@ -92,6 +92,10 @@ float java_io_Input_getAxis(int32_t device, int32_t axis) {
   }
   if (type == 1) {
     // Keyboard: DI buffer signed char < 0 → 1.0 else 0.0.
+    {
+      auto k = g_inject_keys.find(axis);  // Fork: SLRR_PE_BOOT_KEYS overlay
+      if (k != g_inject_keys.end() && k->second) return 1.f;
+    }
     return v > 0.f ? 1.f : 0.f;
   }
   // Mouse: button phys ids (initDevices 3..6) digital; analog clamp [-1,1].
@@ -160,6 +164,9 @@ int32_t java_io_Controller_user_Add(InvObject* self, int32_t vaxis,
   // Native.ptr (dword_62E008) → *(h+0xC); if v2[0x4C]!=1 vtbl+0x14(1.0f);
   // sub_5447D0(v2,0xA0000000,0,0) fail / vtbl+0xC(1.0f)==0 → ret 0;
   // else Input_mapAxis_add(*(res+0x4C)+0x1C, ...) @ 0x0054D650 (−1/0/slot+1).
+  if (std::getenv("SLRR_PE_STREAM_TRACE"))
+    std::fprintf(stderr, "[native] Controller.user_Add self=%p vaxis=%d device=%d paxis=%d map=(%g,%g,%g,%g)\n",
+                 static_cast<void*>(self), vaxis, device, paxis, a, b, c, d);
   return input_map_add_pe(self, vaxis, device, paxis, a, b, c, d);
 }
 
@@ -333,6 +340,10 @@ int32_t java_io_Input_lastKey() {
   return result;
 }
 
+// Fork: defined in GameType.cpp (PE CallNamedMethod on a VM thread).
+void engine_dispatch_script_call_named_args(InvObject* handler, const char* name,
+                                            const char* sig,
+                                            const std::vector<JvmValue>& args);
 namespace {
 
 constexpr int32_t kHkVirtual = 1;
@@ -378,6 +389,10 @@ void hotkey_fire(InvObject* hk, InvObject* native_handler, int32_t cmd) {
   if (!native_handler) return;
   // PE: skip if !(eventMask & EVENT_HOTKEY).
   const int32_t mask = tree_field_get_int(native_handler, "event_mask");
+  if (std::getenv("SLRR_PE_STREAM_TRACE"))
+    std::fprintf(stderr, "[native] hotkey fire hk=%p handler=%p(%s) cmd=%d mask=0x%x\n",
+                 static_cast<void*>(hk), static_cast<void*>(native_handler),
+                 tree_host_class(native_handler) ? tree_host_class(native_handler) : "", cmd, mask);
   if ((mask & kEventHotkey) == 0) return;
   tree_field_set_int(native_handler, "last_event", kEventHotkey);
 
@@ -391,6 +406,17 @@ void hotkey_fire(InvObject* hk, InvObject* native_handler, int32_t cmd) {
   Jvm* j = jvm_active();
   const char* cn = tree_host_class(native_handler);
   if (j && cn && cn[0] && class_has_handleEvent_hotkey(j, cn)) {
+    // Fork: PE Engine_queueEvent(handler, 0, EVENT_HOTKEY, hk, 0) ->
+    // dispatchScriptEvent -> CallNamedMethod on a fresh VM thread. On the
+    // script boot (green threads) run it there, not through Jvm::invoke.
+    static const bool pe_boot = std::getenv("SLRR_PE_BOOT_INIT") != nullptr ||
+                                std::getenv("SLRR_PE_GREEN") != nullptr;
+    if (pe_boot) {
+      engine_dispatch_script_call_named_args(
+          native_handler, "handleEvent", "(Ljava.io.Hotkey;)V",
+          std::vector<JvmValue>{JvmValue::make_obj(hk)});
+      return;
+    }
     std::vector<JvmValue> args = {JvmValue::make_obj(native_handler),
                                   JvmValue::make_obj(hk)};
     j->invoke(cn, "handleEvent", "(Ljava.io.Hotkey;)V", args, false);
@@ -410,6 +436,14 @@ float hotkey_axis_value(InvObject* inst, int32_t axis, int32_t flags) {
 
 }  // namespace
 
+void input_inject_key(int32_t dik, bool down) {
+  std::lock_guard<std::recursive_mutex> lock(g_mu);
+  if (down)
+    g_inject_keys[dik] = true;
+  else
+    g_inject_keys.erase(dik);
+}
+
 void java_io_Input_createHotkey(int32_t axis, int32_t flags, InvObject* hk,
                                 InvObject* handler, InvObject* owner,
                                 int32_t eventFilter) {
@@ -425,6 +459,11 @@ void java_io_Input_createHotkey(int32_t axis, int32_t flags, InvObject* hk,
   // Host: g_hotkeys side table + mirror key/flags/osd on hk for smoke.
   // PE @ 0x0047CC50
   if (!hk) return;
+  if (std::getenv("SLRR_PE_STREAM_TRACE"))
+    std::fprintf(stderr, "[native] Input.createHotkey hk=%p axis=%d flags=%d handler=%p(%s) owner=%p filter=%d cmd=%d\n",
+                 static_cast<void*>(hk), axis, flags, static_cast<void*>(handler),
+                 handler && tree_host_class(handler) ? tree_host_class(handler) : "",
+                 static_cast<void*>(owner), eventFilter, tree_field_get_int(hk, "command"));
   std::lock_guard<std::recursive_mutex> lock(g_mu);
   tree_field_set_int(hk, "key", axis);
   tree_field_set_int(hk, "flags", flags);
@@ -466,6 +505,9 @@ void java_io_Input_deleteHotkey(InvObject* hk) {
   // Host: erase g_hotkeys entry; active=0 for smoke.
   // PE @ 0x0047CD00
   if (!hk) return;
+  if (std::getenv("SLRR_PE_STREAM_TRACE"))
+    std::fprintf(stderr, "[native] Input.deleteHotkey hk=%p key=%d cmd=%d\n", static_cast<void*>(hk),
+                 tree_field_get_int(hk, "key"), tree_field_get_int(hk, "command"));
   std::lock_guard<std::recursive_mutex> lock(g_mu);
   g_hotkeys.erase(
       std::remove_if(g_hotkeys.begin(), g_hotkeys.end(),
@@ -501,18 +543,30 @@ void java_io_Input_checkHotkeys(InvObject* inst, InvObject* infocus) {
   {
     std::lock_guard<std::recursive_mutex> lock(g_mu);
     bool fired = false;
+    // Fork diagnostic: while a scripted key is held, show what the walk sees.
+    const bool hk_trace = std::getenv("SLRR_PE_STREAM_TRACE") && !g_inject_keys.empty();
+    if (hk_trace)
+      std::fprintf(stderr, "[native] checkHotkeys inst=%p infocus=%p(%s) regs=%zu\n",
+                   static_cast<void*>(inst), static_cast<void*>(infocus),
+                   infocus && tree_host_class(infocus) ? tree_host_class(infocus) : "", g_hotkeys.size());
     for (HotkeyReg& r : g_hotkeys) {
       if (!r.hk) continue;
+      if (hk_trace)
+        std::fprintf(stderr, "[native]   hk=%p active=%d owner=%p key=%d(slot %d) flags=%d armed=%d prev=%d v=%g\n",
+                     static_cast<void*>(r.hk), tree_field_get_int(r.hk, "active"), static_cast<void*>(r.owner),
+                     tree_field_get_int(r.hk, "key"), r.axis, r.flags, r.armed, r.prev_down,
+                     hotkey_axis_value(inst, r.axis, r.flags));
       if (tree_field_get_int(r.hk, "active") == 0) continue;
       // PE: owner==0 (global) || owner==infocus. Null infocus skips OSD keys.
       if (r.owner && r.owner != infocus) continue;
 
-      const int32_t axis = tree_field_get_int(r.hk, "key");
-      const int32_t flags = tree_field_get_int(r.hk, "flags");
-      int32_t ef = tree_field_get_int(r.hk, "eventFilter");
-      if (ef == 0) ef = r.event_filter;
-      const float v = hotkey_axis_value(inst, axis ? axis : r.axis,
-                                        flags ? flags : r.flags);
+      // Fork: PE samples the table slot (+4 axis, +0 flags, +24 filter)
+      // written by createHotkey, never the Hotkey object's script fields
+      // (Build 940 scripts rewrite hk.key after registration).
+      const int32_t axis = r.axis;
+      const int32_t flags = r.flags;
+      const int32_t ef = r.event_filter;
+      const float v = hotkey_axis_value(inst, axis, flags);
       const int32_t down = (v > kHotkeyDown) ? 1 : 0;
       if (r.armed == 0) {
         r.armed = 1;

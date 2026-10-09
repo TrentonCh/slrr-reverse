@@ -13,6 +13,10 @@ InvObject* thread_new(const char* name);
 InvObject* vec3_new(float x, float y, float z);
 InvObject* ypr_new(float y, float p, float r);
 void vec3_get(InvObject* o, float* x, float* y, float* z);
+// Fork: scripted key presses for unattended runs (SLRR_PE_BOOT_KEYS); the
+// overlay is read by the keyboard axis samplers in IO.cpp. dik = DirectInput
+// key code (ENTER 0x1C, UP 0xC8, DOWN 0xD0, LEFT 0xCB, RIGHT 0xCD, ESC 0x01).
+void input_inject_key(int32_t dik, bool down);
 void ypr_get(InvObject* o, float* y, float* p, float* r);
 void vec3_set(InvObject* o, float x, float y, float z);
 void ypr_set(InvObject* o, float y, float p, float r);

@@ -195,7 +195,14 @@ float remap_axis(float v, float i0, float i1, float l0, float l1) {
   return l0 + t * (l1 - l0);
 }
 
+// Fork: SLRR_PE_BOOT_KEYS overlay (device 0 = keyboard, DIK codes).
+std::unordered_map<int32_t, bool> g_inject_keys;
+
 float axis_raw_unlocked(int32_t device, int32_t axis) {
+  if (device == 0) {
+    auto k = g_inject_keys.find(axis);
+    if (k != g_inject_keys.end() && k->second) return 1.f;
+  }
   auto dit = g_axes.find(device);
   if (dit == g_axes.end()) return 0.f;
   auto ait = dit->second.find(axis);
