@@ -24,29 +24,34 @@ OSD drawn: lift, money, day, welcome dialog). Unattended check:
 `SLRR_PE_BOOT_KEYS="13:0x1C,16:0x1C,19:0x14,19.4:0x12,19.8:0x20,22:0x1C"`
 with `SLRR_PE_BOOT_SECONDS=40`.
 
-0. Fact-check `docs/ENGINE.md` (draft: how the game and engine work, host
-   status per subsystem, dependency map, roadmap). Three section checkers
-   against code, exe strings, scripts and the install, then a fixer; drop
-   the draft banner when done.
-1. UI pass (one renderer change, keep the E: path green):
-   - Texts become render instances built from the font SCX (glyph quads
-     in cm, one `TextInst` per `Text`, rebuilt on changeText / colour /
-     scale / align; `Text.setScale` native), so they take the owner
-     camera's view like rectangles do. Drops `draw_camera_texts` and the
-     atlas glyph path.
-   - fade.SCX and other non-font charsets load as plain meshes (the
-     darken curtain currently draws as the letter 'a').
-   - Alpha from the instance colour; units folded into `resolve_world`.
-   - Hidden instances are not drawn: WORLDTREELEAF / `Osd.hide` state.
-     The Garage frame still shows the main-menu dialog texts and the 'a'
-     width probe because the legacy `draw_osd_texts` draws every text.
-   - One `draw_present_frame()` over the bound viewports (persistent
-     clear flags, viewport order) replacing draw_meshes /
-     draw_viewport_cameras / draw_camera_texts / draw_osd_texts; keep the
-     legacy auto-framing only when no viewport is bound (old build).
-   - Dialog subtree draws rotated 180 degrees (OK/CANCEL mirrored at the
-     top, title below the box): check the dialog camera / group pose sign
-     convention (ypr) in `resolve_world`.
+1. UI pass (in progress 2026-10-10; keep the E: path green). The exe's
+   camera and text paths were decompiled (Build 940 addresses in
+   docs/ENGINE.md section 7) and they explain every visible defect:
+   - Field of view: the value passed to `Camera.create` is the FULL
+     vertical angle (Osd: 60 * 0.5 = 30 degrees, half angle 15;
+     `5.48 * tan(15) = 1.469 = Osd.SCALE_3D`). The host used it as the half
+     angle, so every Osd rectangle was drawn at 46% size.
+   - Handedness: the exe is right-handed (view = inverse camera world,
+     `D3DXMatrixPerspectiveFovRH`); the host's LH look-at down -Z mirrored
+     X. This is the "mirrored dialog".
+   - Texts are NOT 3D geometry. An `r_text` instance contributes only its
+     bone00 world (x, y) as an NDC anchor with y DOWN; the glyphs are
+     screen-space quads taken from the font mesh (vertex xy * 0.1 =
+     pixels, advance = vertex[c*4+1].x * 0.1, 1 texel per pixel, POINT
+     sampling). The legacy text pass drew y up (prompt and banner at the
+     top instead of the bottom) and spaced letters by quad width.
+   - Viewports are a bound list drawn by descending priority, several at
+     once; `Osd.hide` = unbind + destroy the camera. The camera's tree
+     walk skips any subtree with `WORLDTREELEAF` (0x40), which is how
+     `Group.deactivate` hides things. Texts are part of that walk.
+   - `fade.SCX` is a font-layout mesh used as the charset of the Text "a"
+     (`Osd.darken`); `frontend:0x1A25` = mesh 0x1A4A + texture 0xA8.
+   - Open: what the exe does with the alpha byte of a mesh instance
+     colour (`RenderRef.setColor`).
+   Work: step 1 camera pass (bound list, RH view, fovy, hidden check),
+   step 2 texts (glyph table from the font mesh, NDC anchor, tree texts
+   only in their camera's pass). Legacy passes stay for parentless texts
+   and the old build.
 2. Garage scene: the state reaches `java.game.Garage` (211 meshes, 9
    cameras, 29 viewports) but the frame shows no 3D garage. Check the
    garage camera/viewport binding and the resource loads once the present
