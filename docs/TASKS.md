@@ -24,6 +24,10 @@ OSD drawn: lift, money, day, welcome dialog). Unattended check:
 `SLRR_PE_BOOT_KEYS="13:0x1C,16:0x1C,19:0x14,19.4:0x12,19.8:0x20,22:0x1C"`
 with `SLRR_PE_BOOT_SECONDS=40`.
 
+0. Fact-check `docs/ENGINE.md` (draft: how the game and engine work, host
+   status per subsystem, dependency map, roadmap). Three section checkers
+   against code, exe strings, scripts and the install, then a fixer; drop
+   the draft banner when done.
 1. UI pass (one renderer change, keep the E: path green):
    - Texts become render instances built from the font SCX (glyph quads
      in cm, one `TextInst` per `Text`, rebuilt on changeText / colour /
