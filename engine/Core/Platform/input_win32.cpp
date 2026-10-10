@@ -269,6 +269,21 @@ bool di8_init_keyboard() {
     g_di_kb = nullptr;
     return false;
   }
+  {
+    // PE Input_lastKeyEvent @ 0x00556E00 reads buffered key events
+    // (GetDeviceData); that needs a buffer on the device or every call
+    // fails with DIERR_NOTBUFFERED and typing never reaches Input.lastKey.
+    DIPROPDWORD prop{};
+    prop.diph.dwSize = sizeof(DIPROPDWORD);
+    prop.diph.dwHeaderSize = sizeof(DIPROPHEADER);
+    prop.diph.dwObj = 0;
+    prop.diph.dwHow = DIPH_DEVICE;
+    prop.dwData = 64;
+    const HRESULT hp = g_di_kb->SetProperty(DIPROP_BUFFERSIZE, &prop.diph);
+    if (FAILED(hp))
+      std::fprintf(stderr, "[input] keyboard buffer size failed hr=0x%08lX (typing disabled)" "\n",
+                   static_cast<unsigned long>(hp));
+  }
   g_di_kb->Acquire();
   g_di_kb_ok = true;
   std::printf("[input] DirectInput8 keyboard ready\n");
@@ -465,6 +480,14 @@ int32_t di8_last_key_event() {
   if (!di8_init() || !g_di_kb) return 0;
   HRESULT hr = g_di_kb->Acquire();
   if (FAILED(hr)) return 0;
+
+  if (!input_window_is_foreground()) {
+    // Fork: the device is opened in background mode; discard what was typed
+    // into other windows instead of replaying it when the game regains focus.
+    DWORD flush = INFINITE;
+    g_di_kb->GetDeviceData(sizeof(DIDEVICEOBJECTDATA), nullptr, &flush, 0);
+    return 0;
+  }
 
   DIDEVICEOBJECTDATA ev{};
   DWORD count = 1;

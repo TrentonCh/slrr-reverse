@@ -207,6 +207,10 @@ comes after the menu is up.
   trace on the boot is ~2x slower; "PRESS ENTER" shows at ~20 s instead
   of ~12 s, schedule keys accordingly.
 - The exe interns String payloads: `==` on strings is content equality.
+- Physical typing goes through the DirectInput event buffer (PE
+  `Input_lastKeyEvent`); the keyboard device needs `DIPROP_BUFFERSIZE`
+  or every read fails and `Input.lastKey` stays 0. Events typed while
+  the window is not in the foreground are discarded.
 - `Input.lastKey` returns `scan | (ascii << 16)` and `Osd.animate` only
   forwards keys with an ASCII half to `StringInput.key`; injected keys
   go through `input_scan_to_ascii` (ToAsciiEx, no modifiers).
