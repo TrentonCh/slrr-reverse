@@ -40,14 +40,20 @@ with `SLRR_PE_BOOT_SECONDS=40`.
      pixels, advance = vertex[c*4+1].x * 0.1, 1 texel per pixel, POINT
      sampling). The legacy text pass drew y up (prompt and banner at the
      top instead of the bottom) and spaced letters by quad width.
-   - Viewports are a bound list drawn by descending priority, several at
-     once; `Osd.hide` = unbind + destroy the camera. The camera's tree
+   - Viewports are a bound list drawn in ascending priority (lowest
+     first, highest on top), several at once; `Osd.hide` = unbind + destroy the camera. The camera's tree
      walk skips any subtree with `WORLDTREELEAF` (0x40), which is how
      `Group.deactivate` hides things. Texts are part of that walk.
    - `fade.SCX` is a font-layout mesh used as the charset of the Text "a"
      (`Osd.darken`); `frontend:0x1A25` = mesh 0x1A4A + texture 0xA8.
-   - Open: what the exe does with the alpha byte of a mesh instance
-     colour (`RenderRef.setColor`).
+   - Instance colour (`RenderRef.setColor`) is used only by render types
+     whose `flags` have 0x80 with 0x200 or 0x400; Rectangles ignore it.
+     Blending comes from the mesh material flags: the Rectangle mesh is
+     "transparent", so rectangles blend by texture alpha, depth test on,
+     depth write off, drawn back to front after the opaque groups, texts
+     last. Each camera pass clears depth only.
+   - The fade curtain glyph is one large triangle with a negative advance;
+     ALIGN_CENTER is what puts it over the viewport.
    Work: step 1 camera pass (bound list, RH view, fovy, hidden check),
    step 2 texts (glyph table from the font mesh, NDC anchor, tree texts
    only in their camera's pass). Legacy passes stay for parentless texts
