@@ -52,22 +52,48 @@ with `SLRR_PE_BOOT_SECONDS=40`.
    step 2 texts (glyph table from the font mesh, NDC anchor, tree texts
    only in their camera's pass). Legacy passes stay for parentless texts
    and the old build.
-2. Garage scene: the state reaches `java.game.Garage` (211 meshes, 9
-   cameras, 29 viewports) but the frame shows no 3D garage. Check the
-   garage camera/viewport binding and the resource loads once the present
-   pass is in.
+2. Garage scene (ENGINE.md M2 and the "Drawing the garage scene" row of its
+   dependency map). The garage is a native `ground` instance
+   (`map = new GroundRef(...)`, payload `gametype 0x00010035`) whose render
+   object is the shell mesh; the camera is a native `camera` GameType
+   driven by text commands (`render <vp> 0 0 1 <flags>`, `dist`, `zoom`,
+   `move`, `look`, Garage.java:499-515), not a `java.render.Camera`. The
+   host recognises no `native <type>` payload line and parses `render` in
+   its old three-number form. Target: `stock_17_garage.png` in the
+   reference frames.
 3. Mouse: `MouseCursor` (Controller `Mouse` device axes, `getPos`,
    `getPickedPos`, EVENT_CURSOR to the Osd), `Osd.hoverEffect` /
    `click` / `mapClickPosH`, pointer visibility.
-4. Career-path script errors: `String.getParams` native missing
-   (`GameLogic.updateCodeROC` -> `null.trim()`), `Object.finalize` has no
-   binding (12 warnings per run), compiled classes missing (`camera`,
-   `cursor`, `SplashScreen`, `lift_support/cfg`, `stock_Battery_silver`;
-   the exe compiles .java on demand, the host cannot).
+4. Career-path script errors and loader gaps (none is a compiler case):
+   - `String.getParams(Vector)` is a static script method that returns
+     null on the host (`GameLogic.updateCodeROC` -> `null.trim()`).
+   - The six `class file missing` lines: `camera`, `cursor` and
+     `lift_support/cfg` are `native <type>` payloads (step 2);
+     `stock_Battery_silver` is a dotted `script <class name>` payload that
+     must resolve through the classpath (137 such entries);
+     `SplashScreen` is a pre-940 class only the legacy path asks for.
+   - The autosave on NEW CAREER writes a `main` that is not stock
+     compatible (`write(new GameRef(id))` comes out empty). Test runs
+     create `save/career/ted-1` in the install; real profiles are not
+     touched.
 5. Field initialisers for classes without an explicit `<init>` (confirm
    Class_newInstance behaviour in the exe).
 6. Retire the C++ Soft boot shims; then physics / FFB behind the native
    contract (FORK.md).
+7. Source compiler as a standalone tool (ENGINE.md M3, parallel work). The
+   stock exe compiles `X/src/Name.java` to `X/Name.class` on every class
+   load when the class is missing or its time stamp differs from the
+   source; 635 sources ship without a class (lights, doors, kits, some
+   wheels and running gear; no chassis). Oracle: 2,819 shipped pairs.
+8. Window size from `save/game/options` (1366x768 on this machine; part
+   of the UI pass), then the frame-loop differences listed in ENGINE.md
+   section 3 (rate gates, four `input_tick` calls per iteration, the load
+   rate that never reaches the pump).
+
+Ground truth for anything visual: the stock-game reference frames
+(`../slrr-ghidra/notes/reference_frames/stock_*.png`, 1366x768, outside
+the repo) and the measured positions in
+`../slrr-ghidra/notes/ui_findings.md`.
 
 ## Goal
 

@@ -121,7 +121,8 @@ every mod that calls it.
    axis smoothing with real output. Under Wine this maps to evdev constant force.
 5. Bind the natives above to the module. Getters must return what scripts expect
    (Y-up, yaw/pitch/roll via `getYpr`).
-6. Later milestones, independent of each other: a `.java` source compiler (upstream
+6. Independent milestones (order and reasons in `docs/ENGINE.md` section 12; the
+   compiler is M3 there and can start any time): a `.java` source compiler (upstream
    loads only precompiled TUFA `.class` files today), SDL3 platform port and a modern
    renderer behind the `GfxEngine`/`RenderRef` natives, script debugging aids.
 
