@@ -15,18 +15,21 @@ Old-build regression (from `E:\NFS.SLRR Edition\NFS.SLRR Edition`):
 `timeout 150 slrr_engine.exe --game --no-wait` must print vehicleTypes=25,
 `hub EXIT ok=1` and exit 5. Delete `tree_rpk_scan_boot` after every run.
 
-## Next steps (ordered, 2026-10-10)
+## Next steps (ordered, 2026-10-11)
 
-Where it stands: the 940 scripts boot to the main menu, ENTER opens the
-sliding menu, NEW CAREER opens the name dialog, typing works (scripted and
-real keyboard), ENTER confirms and `GameLogic.actualState` becomes
-`java.game.Garage`; ENTER closes the welcome dialog. Since 75569af the 2D
-layer (menu, dialogs, garage bars, all texts) is pixel identical to the
-stock frames at 1366x768; the 3D garage is not drawn yet. Unattended
-check: `SLRR_PE_BOOT_KEYS="13:0x1C,16:0x1C,19:0x14,19.4:0x12,19.8:0x20,22:0x1C"`
-with `SLRR_PE_BOOT_SECONDS=40` (add `,36:0x1C` and 48 s to close the
-welcome dialog), frame dump compared with
-`../slrr-ghidra/notes/reference_frames/stock_*.png`.
+Where it stands: the 940 scripts boot to the main menu, NEW CAREER takes
+a typed name and enters `java.game.Garage`, ENTER closes the welcome
+dialog. The 2D layer is pixel identical to the stock frames at 1366x768
+(75569af) and the 3D garage behind it matches the stock frame (06384ba:
+luminance difference of the 3D rows 0.52 of 255, every shell, prop and
+lift-support material mean equal). A 48 s garage run logs one script
+error (the `trim` null) and one legacy `class file missing` line.
+Unattended check, garage with the welcome dialog closed:
+`SLRR_PE_BOOT_KEYS="13:0x1C,16:0x1C,19:0x14,19.4:0x12,19.8:0x20,22:0x1C,36:0x1C,42:0x1C"`
+with `SLRR_PE_BOOT_SECONDS=48`, then
+`python ../slrr-ghidra/notes/m2/m2_check.py <frame.bmp>` (A must be 0 / 0,
+B1 at most 7). Without the last two keys and 40 s the frame has the
+welcome dialog. Stock frames: `../slrr-ghidra/notes/reference_frames/`.
 
 1. UI pass: done (75569af). What the exe does and what the host got wrong
    is in ENGINE.md section 7 and docs/VM.md session 5. Left over, none
@@ -51,40 +54,42 @@ welcome dialog), frame dump compared with
    - texture addressing clamp per texture entry (thin seams between map
      tiles on the old-build minimap), per-instance hide bit 22, the old
      build's minimap pass has no reference frame.
-2. Garage scene (in progress 2026-10-10). Mapped from the exe, the pack
-   bytes and the scripts, then checked by software-rendering the decoded
-   data with the derived camera against the stock frame (features within
-   1-3 px). The spec and maps are in `../slrr-ghidra/notes/m2/`
-   (`m2_spec.md`, `exe_ground.md`, `exe_camera.md`, `data_garage.md`,
-   `host_gaps.md`, check script `m2_check.py`). What they establish, and
-   where ENGINE.md sections 6, 7 and 11 are out of date until this lands:
-   - The garage shell is not a mesh file. The typeof-1 record
-     misc.garage:0x7A is a binary tree of 188 nested nodes with RSD, POLY
-     and PHYS chunks; the POLY chunks hold the render triangles in metres
-     (10 sections, 3,229 vertices, 1,274 triangles, 9 materials). Render
-     object 0x05 (`flags 2048` = ground template) names `garazs_01.scY`,
-     which only supplies the nine materials.
-   - The shell and the props are prelit: colour map x lightmap on the
-     second uv set, no D3D light; the floor mixes two textures by vertex
-     colour. Textures bind by a slot index stored in each material entry.
-   - INVO v4 positions are multiplied by 0.1 at load like v3: mesh
-     centimetres, POLY metres and script metres meet in engine units.
-   - The native `camera` type (system:0x33) is a small rigid body steered
-     by forces: `move` is a distance spring, `look` a torque spring. For
-     `render <vp> 0 0 1 3` only the viewport id and the fourth number (the
-     camera priority on that viewport) are used. Settled garage pose: eye
-     about (-2.87, 1.43, -1.93), looking at (0, 0, -0.5), 60 degree full
-     vertical field of view, near 0.05 m.
-   - A typeof-13 light payload is a D3DLIGHT9; the garage "neon" light is
-     directional and only lit materials (the lift, cars) receive it.
-   - The lift is a `native part <cfg>` object whose cfg names its render
-     entries and body; its arm is installed by the script through the
-     part type's `install` command and needs real node ids.
-   Steps: nodes and the ground object; the camera; the shell; object
-   materials and the horizon group; the lift and lights; the lift arm.
-   Acceptance: `m2_check.py` (2D rows unchanged, luminance difference of
-   the 3D area against `stock_17_garage.png` at most 7; it is 82.7 before).
-3. Mouse: `MouseCursor` (Controller `Mouse` device axes, `getPos`,
+2. Garage scene: done (06384ba). The facts are in
+   `../slrr-ghidra/notes/m2/` (`m2_spec.md`, four maps, step reports
+   `impl_*.md`) and docs/VM.md session 6. Left over:
+   - Q10: environment and specular of untextured metal sections (the
+     lift arm's `black_metal` is pure black, a grey strip inside the left
+     column is flat); the lift's shadow lines on the floor (render type
+     flag 8, `rg_shadow`).
+   - Q13: prelit materials WITHOUT a lightmap use the baked second vertex
+     colour; 1,456 of the 1,542 ground materials of the install are of
+     that kind, so every other map needs it. The colour is loaded, no
+     stage setup reads it yet.
+   - The ground mesh is one flat list drawn without culling: fine for a
+     garage (10 sections), not for the city (624 POLY chunks, 257,560
+     vertices). Game objects of nested instance nodes are not built.
+   - The `car` native type has no host object: parts installed on a car
+     get no pose and are not drawn (383 native parts alive in a garage
+     run). Part natives (`setSlotPos`, `getSlots`, `partOnSlot`, ...)
+     still answer from the legacy tables; part commands `remove`,
+     `repair`, `texture`, `paint`, `decal`, `filter` are not ported.
+   - No physics bodies (ground, parts, the camera body does not collide).
+   - Leaving the garage (camera, lift and light destroy, `map.unload`) is
+     read but not exercised by any run; the id recycling and the destroy
+     cascade were checked with a temporary hook only.
+   - Mode 3 for objects covers the two material classes that were read
+     (Tex, MixVCA); 12 of 97 lightmapped v4 materials of the install use
+     others. Wide vertices for prelit v3 objects are not filled.
+   - CULL_NONE remains for lit groups, the horizon and the 2D layer (the
+     exe default is CW); anisotropic filtering is not ported.
+   - Why the welcome dialog needs two ENTER presses in the key script.
+3. Next visible milestone: a car in the garage. A new career has no car;
+   the script reaches one through the Car Dealer (arrow keys and ENTER
+   work on the garage icons) or LOAD CAR. It needs the `car` native type
+   (96 pack entries), parts posed on a car through their slots, lit
+   materials with environment maps (Q10), and for the dealer the CarLot
+   and CarMarket states with their own cameras.
+3b. Mouse: `MouseCursor` (Controller `Mouse` device axes, `getPos`,
    `getPickedPos`, EVENT_CURSOR to the Osd), `Osd.hoverEffect` /
    `click` / `mapClickPosH`, pointer visibility.
 4. Career-path script errors and loader gaps (none is a compiler case):
@@ -180,6 +185,9 @@ comes after the menu is up.
 | Buffered DirectInput keyboard events | 7c99b60 | real typing reaches `Input.lastKey`; confirmed by hand |
 | docs/ENGINE.md: how the game and engine work, fact-checked | 597da74 | 151 corrections from eight section checkers |
 | UI pass: bound viewport list, RH camera with full-angle fovy, WORLDTREELEAF, material-driven blending, screen-space texts from the charset mesh, window size from the options file | 75569af | 2D layer pixel identical to the stock frames at 1366x768 |
+| Loader: real MTHD access flags, empty script methods return at once | bab4c05 | about 470 false `no native binding` lines per garage run gone |
+| Loader: dotted `script <class name>` payloads through the classpath; `java.net` | 3622789 | the battery part loads; four `not found` errors gone |
+| Garage scene: native ground / camera / part types, POLY shell, prelit materials with lightmaps, horizon group, lights, node identity and `install` | 06384ba | 3D garage matches the stock frame (luminance difference 0.52, was 82.7) |
 
 ## In progress
 

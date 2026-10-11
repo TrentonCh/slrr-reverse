@@ -453,3 +453,54 @@ their format flags, non-DDS textures load with one mip level,
 
 Next is the 3D garage: a native `ground` instance with a native `camera`
 GameType driven by text commands (TASKS.md step 2).
+
+### 2026-10-11 (session 6): the garage
+
+Method, same as session 5 with one addition: before any engine code, the
+garage data was decoded offline and rendered in plain Python with the
+camera derived from the exe (`data_garage.md`, `soft_view.py` in the
+notes). That render matched the stock frame within 1-3 px, so the port had
+a verified model to follow and a numeric check (`m2_check.py`: the 2D rows
+must not change, the luminance difference of the 3D rows against the stock
+frame must fall from 82.7 to at most 7; it ended at 0.52).
+
+What the exe does, as built into the host (06384ba; function addresses in
+the notes):
+
+- A map is not a mesh file. The typeof-1 instance record is a binary tree
+  of nested nodes with RSD (text: `gametype`, `params`), POLY (render
+  triangles in metres) and PHYS (collision) chunks. The native type
+  `ground` builds one render instance from the render object named by
+  params[0]; render-object flag 0x800 makes that a ground template whose
+  `.scY` "mesh" only supplies materials.
+- Fifteen native types sit behind `native <name> [cfg]` payload lines
+  (ground, camera, object, car, part, trigger, player, button, cursor,
+  bot, road, walk, trlight, ped, building). `GameRef.create` builds the
+  native object, then the script instance. The host has ground, camera
+  and part.
+- Shell and props are prelit: material mode 3, colour map x lightmap on
+  the second uv set with lighting off; the floor material (MixVCA) mixes
+  two textures by vertex colour in two passes. Textures bind by a slot
+  index stored in each material entry, an index into the render object's
+  `texture` lines. INVO v4 positions are multiplied by 0.1 at load like v3.
+- The camera type is a small rigid body: `move <node> <offset> <dist>` is
+  a distance spring, `look` a torque spring, with thresholds and a sleep
+  test, stepped at 0.02 s. `render <vp> a b <pri> c` hooks it on a
+  viewport with a priority; the other numbers are never read. The garage
+  camera settles 3.515 m from its target with a 60 degree field of view.
+- A typeof-13 payload is a D3DLIGHT9 (colours A R G B). A light instance a
+  camera sees lights the lit groups: the first directional light plus up
+  to four spots and four points.
+- A part's position is the centre of mass of its body; its render entries
+  hang off that body. `install` moves the part under a node and composes
+  target slot x inverse(own slot). Script-made nodes have ids
+  `0xFFFF0000 | n`, recycled on destroy, and `<init>(I)` receives that id.
+- The device asks for hardware vertex processing first and takes the depth
+  format from a table (D32, D24X8, ...). With software processing a garage
+  frame took 94 ms, which also moved where the camera came to rest.
+
+Corrections to docs/ENGINE.md that this session produced are noted at the
+start of its sections 6 and 7 and in its dependency map.
+
+Next: a car in the garage (the `car` native type, parts on slots, lit
+materials with environment maps), TASKS.md step 3.
