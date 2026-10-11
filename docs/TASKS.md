@@ -108,7 +108,13 @@ welcome dialog. Stock frames: `../slrr-ghidra/notes/reference_frames/`.
    Class_newInstance behaviour in the exe).
 6. Retire the C++ Soft boot shims; then physics / FFB behind the native
    contract (FORK.md).
-7. Source compiler as a standalone tool (ENGINE.md M3, parallel work). The
+7. Source compiler as a standalone tool (ENGINE.md M3, parallel work).
+   Now needed by real saves: since the File natives work (see Done),
+   LOAD CAREER builds the saved car, and a stock-written 2023 career in
+   the install has a rim whose class exists only as source
+   (`parts/wheels/rims/scripts/src/rim_MT_Mescaline_15_0_15_...java`);
+   its part becomes a plain GameRef, the Part scripts fail and the load
+   never leaves the main menu. The
    stock exe compiles `X/src/Name.java` to `X/Name.class` on every class
    load when the class is missing or its time stamp differs from the
    source; 635 sources ship without a class (lights, doors, kits, some
@@ -188,6 +194,7 @@ comes after the menu is up.
 | Loader: real MTHD access flags, empty script methods return at once | bab4c05 | about 470 false `no native binding` lines per garage run gone |
 | Loader: dotted `script <class name>` payloads through the classpath; `java.net` | 3622789 | the battery part loads; four `not found` errors gone |
 | Garage scene: native ground / camera / part types, POLY shell, prelit materials with lightmaps, horizon group, lights, node identity and `install` | 06384ba | 3D garage matches the stock frame (luminance difference 0.52, was 82.7) |
+| Static `File.exists / delete / copy / move` take their String argument | (this commit) | they read a `name` field of the String, got null and worked on a file called `<null>`; saves never cleaned or copied files, a loaded career never got its car |
 
 ## In progress
 

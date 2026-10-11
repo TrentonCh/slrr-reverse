@@ -225,12 +225,22 @@ FileState* file_state(InvObject* self) {
 
 std::string file_path_of(InvObject* f) {
   if (!f) return {};
+  // Fork: the static natives File.exists / delete / copy / move take a String
+  // (PE JVM_UnboxArg hands File_PathExists the text). A String has no `name`
+  // field: the lookup below returned null, string_cstr(null) is the literal
+  // "<null>", and every static call worked on a file of that name (exists 0,
+  // delete -1, copy -1), so a loaded career never got its car and a save
+  // never cleaned or copied its files.
+  if (string_is(f)) {
+    const char* s = string_cstr(f);
+    return (s && s[0]) ? std::string(s) : std::string{};
+  }
   if (FileState* st = file_state(f)) {
     if (!st->path.empty()) return st->path;
   }
   // PE File.open reads Java field File.name (java.lang.String) then Native.ptr.
   InvObject* name = tree_field_get_obj(f, "name");
-  const char* ns = string_cstr(name);
+  const char* ns = name ? string_cstr(name) : nullptr;
   if (ns && ns[0]) return std::string(ns);
   const char* s = string_cstr(f);
   return (s && s[0]) ? std::string(s) : std::string{};
