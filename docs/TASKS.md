@@ -83,12 +83,40 @@ welcome dialog. Stock frames: `../slrr-ghidra/notes/reference_frames/`.
    - CULL_NONE remains for lit groups, the horizon and the 2D layer (the
      exe default is CW); anisotropic filtering is not ported.
    - Why the welcome dialog needs two ENTER presses in the key script.
-3. Next visible milestone: a car in the garage. A new career has no car;
-   the script reaches one through the Car Dealer (arrow keys and ENTER
-   work on the garage icons) or LOAD CAR. It needs the `car` native type
-   (96 pack entries), parts posed on a car through their slots, lit
-   materials with environment maps (Q10), and for the dealer the CarLot
-   and CarMarket states with their own cameras.
+3. A car in the garage (in progress 2026-10-11). Spec and maps:
+   `../slrr-ghidra/notes/m3/` (`m3_spec.md`, `exe_car.md`,
+   `exe_materials.md`, `data_car.md`, `host_car.md`, step reports
+   `impl_*.md`, the reference model `ref/car_ref.py` and `m3_check.py`).
+   What the mapping established:
+   - The garage top bar is MOUSE-ONLY (the controller is in the camera
+     set there; menu axes exist only in the menu set). The dealer, the
+     lift and the paint booth need the mouse; the unattended route to a
+     car is LOAD CAR from the main menu (three LEFT, ENTER, type the file
+     name, ENTER). Test car: `save/cars/tamas` in the test copy of the
+     install (a copy of `save/cars/database/Tamas`, MCA Kurumma Z3).
+   - The chassis entry IS the car: `native car <cfg>` is a part plus
+     wheels, seats and a drive train. A standing car is posed without
+     physics: the middle of the four static contact points goes on the
+     given position, the body is levelled, each suspension length is
+     written, the wheel bodies follow from mount, length, steer and the
+     arm / hub geometry the scripts set.
+   - Car paint is a texture that `Part.setTexture` swaps into the first
+     render entry, not a material colour. The environment map is ADDED
+     after lighting (`lit x base + env x F`), sampled by a camera-space
+     reflection texgen; nearly every car material uses the global envmap.
+     Shadows are a render-to-texture pass per owner.
+   Done (2f5111a): the car type and stance, the Part / Chassis / WheelRef
+   natives answering from the objects, `forceUpdate` running the scripts'
+   `updatevariables`, level of detail, two-bone meshes and `linked`
+   renders. The loaded car stands assembled on its wheels; every part pose
+   equals the offline reference model within 0.1 mm. Running: lit material
+   classes with environment map and specular, paint, shadows.
+   Known wrong: the top bar's vehicle class and horsepower (old dyno
+   stand-in; the 940 combustion cycle `calcDyno` 0x4CBA80 is not ported);
+   front tyres of strut cars dip 4 to 21 mm into the floor as transcribed
+   (needs a stock close-up to judge). NOT yet accepted against a stock
+   frame: none with a car exists (wanted: LOAD CAR tamas in the stock
+   game, 10 s in the garage, then the lift view and a quarter-turn orbit).
 3b. Mouse: `MouseCursor` (Controller `Mouse` device axes, `getPos`,
    `getPickedPos`, EVENT_CURSOR to the Osd), `Osd.hoverEffect` /
    `click` / `mapClickPosH`, pointer visibility.
@@ -206,7 +234,8 @@ comes after the menu is up.
 | Loader: real MTHD access flags, empty script methods return at once | bab4c05 | about 470 false `no native binding` lines per garage run gone |
 | Loader: dotted `script <class name>` payloads through the classpath; `java.net` | 3622789 | the battery part loads; four `not found` errors gone |
 | Garage scene: native ground / camera / part types, POLY shell, prelit materials with lightmaps, horizon group, lights, node identity and `install` | 06384ba | 3D garage matches the stock frame (luminance difference 0.52, was 82.7) |
-| Static `File.exists / delete / copy / move` take their String argument | (this commit) | they read a `name` field of the String, got null and worked on a file called `<null>`; saves never cleaned or copied files, a loaded career never got its car |
+| Static `File.exists / delete / copy / move` take their String argument | 3d8c8a3 | they read a `name` field of the String, got null and worked on a file called `<null>`; saves never cleaned or copied files, a loaded career never got its car |
+| Car in the garage, first half: `native car` type and analytic stance, Part / Chassis / WheelRef natives on the objects, level of detail, two-bone meshes and linked renders | 2f5111a | LOAD CAR gives an assembled car on its wheels; unpainted until the second half |
 
 ## In progress
 
