@@ -13,6 +13,7 @@
 #include "System.h"
 #include "GameRef.h"
 #include "GameRef_internal.hpp"
+#include "NativeTypes.hpp"
 #include "../Parts/Body/Chassis.h"
 
 #include <algorithm>

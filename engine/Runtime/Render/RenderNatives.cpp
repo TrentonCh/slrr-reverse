@@ -6,6 +6,8 @@
 #include "natives.hpp"
 #include "host_objects.hpp"
 #include "Resources.h"
+#include "Resources_internal.hpp"
+#include "NativeTypes.hpp"
 #include "runtime.hpp"
 #include "render_d3d9.hpp"
 #include "tree_interp.hpp"
@@ -767,6 +769,18 @@ void java_render_Viewport_create(InvObject* self, int32_t pri, float x, float y,
   // Soft: Native.ptr + node+0x4C=0x12 + TREE rect (Link/list OOS).
   if (!self) return;  // PE Mighty on handle 0 — host no Native.ptr yet
   viewport_soft_seed_native(self, pri, x, y, w, h);
+  // PE: the handle is linked to the new type-0x12 node and its id is that
+  // node's ([handle+8] = [new+0x50]); scripts send it in commands
+  // (`render <vp id> ...`, `cursor <vp id> ...`, `hide <vp id>`).
+  // Fork: the id comes from the host's runtime counter. Script boot only:
+  // with ids the legacy `render` and `cursor` command branches start to
+  // resolve viewport objects, which the legacy harness never had.
+  if (native_script_boot()) {
+    std::lock_guard<std::mutex> lock(g_mu);
+    auto& r = R(self);
+    if (r.id == 0) r.id = resref_next_runtime_id();
+    r.restype = kViewportNodeType;
+  }
   render_d3d9_viewport_create(self, pri, x, y, w, h);
 }  // PE @ 0x004814E0
 

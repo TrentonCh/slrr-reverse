@@ -3,6 +3,7 @@
 #include "natives.hpp"
 
 #include <cstdint>
+#include <cstdio>
 
 namespace inv {
 
@@ -35,6 +36,13 @@ void gameref_on_res_bound(InvObject* self);
 void gameref_on_destroy(InvObject* self);
 void resref_ensure(InvObject* self);
 InvObject* resref_find_by_id(int32_t id);
+// PE 940 FUN_0047f200(id, type): a handle on the node with that id when the
+// node is of that type (0x12 = a viewport). Host: an object bound to the id
+// whose node type (ResState::restype) is `restype`; null when there is none.
+InvObject* resref_find_by_id_restype(int32_t id, int32_t restype);
+// The id an object is bound to as a handle; 0 for an object that is no
+// handle (or no longer one). Never creates an entry.
+int32_t resref_peek_id(InvObject* o);
 void resref_set_parent(InvObject* self, InvObject* parent);
 
 // PE Native.ptr field (dword_62E008): ResourceRef_newNative @ 0x47CEA0
@@ -274,6 +282,23 @@ InvObject* gameref_get_parent(InvObject* o);
 // Fork: GameRef flag word (PE 940 node+0x84, GameRef.setFlags FUN_004db900:
 // WORLDTREEROOT 0x10, WORLDTREELEAF 0x40); 0 for an object that is no GameRef.
 int32_t gameref_get_flags(InvObject* o);
+// Fork: the flag word a pack node starts with (PE 940 FUN_0051eaa0: node+0x84
+// = the record's flags byte; 0x10 WORLDTREEROOT, 0x01 has bounds) for a handle
+// bound to a game instance record (typeof 1); 0 for any other object.
+int32_t resref_node_flags(InvObject* o);
+// Fork: gives a render instance the mesh of its render type when the type
+// was not loaded at RenderRef.create (PE 940: the camera walk requests the
+// type, FUN_00462b40 -> FUN_0046d890 / FUN_0046bfe0). Called by the camera
+// pass (draw_viewport_cameras) for an instance a bound camera sees.
+// Returns 1 when the instance has its mesh now, 0 when the type is not a
+// mesh recipe (a light type), -1 when the type could not be loaded.
+int32_t renderref_materialise_pending(InvObject* instance, int32_t type_id);
+// Fork: one `[render-dbg]` line per native camera (NativeTypes.cpp), printed
+// by render_d3d9_debug_dump.
+void native_camera_debug_dump(FILE* out);
+// Fork: `[render-dbg]` lines for the instances of the native `part` type
+// (NativeTypes_part4.inc): a count and one line per drawn render instance.
+void native_part_debug_dump(FILE* out);
 InvObject* gametype_get_parent(InvObject* o);  // GameType.createNativeInstance parent
 void frontend_gfx_engine_frame_notify();
 // Phase 2.119: stock LoadingScreen.run pacing loop (host).

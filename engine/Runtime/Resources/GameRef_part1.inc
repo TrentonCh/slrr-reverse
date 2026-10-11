@@ -1182,6 +1182,46 @@ std::string script_fqn_from_script_path(const std::string& raw_path) {
   return "java.game." + base;
 }
 
+// The class a `script <arg>` payload line names. PE 940 FUN_0051fcc0, text
+// branch: `"%*s %s"` takes the argument; when its extension (after the last
+// '.') is exactly ".class" the argument is split at its last backslash into
+// a directory and a class name (FUN_0055aca0), otherwise it is a class name
+// (FUN_0055add0). Shared by the legacy reader below and by GameRef.create on
+// the script boot (gametype_desc gives the argument).
+std::string script_fqn_from_script_arg(const std::string& path) {
+  if (path.empty()) return {};
+  // 137 pack entries of Build 940 (133 in parts.rpk) give a dotted class
+  // name instead of a .class path, e.g.
+  // `script java.game.parts.accessories.stock_Battery_silver`. Read as a
+  // path it never resolved ("class file missing .../java/game/parts/
+  // accessories/stock_Battery_silver.class") and the part became a plain
+  // GameRef. A dotted name is loaded through the classpath (the exe's
+  // FUN_0055add0 branch).
+  {
+    const bool has_sep = path.find('/') != std::string::npos ||
+                         path.find(static_cast<char>(92)) != std::string::npos;
+    const bool dot_class = path.size() > 6 &&
+                           path.compare(path.size() - 6, 6, ".class") == 0;
+    if (!has_sep && !dot_class && path.find('.') != std::string::npos) {
+      if (Jvm* j = jvm_active()) {
+        if (j->find_class(path.c_str()) || j->load_class(path.c_str())) return path;
+      }
+    }
+  }
+  // PE loads the file named by the entry; the TUFA CLSS name is the
+  // class (CareerEvents/JuniorCurcuit.class declares java.game.JuniorCurcuit).
+  if (Jvm* j = jvm_active()) {
+    std::string full = j->game_root();
+    if (!full.empty() && full.back() != '/' && full.back() != 92) full.push_back('/');
+    full += path;
+    for (char& c : full)
+      if (c == 92) c = '/';
+    std::string fqn;
+    if (j->load_class_file_named(full.c_str(), &fqn) && !fqn.empty()) return fqn;
+  }
+  return script_fqn_from_script_path(path);
+}
+
 std::string script_fqn_for_res(int32_t res_id, const RpakEntry* e) {
   std::vector<uint8_t> blob;
   if (res_id != 0 && rpak_read_entry(res_id, &blob) && blob.size() > 7 &&
@@ -1190,38 +1230,7 @@ std::string script_fqn_for_res(int32_t res_id, const RpakEntry* e) {
     while (end < blob.size() && blob[end] != 13 && blob[end] != 10) ++end;
     std::string path(reinterpret_cast<const char*>(blob.data()) + 7, end - 7);
     while (!path.empty() && path.back() == ' ') path.pop_back();
-    if (!path.empty()) {
-      // Fork: 137 pack entries of Build 940 (133 in parts.rpk) give a dotted
-      // class name instead of a .class path, e.g.
-      // `script java.game.parts.accessories.stock_Battery_silver`. Read as
-      // a path it never resolved ("class file missing .../java/game/parts/
-      // accessories/stock_Battery_silver.class") and the part became a plain
-      // GameRef. A dotted name is loaded through the classpath. The exe's
-      // payload parser is not decompiled; the rule is inferred from the data.
-      {
-        const bool has_sep = path.find('/') != std::string::npos ||
-                             path.find(static_cast<char>(92)) != std::string::npos;
-        const bool dot_class = path.size() > 6 &&
-                               path.compare(path.size() - 6, 6, ".class") == 0;
-        if (!has_sep && !dot_class && path.find('.') != std::string::npos) {
-          if (Jvm* j = jvm_active()) {
-            if (j->find_class(path.c_str()) || j->load_class(path.c_str())) return path;
-          }
-        }
-      }
-      // PE loads the file named by the entry; the TUFA CLSS name is the
-      // class (CareerEvents/JuniorCurcuit.class declares java.game.JuniorCurcuit).
-      if (Jvm* j = jvm_active()) {
-        std::string full = j->game_root();
-        if (!full.empty() && full.back() != '/' && full.back() != 92) full.push_back('/');
-        full += path;
-        for (char& c : full)
-          if (c == 92) c = '/';
-        std::string fqn;
-        if (j->load_class_file_named(full.c_str(), &fqn) && !fqn.empty()) return fqn;
-      }
-      return script_fqn_from_script_path(path);
-    }
+    if (!path.empty()) return script_fqn_from_script_arg(path);
   }
   return script_fqn_for_entry(e);
 }
@@ -1307,9 +1316,19 @@ InvObject* gameref_get_parent(InvObject* o) {
 // FUN_004db900 ORs). Never creates an entry.
 int32_t gameref_get_flags(InvObject* o) {
   if (!o) return 0;
-  std::lock_guard<std::mutex> lock(g_gr_mu);
-  auto it = g_refs.find(o);
-  return it == g_refs.end() ? 0 : it->second.flags;
+  int32_t flags = 0;
+  {
+    std::lock_guard<std::mutex> lock(g_gr_mu);
+    auto it = g_refs.find(o);
+    if (it != g_refs.end()) flags = it->second.flags;
+  }
+  // PE 940 FUN_0051eaa0: a pack node's flag word starts as its record's
+  // flags byte, and 31 of the 33 map instances carry 0x11 (0x10 =
+  // WORLDTREEROOT): the map is the root of the camera walk without any
+  // GameRef.setFlags. Script boot only: the legacy GroundRefs bind the same
+  // records and their cameras must keep the roots they have.
+  if (native_script_boot()) flags |= resref_node_flags(o) & 0x10;
+  return flags;
 }
 
 InvObject* gameref_new() {
@@ -1445,6 +1464,9 @@ void gameref_on_res_bound(InvObject* self) {
 
 void gameref_on_destroy(InvObject* self) {
   if (!self) return;
+  // The native object of the node goes first (PE type vt+0x10), through
+  // either object of the GameRef.create that made it.
+  native_on_destroy(self);
   // Detach install-graph edge (Part.addPart failure path never installed).
   if (InvObject* parent = tree_field_get_obj(self, "part_parent")) {
     const int32_t slot_id = tree_field_get_int(self, "part_parent_slot");
@@ -1590,6 +1612,12 @@ void java_util_resource_GameRef_queueEvent(InvObject* self, InvObject* ro,
   }
   const char* s = raw;
   while (*s == ' ' || *s == '\t') ++s;
+  // PE Engine_queueEvent_dispatch: the event goes to the vt+0x38 of the
+  // receiver's own type, so a camera's `move`, `look` and `render` are the
+  // camera type's (940 FUN_0048bce0) and never the cursor's or a vehicle's.
+  // A receiver without a native object, or a command its type does not
+  // take on the host, falls through to the chain below as before.
+  if (native_event(self, kEventCommand, raw)) return;
   // Phase 2.94 — Bot.pressHorn / City challenge: "sethorn 0|1".
   // PE @ 0x45A589: strcmp "sethorn"; scanf "%*s %d"; store (v % 4) at
   // obj+0x1DCC (and ecx,80000003h signed-mod). getHorn reads that slot.

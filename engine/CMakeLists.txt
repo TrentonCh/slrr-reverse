@@ -48,6 +48,7 @@ add_executable(slrr_engine
   runtime/Resources/GameRef.cpp
   runtime/Resources/GameRef_core.cpp
   runtime/Resources/GameRef_collision.cpp
+  runtime/Resources/NativeTypes.cpp
   runtime/Resources/GroundRef_traffic.cpp
   runtime/Resources/AnimationParticle.cpp
 

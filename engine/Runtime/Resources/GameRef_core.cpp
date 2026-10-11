@@ -12,6 +12,7 @@
 #include "GameRef.h"
 #include "GameRef_internal.hpp"
 #include "Resources_internal.hpp"
+#include "NativeTypes.hpp"
 #include "../Parts/Body/Chassis.h"
 
 #include <algorithm>
@@ -308,7 +309,39 @@ InvObject* java_util_resource_GameRef_create(InvObject* self, InvObject* parent,
   const RpakEntry* ent = type_id ? rpak_find_entry(type_id) : nullptr;
   // PE null alias → "_gameinst"; host keeps empty for VehicleType detect.
   const char* alias_cstr = alias ? string_cstr(alias) : "";
-  const std::string fqn = script_fqn_for_res(type_id, ent);
+  // Only on the script boot: the legacy C++ harness expects plain GameRef
+  // stand-ins here and its shims hang when the script constructors run.
+  static const bool script_boot_create = native_script_boot();
+  // PE 940 FUN_00523c80: the parent's payload is requested before the node
+  // is made (`if ((parent+0x94 & 1) == 0) FUN_00523b80(0,1.0,0,0)`), which
+  // builds the game object of a pack instance (the map); then the type's
+  // payload (FUN_0051fcc0) gives the native type and the script class. The
+  // class is the one the `script` line names; a type with a `native` line
+  // and no `script` line has no class (the exe's node then has a native
+  // game object only), so no `java.game.<alias>` guess is made.
+  // Fork: the legacy path keeps script_fqn_for_res (first payload line,
+  // else the alias guess), and so does a type id that is no typeof-8 record
+  // (the exe stops there with "create: Wrong GameType!").
+  const GameTypeDesc* gtype = nullptr;
+  std::string type_fqn;
+  if (script_boot_create) {
+    instance_node_request(parent);
+    // FUN_00523c80 makes the node under the node the parent handle is bound
+    // to (parent+0xC), whichever handle the script passed: `new
+    // GameRef(rootID)` in Part.addPart is the map, not a third object.
+    parent = gameref_node_object(parent);
+    const GameTypeDesc* d = gametype_desc(type_id);
+    if (d->found) {
+      gtype = d;
+      if (d->has_script && !d->script_is_inline)
+        type_fqn = script_fqn_from_script_arg(d->script_arg);
+    } else {
+      type_fqn = script_fqn_for_res(type_id, ent);
+    }
+  } else {
+    type_fqn = script_fqn_for_res(type_id, ent);
+  }
+  const std::string fqn = type_fqn;
   const bool want_vt =
       (alias_cstr && std::strstr(alias_cstr, "VehicleType")) ||
       (!fqn.empty() && fqn.size() >= 3 &&
@@ -330,14 +363,26 @@ InvObject* java_util_resource_GameRef_create(InvObject* self, InvObject* parent,
     }
   }
 
+  // The id of the node this create makes (script boot): the number the
+  // LoadGameInit stand-in below gives its node, then the id of both objects.
+  int32_t lgi_key = 0;
+  int32_t node_id = 0;
   auto finish_create = [&](InvObject* inst) {
     // Phase 2.59: world-tree parent → getParentID (Part.addPart install check).
     // PE null parent already resolved to g_WorldTreeRoot before factory.
-    if (parent) {
+    // A script-made node has its parent from script_node_register, and a
+    // constructor that moved it (a part installing itself) keeps the move.
+    if (parent && node_id == 0) {
       java_util_resource_GameRef_setParent(inst, parent);
       if (self != inst) java_util_resource_GameRef_setParent(self, parent);
     }
-    if (have_pose) apply_instance_pose(inst, pose);
+    // PE 940 FUN_00523c80 hands the params string to the type's vt+0x0C
+    // and reads nothing of it itself. A native object that took its pose
+    // there keeps it: the stand-in below would send it once more through
+    // GameRef.setMatrix, which stops the camera type's body and puts it to
+    // sleep (FUN_0048c940).
+    if (have_pose && !native_owns_create_pose(inst))
+      apply_instance_pose(inst, pose);
   };
 
   // W17D — PE @ 0x47d824 Engine_LoadGameInit(parent|g_WorldTreeRoot@636460,
@@ -369,6 +414,7 @@ InvObject* java_util_resource_GameRef_create(InvObject* self, InvObject* parent,
       const int32_t gikey =
           *reinterpret_cast<int32_t*>(reinterpret_cast<char*>(gi) + 0x50);
       tree_field_set_int(self, "loadgameinit_gi_key", gikey);
+      lgi_key = gikey;
       // PE inline Link @ 0x47d846..0x47d86a on Native.ptr (dword_62E008).
       if (HostNativeHandle* self_h = native_ptr_ensure(self))
         void_event_loadgameinit_rebind(self_h, gi);
@@ -423,12 +469,6 @@ InvObject* java_util_resource_GameRef_create(InvObject* self, InvObject* parent,
   // stand-in left GameLogic.careerEvents full of classless objects.
   const JvmClass* script_cls = nullptr;
   Jvm* jvm_for_create = jvm_active();
-  // Only on the script boot: the legacy C++ harness expects plain GameRef
-  // stand-ins here and its shims hang when the script constructors run.
-  static const bool script_boot_create = [] {
-    const char* e = std::getenv("SLRR_PE_BOOT_INIT");
-    return e && e[0] == '1';
-  }();
   if (jvm_for_create && script_boot_create && !fqn.empty()) {
     if (!jvm_for_create->find_class(fqn.c_str())) jvm_for_create->load_class(fqn.c_str());
     script_cls = jvm_for_create->find_class(fqn.c_str());
@@ -453,12 +493,37 @@ InvObject* java_util_resource_GameRef_create(InvObject* self, InvObject* parent,
     bind_gameref(self, parent, fqn, alias_cstr);
     ref(self).script = inst;
   }
+  // PE 940 FUN_00523c80: the node has an id of its own (FUN_00518a40,
+  // 0xFFFF0000 | number) before anything is built on it; the handle and the
+  // script instance are both handles on it. Script boot only: on the legacy
+  // path both objects keep the type id, as before.
+  // Fork: the VehicleType stand-in above (make_vt_host) and the legacy
+  // LoadGameInit script path keep the type id too.
+  // The node object is the script instance; for a type without a script
+  // class the handle create was called on, which is what the script holds
+  // then (`camera = new GameRef(map, RID_CAMERA, ...)`) and what the native
+  // types key their renderer objects with.
+  if (script_boot_create)
+    node_id = script_node_register(script_cls ? inst : self,
+                                   script_cls ? self : inst, parent, type_id,
+                                   lgi_key);
+  // PE 940 FUN_00523c80: payload+0x4C = type->vt+0x0C(&node, params), the
+  // native game object, BEFORE the THRD-CREATE of the script instance
+  // (payload+0x50): a script constructor may use it (Lift_support adds its
+  // arm). A type without a host implementation gets none.
+  if (gtype)
+    native_object_create(gtype, self, inst, parent,
+                         params ? string_cstr(params) : "");
   if (script_cls) {
     // PE THRD-CREATE: <init>(I) with the instance rid when declared, else
-    // the no-arg constructor.
+    // the no-arg constructor. The rid is the id of the new node (940
+    // FUN_00523c80: `*(arg + 8) = local_14`, the value FUN_00518a40
+    // returned), not the type's; the legacy path passes the type id.
     if (jvm_for_create->find_method(*script_cls, "<init>", "(I)V"))
       jvm_for_create->invoke(fqn.c_str(), "<init>", "(I)V",
-                             {JvmValue::make_obj(inst), JvmValue::make_int(type_id)}, false);
+                             {JvmValue::make_obj(inst),
+                              JvmValue::make_int(node_id ? node_id : type_id)},
+                             false);
     else
       jvm_for_create->invoke(fqn.c_str(), "<init>", "()V", {JvmValue::make_obj(inst)}, false);
   }
@@ -495,6 +560,11 @@ void java_util_resource_GameRef_create_native(InvObject* self, InvObject* parent
   float pose[6] = {};
   const bool have_pose = parse_instance_params(params_cstr, pose);
 
+  // As in create: the parent's payload request, then the node the parent
+  // handle is bound to (script boot; no-ops on the legacy path).
+  instance_node_request(parent);
+  parent = gameref_node_object(parent);
+
   java_util_resource_ResourceRef_set(self, type_id);
   if (type) java_util_resource_RenderRef_setType(self, type);
 
@@ -506,6 +576,22 @@ void java_util_resource_GameRef_create_native(InvObject* self, InvObject* parent
     rs.script = nullptr;  // factory a3=0 → body+0x50 / handle+8
     rs.script_class.clear();
     rs.script_alias = alias_cstr ? alias_cstr : "";
+  }
+  // PE 940 FUN_004da7e0 -> FUN_005240e0: GameRef.create without the script
+  // instance. The parent's payload request and the type's native game
+  // object (vt+0x0C with the node and the params) are the same. Script boot
+  // only; a type without a host implementation gets no object.
+  bool node_made = false;
+  if (native_script_boot()) {
+    // FUN_005240e0 makes the node as FUN_00523c80 does: an id of its own
+    // before the native game object is built. Fork: a number of its own
+    // from the host's sequence (the CreateGameInstanceNative stand-in below
+    // takes another one for its node).
+    node_made = script_node_register(self, self, parent, type_id, 0) != 0;
+    const GameTypeDesc* gtype = gametype_desc(type_id);
+    if (gtype->found)
+      native_object_create(gtype, self, self, parent,
+                           params_cstr ? params_cstr : "");
   }
 
   // PE @ 0x47D975 Engine_CreateGameInstanceNative(parent|wtroot, type,
@@ -537,8 +623,30 @@ void java_util_resource_GameRef_create_native(InvObject* self, InvObject* parent
     }
   }
 
-  if (have_pose) apply_instance_pose(self, pose);
-  if (parent) java_util_resource_GameRef_setParent(self, parent);
+  // As in create: a native object that took the pose from the params
+  // string keeps it (the stand-in would send it once more through
+  // GameRef.setMatrix, which for a part is the pose of its BODY, not of
+  // the mesh origin the create string places, FUN_004c1f90 / FUN_004c6370).
+  if (have_pose && !native_owns_create_pose(self))
+    apply_instance_pose(self, pose);
+  if (parent && !node_made) java_util_resource_GameRef_setParent(self, parent);
+}
+
+bool gameref_node_set_parent(InvObject* node, InvObject* parent) {
+  InvObject* object = nullptr;
+  InvObject* other = nullptr;
+  if (!script_node_set_parent(node, parent, &object, &other)) return false;
+  // The parent link of both host objects of the node (gameref_get_parent:
+  // which camera root the instance belongs to).
+  std::lock_guard<std::mutex> lock(g_gr_mu);
+  for (InvObject* o : {object, other}) {
+    if (!o) continue;
+    if (parent)
+      gameref_list_link(o, parent);
+    else
+      gameref_list_unlink(o);
+  }
+  return true;
 }
 
 int32_t game_logic_init_vehicle_types() {
@@ -765,6 +873,12 @@ InvObject* java_util_resource_GameRef_getPos(InvObject* self) {
   // without re-entering getPos.
   if (!self) return nullptr;
   {
+    // The native game object answers channel 2 first (type vt+0x3C): the
+    // camera's body, the ground's `groundbody`.
+    float np[3];
+    if (native_get_pos(self, np)) return vec3_new(np[0], np[1], np[2]);
+  }
+  {
     std::lock_guard<std::mutex> lock(g_gr_mu);
     if (ref(self).empty) return nullptr;
   }
@@ -798,6 +912,11 @@ InvObject* java_util_resource_GameRef_getOri(InvObject* self) {
   // Host: !self → nullptr. Soft ch=1 = PhysicsRef ori when shape;
   // else GameRefState. Empty still Ypr(0,0,0).
   if (!self) return nullptr;
+  {
+    // The native game object first (rotation of its physics instance).
+    float no[3];
+    if (native_get_ori(self, no)) return ypr_new(no[0], no[1], no[2]);
+  }
   if (InvObject* key = gameref_live_phys_key(self)) {
     if (InvObject* oo = java_util_resource_PhysicsRef_getOri(key)) {
       float yaw = 0.f, pitch = 0.f, roll = 0.f;
@@ -887,6 +1006,14 @@ void java_util_resource_GameRef_setMatrix(InvObject* self, InvObject* p, InvObje
   float yaw = 0.f, pitch = 0.f, roll = 0.f;
   if (o) ypr_get(o, &yaw, &pitch, &roll);
   {
+    // PE 940 FUN_004db950: the six floats go to the game object as an
+    // "ffffff" event (type vt+0x1C). A native object that takes it owns the
+    // pose; the generic GameRef pose below is the stand-in for the rest.
+    const float np[3] = {x, y, z};
+    const float no[3] = {yaw, pitch, roll};
+    if (native_set_matrix(self, np, no)) return;
+  }
+  {
     std::lock_guard<std::mutex> lock(g_gr_mu);
     auto& r = ref(self);
     r.px = x;
@@ -934,6 +1061,15 @@ void java_util_resource_GameRef_setParent(InvObject* self, InvObject* newparent)
   // setParent(eng+0x311C default) OOS — host uses live parent GameRefs.
   if (!self || java_util_resource_ResourceRef_id(self) == 0) return;
   if (!newparent || java_util_resource_ResourceRef_id(newparent) == 0) return;
+  if (native_script_boot()) {
+    // Both arguments are handles on nodes. A node GameRef.create made is
+    // relinked as a node (940 FUN_004db8a0 -> FUN_004ec210); the stand-in
+    // below, which also gives the renderer a transform parent, is for the
+    // other handles, as before.
+    self = gameref_node_object(self);
+    newparent = gameref_node_object(newparent);
+    if (gameref_node_set_parent(self, newparent)) return;
+  }
   const int32_t restype = java_util_resource_ResourceRef_type(self);
   {
     std::lock_guard<std::mutex> lock(g_gr_mu);
@@ -1160,6 +1296,7 @@ int32_t java_util_resource_GameRef_isScripted(InvObject* self, InvObject* clazzn
   // suffix / VehicleType heuristic. Catalog Part vs Set; Java null wrapper.
   // Host: !self / g_refs miss = handle 0 → 0 (no Mighty). Keep getPos.
   if (!self) return 0;
+  self = gameref_node_object(self);  // any handle on the node (script boot)
   std::string have;
   InvObject* script = nullptr;
   {
@@ -1201,6 +1338,22 @@ InvObject* java_util_resource_GameRef_getScriptInstance(InvObject* self) {
   // !self = handle 0. sub_5447D0 / ResHandle_getPayload / vtbl hops not
   // mirrored.
   if (!self) return nullptr;
+  if (native_script_boot()) {
+    // A handle on a node GameRef.create made is INSTANCE_GAME in the exe:
+    // *(payload+0x50), the script instance of the node, or null when the
+    // type has no script class. (ResourceRef.type() of the host object is
+    // still the kind of the type record, which would take the RESTYPE_GAME
+    // branch below and box a Class.)
+    InvObject* node = gameref_node_object(self);
+    if (node &&
+        script_node_object(java_util_resource_ResourceRef_id(node)) == node) {
+      std::lock_guard<std::mutex> lock(g_gr_mu);
+      auto it = g_refs.find(node);
+      if (it == g_refs.end() || it->second.script_class.empty())
+        return nullptr;
+      return it->second.script;
+    }
+  }
   constexpr int32_t kInstanceGame = 1;
   constexpr int32_t kRestypeGame = 8;
   InvObject* script = nullptr;
@@ -1287,6 +1440,9 @@ int32_t java_util_resource_GameRef_getInfo(InvObject* self, int32_t query,
       return java_util_resource_ResourceRef_id(self);
     case kGiiType: {
       int32_t tid = java_util_resource_RenderRef_getTypeID(self);
+      // A node GameRef.create made: the game type it was created from (its
+      // own id is the node's on the script boot; Part.save writes this).
+      if (!tid) tid = script_node_type_id(self);
       if (!tid) tid = java_util_resource_ResourceRef_id(self);
       return tid;
     }
@@ -1453,6 +1609,7 @@ int32_t java_util_resource_GameRef_getInfo_1(InvObject* self, int32_t query,
 
   auto type_or_id = [](InvObject* o) -> int32_t {
     int32_t tid = java_util_resource_RenderRef_getTypeID(o);
+    if (!tid) tid = script_node_type_id(o);  // a node GameRef.create made
     if (!tid) tid = java_util_resource_ResourceRef_id(o);
     return tid;
   };

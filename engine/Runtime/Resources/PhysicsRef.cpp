@@ -1,6 +1,7 @@
 #include "natives.hpp"
 #include "Resources.h"
 #include "Resources_internal.hpp"
+#include "NativeTypes.hpp"
 #include "host_objects.hpp"
 #include "runtime.hpp"
 #include "rpak.hpp"
@@ -79,6 +80,12 @@ void java_util_resource_PhysicsRef_create(InvObject* self, InvObject* parent,
   // INSTANCE_PHYSICS=2.
   // Not createBox/createSphere (Physics_createPrimitive @ 0x0049AB60).
   if (!self) return;
+  // Fork (M2 spec Q2): a pack instance used as parent is built here as in
+  // RenderRef.create (createBox and createSphere come through this too).
+  instance_node_request(parent);
+  // The parent is a handle; the instance hangs under the node it is bound
+  // to (script boot; the handle itself on the legacy path).
+  parent = gameref_node_object(parent);
   {
     std::lock_guard<std::mutex> lock(g_mu);
     auto& r = R(self);
@@ -86,7 +93,7 @@ void java_util_resource_PhysicsRef_create(InvObject* self, InvObject* parent,
     r.parent_id = parent ? R(parent).id : 0;
     r.type = 2;  // INSTANCE_PHYSICS
     r.type_id = typeRid;
-    r.id = g_next_id++;
+    r.id = resref_next_runtime_id();
     r.shape = 0;
     phys_arcade_body_seed(r);
   }

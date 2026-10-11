@@ -196,6 +196,18 @@ struct CamPassStats {
   // Below a camera root but under a WORLDTREELEAF container (not drawn).
   int32_t hidden_instances = 0;
   int32_t hidden_texts = 0;
+  // rg_ground: sections drawn, and texture entries that drew with the
+  // engine default texture (unbound slot or a texture that did not load).
+  int32_t ground_sections = 0;
+  int32_t default_tex_binds = 0;          // every group
+  int32_t ground_default_tex_binds = 0;   // rg_ground alone
+  // rg_horizon sections, and the object sections drawn in material mode 3
+  // (rg_object_prelit, rg_prelittransparent).
+  int32_t horizon_sections = 0;
+  int32_t prelit_mode3_sections = 0;
+  int32_t prelit_transparent_mode3_sections = 0;
+  // Passes whose camera saw a scene light (they do not use the stand-in).
+  int32_t light_passes = 0;
 };
 CamPassStats g_cam_pass_stats;
 std::vector<std::string> g_cam_pass_log;
@@ -288,6 +300,12 @@ IDirect3DBaseTexture9* texture_d3d_base(const TextureState& st) {
   if (st.cube) return st.cube;
   return st.tex;
 }
+
+// The engine default texture (PE 940 C3DLow+0x340), bound for a texture
+// entry that is unbound or not ready (FUN_0043d990). Defined in
+// render_d3d9_part4.inc; released with the device.
+IDirect3DBaseTexture9* default_texture();
+void default_texture_release();
 
 #ifdef _WIN32
 // Soft PE envmap stage1 bind (setGlobalEnvmap@47C220 = store only).
@@ -480,10 +498,31 @@ struct MeshVertex {
   float u, v;
 };
 
+// PE 940 vertex stream 0x15003f (FUN_004547a0, filled by FUN_00455450 from
+// the staging block DAT_005ef100..): position, normal, D3D diffuse, D3D
+// specular and the uv sets. The exe writes texcoord set i = uv[channel of
+// material stage i] while it builds the vertices (RI_ground FUN_004658b0,
+// v4 block FUN_00454940).
+// Fork: the host keeps the three uv sets in file order and selects the
+// channel per stage with D3DTSS_TEXCOORDINDEX (same picture).
+// FVF: XYZ | NORMAL | DIFFUSE | SPECULAR | TEX3, 56 bytes.
+struct MeshVertexWide {
+  float x, y, z;
+  float nx, ny, nz;
+  uint32_t diffuse;
+  uint32_t specular;
+  float uv[3][2];
+};
+static_assert(sizeof(MeshVertexWide) == 56, "wide vertex is 14 dwords");
+
 struct MeshSubmesh {
   std::string name;
   std::vector<MeshVertex> verts;
   std::vector<uint16_t> indices;
+  // Optional: the same vertices with both colours and every uv set (empty
+  // when the source has neither a colour nor a second uv set). Material
+  // mode 3 (draw_mode3_section, render_d3d9_part4.inc) draws from it.
+  std::vector<MeshVertexWide> wide;
   void* texture_key = nullptr;  // entry in g_textures (owned via mesh)
   std::string texture_path;
   uint32_t diffuse = 0xFF808080u;
@@ -506,6 +545,61 @@ struct MeshSubmesh {
   // CMaterial_Tex): the v4 chunk's own, or the one the v3 builder
   // FUN_0042ba10 picks. -1 without a parsed material.
   int32_t mat_shader = -1;
+  // Texture entries of the material (PE 940: 0x24-byte entries, id
+  // 0x06000000 | kind; entry+0x0C = slot, +0x10 = uv channel). The slot is
+  // the zero-based index into the `texture` lines of the render object that
+  // uses the mesh (FUN_00441c40); -1 = the material has no such entry.
+  // v3 header (FUN_0042ba10): +0x2C primary (kind 0), +0x34 second (kind
+  // 1), +0x32 sphere / env map (kind 3), +0x38 lightmap (kind 7, always on
+  // uv channel 1); uv channels +0x46 (primary) and +0x48 (second).
+  int16_t slot_primary = -1;
+  int16_t slot_second = -1;
+  int16_t slot_env = -1;
+  int16_t slot_lightmap = -1;
+  int16_t chan_primary = 0;
+  int16_t chan_second = 0;
+  int16_t chan_lightmap = 1;
+  // Address bits of each entry (in-memory entry dword [2], v4 file entry
+  // +0x0C): 1 = wrap U, 2 = wrap V. FUN_0043d990 sets D3DTADDRESS_CLAMP on
+  // an axis whose bit is clear when it binds the entry; the frame default
+  // is WRAP. 3 for a v3 material: the bits FUN_0042ba10 gives its entries
+  // were not read (M2 spec Q14).
+  uint8_t addr_primary = 3;
+  uint8_t addr_second = 3;
+  uint8_t addr_env = 3;
+  uint8_t addr_lightmap = 3;
+  // uv transform of each entry: scaleU, scaleV, offsetU, offsetV (in-memory
+  // entry dwords [5..8], v4 file entry +0x10..+0x1C; 1, 1, 0, 0 for a v3
+  // material). The vertex loaders apply it while they write the texcoord
+  // set of the entry's stage (v4 FUN_00454940, ground FUN_004658b0):
+  //   u' = ((u - 0.5) - offsetU) * scaleU + 0.5
+  //   v' = 0.5 - ((0.5 - v) - offsetV) * scaleV
+  // parse_scx_v4 does the same at load, so the draw never reads these.
+  float uvx_primary[4] = {1.f, 1.f, 0.f, 0.f};
+  float uvx_second[4] = {1.f, 1.f, 0.f, 0.f};
+  float uvx_lightmap[4] = {1.f, 1.f, 0.f, 0.f};
+  // Keys in g_textures for the second, env and lightmap entries, beside
+  // `texture_key` (the primary). Null = unbound: the draw then uses the
+  // engine default texture (C3DLow+0x340, FUN_0043d990).
+  void* texture_second = nullptr;
+  void* texture_env = nullptr;
+  void* texture_lightmap = nullptr;
+  // True once render_d3d9_mesh_bind_slots bound the entries from a render
+  // object's texture list. The file-name heuristic bind_mesh_textures
+  // leaves such a section alone.
+  bool slot_bound = false;
+  // Ground mesh: index of the section's material in the material table
+  // (the draw order of rg_ground). -1 for every other mesh.
+  int32_t mat_index = -1;
+};
+
+// PE 940 render group a mesh's sections are drawn in when the group does not
+// come from the section material: rg_ground (cam+0x528, RT_ground: render
+// object flags 0x800) and rg_horizon (cam+0x890, render object flags 0x1).
+enum MeshGroup : int32_t {
+  kMeshGroupObject = 0,  // rg_object / rg_object_prelit / the blended groups
+  kMeshGroupGround = 1,
+  kMeshGroupHorizon = 2,
 };
 
 struct MeshState {
@@ -516,6 +610,17 @@ struct MeshState {
   bool ready = false;
   // Fork: creation stamp of the instance (stable order in the camera pass).
   uint32_t seq = 0;
+  // Fork: file units -> script metres, multiplied into the 3x3 of every
+  // section's world matrix. 0.01 for an SCX mesh: INVO positions are
+  // centimetres (the exe multiplies them by 0.1 into its decimetres at
+  // load, FUN_00454940 / FUN_00451b00). 1.0 for a mesh built from POLY
+  // data, which is metres (the exe multiplies by 10.0, FUN_004658b0).
+  float unit = 0.01f;
+  int32_t group = kMeshGroupObject;
+  // Ground mesh only: the material table (PE 940 mesh+0x60 / +0x64, loader
+  // FUN_00451130), one entry per header of the render object's `mesh`
+  // file, without geometry. A section copies its material from here.
+  std::vector<MeshSubmesh> materials;
 };
 std::unordered_map<void*, MeshState> g_meshes;
 uint32_t g_mesh_seq = 0;
@@ -526,6 +631,30 @@ std::unordered_map<void*, void*> g_mesh_geom_src;
 // instance made from it (render_d3d9_mesh_set_type_flags). Absent = 0.
 std::unordered_map<void*, uint32_t> g_mesh_type_flags;
 std::vector<void*> g_mesh_queue;
+// Fork: render instances whose render type was not loaded when
+// RenderRef.create ran (script boot only). PE 940: the type-3 builder
+// FUN_00462b40 requests the type when a camera walk first meets the
+// instance (see render_d3d9_mesh_set_pending_type).
+struct MeshPending {
+  int32_t type_id = 0;
+  // 0 waiting for a camera; 1 the type is not a mesh recipe (a typeof-13
+  // light: kept for the light pass); 2 the type could not be loaded.
+  // 1 and 2 are not asked again.
+  int32_t state = 0;
+  uint32_t seq = 0;  // creation order
+};
+std::unordered_map<void*, MeshPending> g_mesh_pending;
+uint32_t g_mesh_pending_seq = 0;
+// PE 940 cLight (0x108 bytes, FUN_00458740): a render instance whose
+// resource is a light type (render_d3d9_scene_light_set,
+// render_d3d9_part4.inc). Keyed by the instance.
+struct SceneLight {
+  int32_t type_id = 0;
+  RenderLightDesc desc;
+  uint32_t seq = 0;  // the order the lights were met
+};
+std::unordered_map<void*, SceneLight> g_scene_lights;
+uint32_t g_scene_light_seq = 0;
 
 // W26B — soft PE AsyncLoad_Mesh_UploadVbFvf @ 0x503400 wrapper (malloc 0x68):
 //   +0x04 vert_count, +0x08 CPU blob, +0x0C pe_fvf, +0x1C layout
@@ -755,6 +884,70 @@ LRESULT CALLBACK render_wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
   return DefWindowProcA(hwnd, msg, wp, lp);
 }
 
+// The depth format the device was made with (render_d3d9_debug_dump).
+D3DFORMAT g_depth_format = D3DFMT_D16;
+// The behaviour flags the device was made with (render_d3d9_debug_dump).
+DWORD g_create_flags = 0;
+
+// PE 940 FUN_00426b10(back buffer format), called by the device creation
+// FUN_00425a30 for D3DPRESENT_PARAMETERS.AutoDepthStencilFormat (and by the
+// mode change FUN_00422ec0): the first entry of a seven-format table that
+// passes CheckDeviceFormat(D3DUSAGE_DEPTHSTENCIL, D3DRTYPE_SURFACE) and
+// CheckDepthStencilMatch. In a 32-bit mode (C3DLow+0x1C0 == 32, table
+// 0x593E60): D32, D24X8, D24S8, D24X4S4, D16_LOCKABLE, D16, D15S1.
+// Otherwise (table 0x593E50): D16_LOCKABLE, D16, D15S1, D32, D24X8, D24S8,
+// D24X4S4. The adapter format of both checks is X8R8G8B8 for an A8R8G8B8
+// back buffer, else the back buffer format. (M2 spec Q3.)
+// Fork: the host's back buffer takes the desktop format (windowed,
+// D3DFMT_UNKNOWN), so the desktop format decides the table and is the
+// render target format of the match; when nothing passes the host takes
+// D16 (the exe reads past its table).
+// Why it matters: D16 with the garage camera's near plane (0.05 m) resolves
+// 3 cm at 10 m and 11 cm at 20 m, where lockers, poles and adverts stand
+// centimetres off the back wall.
+D3DFORMAT pick_depth_format(D3DDEVTYPE dev_type) {
+  D3DDISPLAYMODE mode{};
+  if (!g_d3d ||
+      FAILED(g_d3d->GetAdapterDisplayMode(D3DADAPTER_DEFAULT, &mode)))
+    return D3DFMT_D16;
+  static const D3DFORMAT kMode32[7] = {
+      D3DFMT_D32,          D3DFMT_D24X8, D3DFMT_D24S8, D3DFMT_D24X4S4,
+      D3DFMT_D16_LOCKABLE, D3DFMT_D16,   D3DFMT_D15S1};
+  static const D3DFORMAT kMode16[7] = {
+      D3DFMT_D16_LOCKABLE, D3DFMT_D16,   D3DFMT_D15S1, D3DFMT_D32,
+      D3DFMT_D24X8,        D3DFMT_D24S8, D3DFMT_D24X4S4};
+  const bool mode32 =
+      mode.Format == D3DFMT_X8R8G8B8 || mode.Format == D3DFMT_A8R8G8B8;
+  const D3DFORMAT* table = mode32 ? kMode32 : kMode16;
+  const D3DFORMAT adapter_fmt =
+      mode.Format == D3DFMT_A8R8G8B8 ? D3DFMT_X8R8G8B8 : mode.Format;
+  for (int i = 0; i < 7; ++i) {
+    const D3DFORMAT f = table[i];
+    if (FAILED(g_d3d->CheckDeviceFormat(D3DADAPTER_DEFAULT, dev_type,
+                                        adapter_fmt, D3DUSAGE_DEPTHSTENCIL,
+                                        D3DRTYPE_SURFACE, f)))
+      continue;
+    if (FAILED(g_d3d->CheckDepthStencilMatch(D3DADAPTER_DEFAULT, dev_type,
+                                             adapter_fmt, mode.Format, f)))
+      continue;
+    return f;
+  }
+  return D3DFMT_D16;
+}
+
+const char* depth_format_name(D3DFORMAT f) {
+  switch (f) {
+    case D3DFMT_D32: return "D32";
+    case D3DFMT_D24X8: return "D24X8";
+    case D3DFMT_D24S8: return "D24S8";
+    case D3DFMT_D24X4S4: return "D24X4S4";
+    case D3DFMT_D16_LOCKABLE: return "D16_LOCKABLE";
+    case D3DFMT_D16: return "D16";
+    case D3DFMT_D15S1: return "D15S1";
+    default: return "?";
+  }
+}
+
 bool create_device(HWND hwnd, int32_t w, int32_t h) {
   if (g_dev) {
     g_dev->Release();
@@ -776,17 +969,45 @@ bool create_device(HWND hwnd, int32_t w, int32_t h) {
   pp.BackBufferHeight = static_cast<UINT>(h);
   pp.hDeviceWindow = hwnd;
   pp.EnableAutoDepthStencil = TRUE;
-  pp.AutoDepthStencilFormat = D3DFMT_D16;
+  pp.AutoDepthStencilFormat = pick_depth_format(D3DDEVTYPE_HAL);
   pp.PresentationInterval = D3DPRESENT_INTERVAL_IMMEDIATE;
 
-  // 0x20 = D3DCREATE_SOFTWAREVERTEXPROCESSING (compat with thin SDKs).
-  constexpr DWORD kCreateFlags = 0x00000020L;
-  HRESULT hr = g_d3d->CreateDevice(D3DADAPTER_DEFAULT, D3DDEVTYPE_HAL, hwnd,
-                                   kCreateFlags, &pp, &g_dev);
-  if (FAILED(hr)) {
-    hr = g_d3d->CreateDevice(D3DADAPTER_DEFAULT, D3DDEVTYPE_REF, hwnd,
-                             kCreateFlags, &pp, &g_dev);
+  // PE 940 FUN_00425a30: IDirect3D9::CreateDevice(adapter, D3DDEVTYPE_HAL,
+  // window, flags, ..) with the behaviour flags 0x44, then 0x84, then 0x24:
+  // hardware, mixed, software vertex processing (0x40 / 0x80 / 0x20), each
+  // with D3DCREATE_MULTITHREADED (0x04); "Create hw 3d device FAILED" when
+  // all three fail. (The host asked for software vertex processing only,
+  // which transforms and lights every vertex on the CPU: 94 ms a frame in
+  // the garage once the lift arm is drawn.)
+  // Literal values: the thin SDK headers some builds use lack the names.
+  constexpr DWORD kCreateFlags[3] = {0x00000044L, 0x00000084L, 0x00000024L};
+  g_create_flags = 0;
+  auto create_hal = [&]() {
+    HRESULT r = E_FAIL;
+    for (const DWORD flags : kCreateFlags) {
+      r = g_d3d->CreateDevice(D3DADAPTER_DEFAULT, D3DDEVTYPE_HAL, hwnd, flags,
+                              &pp, &g_dev);
+      if (SUCCEEDED(r)) {
+        g_create_flags = flags;
+        break;
+      }
+    }
+    return r;
+  };
+  HRESULT hr = create_hal();
+  if (FAILED(hr) && pp.AutoDepthStencilFormat != D3DFMT_D16) {
+    // The format the device was made with before the depth request.
+    pp.AutoDepthStencilFormat = D3DFMT_D16;
+    hr = create_hal();
   }
+  if (FAILED(hr)) {
+    // Fork: the reference rasteriser as a last resort (the exe stops).
+    pp.AutoDepthStencilFormat = D3DFMT_D16;
+    hr = g_d3d->CreateDevice(D3DADAPTER_DEFAULT, D3DDEVTYPE_REF, hwnd,
+                             0x00000020L, &pp, &g_dev);
+    if (SUCCEEDED(hr)) g_create_flags = 0x00000020L;
+  }
+  if (SUCCEEDED(hr) && g_dev) g_depth_format = pp.AutoDepthStencilFormat;
   if (FAILED(hr) || !g_dev) {
     std::fprintf(stderr, "[render] CreateDevice failed hr=0x%08lX\n",
                  static_cast<unsigned long>(hr));
@@ -964,6 +1185,7 @@ void render_d3d9_close() {
   drain_texture_cache_force();
   drain_vb_slots_force();
   drain_ib_slots_force();
+  default_texture_release();
   if (g_dev) {
     g_dev->Release();
     g_dev = nullptr;
@@ -1292,9 +1514,9 @@ void set_lookat_view(float eye_x, float eye_y, float eye_z, float at_x,
 #endif
 }
 
-// Fork: SCX cm -> script metres (camera pass instances; texts are screen-space
-// glyph quads in pixels, see draw_camera_text_section).
-static constexpr float kScxCmToM = 0.01f;
+// Fork: file units -> script metres is MeshState::unit (0.01 for SCX
+// centimetres, 1.0 for POLY metres); texts are screen-space glyph quads in
+// pixels, see draw_camera_text_section.
 static int g_vp_pass_trace_budget = 40;  // SLRR_RENDER_TRACE=1 lines
 
 // One step up an instance's parent chain: bone-link parent, else creation
@@ -1498,6 +1720,51 @@ static bool camera_drawn_by_pass(const CameraState& cam) {
 
 void draw_meshes();
 
+// Fork: true on the Build 940 script boot (SLRR_PE_BOOT_INIT=1, the gate of
+// NativeTypes.cpp). Renderer behaviour read from Build 940 that the legacy
+// path, which mirrors the old build, must not pick up asks this.
+static bool render_boot940() {
+  static const bool on = [] {
+    const char* e = std::getenv("SLRR_PE_BOOT_INIT");
+    return e && e[0] == '1';
+  }();
+  return on;
+}
+
+// rg_ground of a camera pass (render_d3d9_part4.inc): the sections of the
+// ground meshes the camera sees, drawn in material mode 3.
+struct GroundSec {
+  const MeshState* ms;
+  int sub;
+};
+static void draw_ground_group(const std::vector<GroundSec>& secs);
+
+// An object section drawn in material mode 3 (render_d3d9_part4.inc):
+// rg_object_prelit (cam+0x69c) and rg_prelittransparent (cam+0x80c).
+struct Mode3Sec {
+  void* key;
+  const MeshState* ms;
+  int sub;
+};
+static void draw_object_prelit_group(const std::vector<Mode3Sec>& secs);
+static void draw_object_prelit_transparent(const Mode3Sec& sec);
+// True for the material classes whose mode 3 stage setup the host has
+// (CMaterial_Tex, CMaterial_MixVCA).
+static bool mode3_object_class(int32_t shader);
+
+// The device lights of a camera pass (render_d3d9_part4.inc): `any` when
+// the camera sees at least one scene light, `device` what FUN_0045a2c0
+// selects of them. A pass that sees none keeps the stand-in below.
+struct CamLights {
+  bool any = false;
+#ifdef _WIN32
+  std::vector<D3DLIGHT9> device;
+#endif
+};
+static void collect_camera_lights(void* root, CamLights* out);
+static void apply_camera_lights(const CamLights& lights);
+static void end_camera_lights();
+
 // Host stand-in scene light (one directional light + ambient), shared by the
 // legacy queue draw and the lit groups of the camera pass.
 static void apply_scene_light() {
@@ -1581,16 +1848,50 @@ static void apply_scene_light() {
 // (D3DFVF_SPECULAR) carries the baked lighting, which material pass 3
 // combines per material (FUN_0043f3a0 mode 3, D3DTA_SPECULAR stage setups,
 // lightmap stages FUN_00436230 / FUN_0043c9a0 / FUN_00439350).
-// Fork: the host draws a prelit section as texture * material Diffuse
-// without the baked colour and without lightmaps (neither is loaded).
-// Fork: lit sections use the host stand-in light (the exe's scene lights are
-// not ported); the transparent queue is filled in creation order (the exe
+// PE 940 group order of the pass (FUN_00460ba0): rg_horizon (cam+0x890),
+// rg_ground (cam+0x528), rg_object_prelit (cam+0x69c), rg_object
+// (cam+0x5b4), rg_objectprelit (cam+0x628), rg_prelittransparent
+// (cam+0x80c), rg_transparent (cam+0x784). The RI_object ctor FUN_00465e40
+// puts every section of an instance whose template has the horizon flag
+// (RT+0xFC, render object flags & 1) into rg_horizon and nothing else;
+// otherwise an opaque prelit section goes into rg_objectprelit AND
+// rg_object_prelit and a transparent prelit one into rg_prelittransparent.
+// rg_object_prelit (group begin FUN_0045e780 = lighting off; per material
+// begin FUN_0045e720, loop FUN_0045f7a0, entry FUN_00468cd0) and
+// rg_prelittransparent (begin FUN_0045e870 = lighting off +
+// FUN_00422c60(2,1), loop FUN_00468200, back to front through the same
+// heap) draw in material mode 3, C3DLow vt+0xe0(material, 3):
+// texture * lightmap for CMaterial_Tex with a lightmap entry
+// (draw_mode3_section, render_d3d9_part4.inc). rg_objectprelit (loop
+// FUN_00468090) only adds the passes of the sector's static point and spot
+// lights.
+// Host, Build 940 boot: a prelit section that is bound by slot, has a
+// lightmap entry and wide vertices takes the mode 3 path; the groups are
+// drawn horizon, ground, prelit, lit, prelit transparent, transparent.
+// Fork: every other prelit section (no lightmap entry: FUN_0043c9a0,
+// texture * vertex diffuse, M2 spec Q13; or not bound by slot: the legacy
+// path) is drawn as texture * material Diffuse with lighting off; the
+// static-light passes of rg_objectprelit are not ported; the legacy path
+// keeps its order (lit before prelit).
+// Fork: render object flag 0x8000 (the props, city buildings): the exe
+// draws a per-instance copy of the mesh, transformed by the instance
+// matrix when the instance is made and lit in software from the sector's
+// static lights (FUN_00465e40 -> FUN_004688f0 / FUN_00465670, C3DLow
+// vt+0x11c), under an identity world matrix (FUN_00468cd0, RI+0x9c). The
+// host draws the type's mesh under the instance matrix: the same picture
+// without static lights (M2 spec Q8), and mode 3 of CMaterial_Tex reads no
+// vertex colour.
+// Lit groups (rg_object, rg_transparent): the lights of the camera when it
+// sees a light instance (apply_camera_lights), else the host stand-in light
+// (Fork: the legacy path, the navigator pass and every Osd camera).
+// Fork: the transparent queue is filled in creation order (the exe
 // fills the group's entry array in tree-walk order); a section without a
 // parsed material keeps the legacy rule (heuristic diffuse, blend only with
 // a DXT3/DXT5 texture); CULL_NONE for every section (the exe's default cull
 // mode was not read, 0x02000000 = two-sided is therefore not consulted).
 static void draw_camera_instances(const std::vector<void*>& members,
-                                  const D3DMATRIX& cam_world) {
+                                  const D3DMATRIX& cam_world,
+                                  const CamLights& lights) {
   if (members.empty()) return;
   struct Sec {
     void* key;
@@ -1598,8 +1899,13 @@ static void draw_camera_instances(const std::vector<void*>& members,
     int sub;        // -1: uploaded VB/IB, the whole mesh with subs[0]'s material
     float depth;
     bool legacy_blend;
+    bool mode3;     // prelit, drawn in material mode 3
   };
-  std::vector<Sec> opaque_lit, opaque_prelit, trans_prelit, trans_lit;
+  std::vector<Sec> horizon, opaque_lit, opaque_prelit, trans_prelit, trans_lit;
+  const bool boot940 = render_boot940();
+  // rg_ground (cam+0x528): the entries of every RT_ground template the
+  // camera's walk met, drawn before the object groups (FUN_00460ba0).
+  std::vector<GroundSec> ground;
   const float ex = cam_world.m[3][0], ey = cam_world.m[3][1], ez = cam_world.m[3][2];
   const float zx = cam_world.m[2][0], zy = cam_world.m[2][1], zz = cam_world.m[2][2];
   auto tex_fmt_of = [](const MeshSubmesh* sm) -> int32_t {
@@ -1611,9 +1917,24 @@ static void draw_camera_instances(const std::vector<void*>& members,
     auto it = g_meshes.find(key);
     if (it == g_meshes.end() || !it->second.ready) continue;
     const MeshState& ms = it->second;
+    if (ms.group == kMeshGroupGround) {
+      // A ground mesh has no instance pose and no object group: every
+      // section goes to rg_ground whatever its material flags say.
+      for (size_t s = 0; s < ms.subs.size(); ++s)
+        if (!ms.subs[s].wide.empty() && ms.subs[s].indices.size() >= 3)
+          ground.push_back({&ms, static_cast<int>(s)});
+      continue;
+    }
     D3DMATRIX w{};
     resolve_world(key, &w, 0);
     const float depth = (w.m[3][0] - ex) * zx + (w.m[3][1] - ey) * zy + (w.m[3][2] - ez) * zz;
+    // RT+0xFC, set from render object flags & 1 (FUN_0046e1a0): all 16 sky
+    // dome render objects of the install. Fork: Build 940 boot only.
+    bool horizon_inst = false;
+    if (boot940) {
+      auto fit = g_mesh_type_flags.find(key);
+      horizon_inst = fit != g_mesh_type_flags.end() && (fit->second & 1u) != 0;
+    }
     bool uploaded = false;
     {
       auto vit = g_mesh_vbs.find(key);
@@ -1626,10 +1947,24 @@ static void draw_camera_instances(const std::vector<void*>& members,
     for (int s = 0; s < nsub; ++s) {
       const MeshSubmesh* sm = ms.subs.empty() ? nullptr : &ms.subs[static_cast<size_t>(s)];
       if (!uploaded && (!sm || sm->verts.empty() || sm->indices.size() < 3)) continue;
-      Sec sec{key, &ms, uploaded ? -1 : s, depth, false};
+      Sec sec{key, &ms, uploaded ? -1 : s, depth, false, false};
+      if (horizon_inst) {
+        horizon.push_back(sec);
+        continue;
+      }
       if (sm && sm->has_mat) {
         const bool transparent = (sm->mat_flags & 0x40000000u) != 0;
         const bool prelit = (sm->mat_flags & 0x80000000u) != 0;
+        // Mode 3 with a lightmap: CMaterial_Tex takes FUN_00436230 when its
+        // lightmap entry has a slot (FUN_00434170 case 3: entry [0] slot !=
+        // -1). slot_bound is only ever set on the Build 940 boot.
+        // Fork: a class whose mode 3 setup was not read (12 of the 97 v4
+        // materials of the install that have a lightmap entry: MixTA,
+        // ColorMixTex, the specular and sphere-map classes, Color*) stays
+        // on the object path below.
+        sec.mode3 = prelit && !uploaded && sm->slot_bound &&
+                    sm->slot_lightmap != -1 && !sm->wide.empty() &&
+                    mode3_object_class(sm->mat_shader);
         (transparent ? (prelit ? trans_prelit : trans_lit)
                      : (prelit ? opaque_prelit : opaque_lit)).push_back(sec);
       } else {
@@ -1695,7 +2030,12 @@ static void draw_camera_instances(const std::vector<void*>& members,
   g_dev->SetSamplerState(0, D3DSAMP_MIPFILTER, D3DTEXF_LINEAR);
   g_dev->SetSamplerState(1, D3DSAMP_MINFILTER, D3DTEXF_LINEAR);
   g_dev->SetSamplerState(1, D3DSAMP_MAGFILTER, D3DTEXF_LINEAR);
-  apply_scene_light();
+  if (lights.any) {
+    apply_camera_lights(lights);
+    ++g_cam_pass_stats.light_passes;
+  } else {
+    apply_scene_light();
+  }
 
   IDirect3DBaseTexture9* env_tex = nullptr;
   if (g_envmap) {
@@ -1703,7 +2043,8 @@ static void draw_camera_instances(const std::vector<void*>& members,
     if (eit != g_textures.end()) env_tex = texture_d3d_base(eit->second);
   }
 
-  auto draw_section = [&](const Sec& sec, bool transparent, bool prelit) {
+  auto draw_section = [&](const Sec& sec, bool transparent, bool prelit,
+                          bool no_zwrite = false) {
     const MeshState& ms = *sec.ms;
     const MeshSubmesh* sm =
         ms.subs.empty() ? nullptr : &ms.subs[static_cast<size_t>(sec.sub < 0 ? 0 : sec.sub)];
@@ -1711,9 +2052,9 @@ static void draw_camera_instances(const std::vector<void*>& members,
     D3DMATRIX world{};
     resolve_world(sec.key, &world, 0);
     // Fork: SCX vertices are centimetres (see GameRef_core extent "cm");
-    // script poses / camera planes are metres.
+    // script poses / camera planes are metres (MeshState::unit).
     for (int r = 0; r < 3; ++r)
-      for (int c = 0; c < 3; ++c) world.m[r][c] *= kScxCmToM;
+      for (int c = 0; c < 3; ++c) world.m[r][c] *= ms.unit;
     g_dev->SetTransform(D3DTS_WORLD, &world);
 
     IDirect3DBaseTexture9* tex = nullptr;
@@ -1722,6 +2063,32 @@ static void draw_camera_instances(const std::vector<void*>& members,
       if (tit != g_textures.end()) tex = texture_d3d_base(tit->second);
     }
     g_dev->SetTexture(0, tex);
+    // PE 940 FUN_0043d990 (the bind of every material class, object modes
+    // included: FUN_00434170): an entry that has a texture clamps the axes
+    // whose address bit is clear; FUN_0043d930 puts WRAP back when the
+    // pass ends. The Rectangle mesh etalon_negyzet_alpha has both bits
+    // clear: with WRAP the last pixel row of a rectangle blends in the
+    // opposite edge of its texture (the row under the Osd top bar).
+    // Fork: on the Build 940 boot only; the legacy path keeps WRAP.
+    const bool clamp_u =
+        render_boot940() && has_mat && tex && (sm->addr_primary & 1u) == 0;
+    const bool clamp_v =
+        render_boot940() && has_mat && tex && (sm->addr_primary & 2u) == 0;
+    if (clamp_u) g_dev->SetSamplerState(0, D3DSAMP_ADDRESSU, D3DTADDRESS_CLAMP);
+    if (clamp_v) g_dev->SetSamplerState(0, D3DSAMP_ADDRESSV, D3DTADDRESS_CLAMP);
+    // FUN_0043d990 again: an entry without a texture, or with one that is
+    // not ready, binds the engine default texture (C3DLow+0x340, 4x4
+    // 0x80808080). Host: a section bound by slot whose primary entry names
+    // a slot that is past the render object's list, empty, or a texture
+    // that did not load (misc.garage: g1\png\g1Auto.png).
+    // Fork: a material without a primary entry in its file stays
+    // untextured (what slot the exe's class default gives that entry was
+    // not read).
+    if (!tex && has_mat && sm->slot_bound && sm->slot_primary != -1) {
+      tex = default_texture();
+      g_dev->SetTexture(0, tex);
+      ++g_cam_pass_stats.default_tex_binds;
+    }
 
     // Instance colour mode (RI_object ctor FUN_00465e40, from the render
     // type flags); FUN_00440a60 leaves a 0x04000000 material alone.
@@ -1812,7 +2179,7 @@ static void draw_camera_instances(const std::vector<void*>& members,
       g_dev->SetRenderState(D3DRS_DESTBLEND, D3DBLEND_INVSRCALPHA);
       g_dev->SetRenderState(D3DRS_ALPHATESTENABLE, FALSE);
     } else {
-      g_dev->SetRenderState(D3DRS_ZWRITEENABLE, TRUE);
+      g_dev->SetRenderState(D3DRS_ZWRITEENABLE, no_zwrite ? FALSE : TRUE);
       g_dev->SetRenderState(D3DRS_ALPHABLENDENABLE, FALSE);
       // 0x20000000: alpha test, reference from material entry 0x5000000
       // (v3 builder FUN_0042ba10 -> FUN_004412c0(0x5000000, 0x38)).
@@ -1851,17 +2218,80 @@ static void draw_camera_instances(const std::vector<void*>& members,
           sizeof(MeshVertex));
     }
     if (env) apply_envmap_stage1(nullptr);
+    if (clamp_u) g_dev->SetSamplerState(0, D3DSAMP_ADDRESSU, D3DTADDRESS_WRAP);
+    if (clamp_v) g_dev->SetSamplerState(0, D3DSAMP_ADDRESSV, D3DTADDRESS_WRAP);
   };
 
-  for (const Sec& s : opaque_lit) draw_section(s, false, false);
-  for (const Sec& s : opaque_prelit) draw_section(s, false, true);
-  for (const Sec& s : trans_prelit) draw_section(s, true, true);
+  // rg_horizon (cam+0x890), the first group after the depth clear.
+  //   begin FUN_0045e680: C3DLow vt+0x10c(0,0) = lighting off, then vt+0x2c
+  //   = FUN_00422b80: the view matrix becomes the inverse of the camera's
+  //   world matrix with its translation zeroed (the group is drawn around
+  //   the eye), ZFUNC = ALWAYS, ZWRITEENABLE = 0, and FOGENABLE = 0 when
+  //   fog is on (the host pass has turned fog off already);
+  //   material begin FUN_0045e6d0: C3DLow vt+0xe0(material, 0), the object
+  //   mode, per pass vt+0xe4 (FUN_0045f700) and the entry draw with the
+  //   instance world matrix;
+  //   end FUN_00424a10: ZFUNC = LESSEQUAL, the view matrix back,
+  //   ZWRITEENABLE = 1 (and fog back on).
+  // Mode 0 of CMaterial_Tex (FUN_00434170 case 0 -> 1) sets the material,
+  // binds the primary entry and leaves stage 0 on MODULATE: with lighting
+  // off the colour is texture * vertex diffuse, and the v3 loader stores
+  // the file's vertex colour OR 0xFF000000 as the diffuse of a material
+  // that is not prelit (FUN_00451b00). (M2 spec Q7.)
+  // Host: draw_section with lighting off; a vertex without a diffuse reads
+  // white, and so does every vertex of skydome.SCX, the one mesh the 16
+  // horizon render objects use (376 colours, all 0xFFFFFFFF).
+  // Fork: a prelit section here is drawn the same way (the exe hands mode
+  // 0 of a prelit material to its static-light material, FUN_00434170).
+  if (!horizon.empty()) {
+    D3DMATRIX eye_rot = cam_world;
+    eye_rot.m[3][0] = eye_rot.m[3][1] = eye_rot.m[3][2] = 0.f;
+    D3DMATRIX view_rot{};
+    if (!invert_general(eye_rot, &view_rot)) invert_rigid(eye_rot, &view_rot);
+    D3DMATRIX saved_view{};
+    g_dev->GetTransform(D3DTS_VIEW, &saved_view);
+    g_dev->SetTransform(D3DTS_VIEW, &view_rot);
+    g_dev->SetRenderState(D3DRS_ZFUNC, D3DCMP_ALWAYS);
+    g_dev->SetRenderState(D3DRS_ZWRITEENABLE, FALSE);
+    for (const Sec& s : horizon) {
+      draw_section(s, false, true, true);
+      ++g_cam_pass_stats.horizon_sections;
+    }
+    g_dev->SetRenderState(D3DRS_ZFUNC, D3DCMP_LESSEQUAL);
+    g_dev->SetTransform(D3DTS_VIEW, &saved_view);
+    g_dev->SetRenderState(D3DRS_ZWRITEENABLE, TRUE);
+  }
+  // rg_ground, then the object groups. The ground group leaves the state
+  // the object groups start from.
+  draw_ground_group(ground);
+  if (boot940) {
+    // rg_object_prelit: material mode 3 for the sections that have a
+    // lightmap; the others as the host drew them before.
+    std::vector<Mode3Sec> prelit_mode3;
+    for (const Sec& s : opaque_prelit)
+      if (s.mode3) prelit_mode3.push_back({s.key, s.ms, s.sub});
+    draw_object_prelit_group(prelit_mode3);
+    for (const Sec& s : opaque_prelit)
+      if (!s.mode3) draw_section(s, false, true);
+    for (const Sec& s : opaque_lit) draw_section(s, false, false);
+    for (const Sec& s : trans_prelit) {
+      if (s.mode3)
+        draw_object_prelit_transparent({s.key, s.ms, s.sub});
+      else
+        draw_section(s, true, true);
+    }
+  } else {
+    for (const Sec& s : opaque_lit) draw_section(s, false, false);
+    for (const Sec& s : opaque_prelit) draw_section(s, false, true);
+    for (const Sec& s : trans_prelit) draw_section(s, true, true);
+  }
   for (const Sec& s : trans_lit) draw_section(s, true, false);
 
   // Leave the state the other passes expect (FUN_00424a70 group end:
   // blend off, alpha test off, ZWRITE on).
   g_dev->SetTexture(0, nullptr);
   apply_envmap_stage1(nullptr);
+  if (lights.any) end_camera_lights();
   g_dev->LightEnable(0, FALSE);
   g_dev->SetRenderState(D3DRS_LIGHTING, FALSE);
   g_dev->SetRenderState(D3DRS_NORMALIZENORMALS, FALSE);
@@ -1876,6 +2306,81 @@ static void draw_camera_instances(const std::vector<void*>& members,
 // PE 940 text section of a camera pass (rg_text_section, cam+0x4b4): defined
 // in render_d3d9_part3.inc.
 static void draw_camera_text_section(const std::vector<void*>& keys);
+
+// PE 940 FUN_0045f880: the nodes a camera's walk met for the first time
+// are built before its groups are drawn (FUN_00462750 / FUN_00462b40; a
+// render instance requests its render type there). The build budgets are
+// cam+0x73A4 / +0x73A8: 0x400 while the camera is fresh or the game loads,
+// then 16 and 8 a frame (DAT_005da34c, DAT_005da350).
+// Fork: the host loads the type at once (the exe files an asynchronous
+// request unless the type has flag 0x1000), at most 8 instances per camera
+// and frame, in creation order.
+// Fork: the parent chain of a waiting instance is walked once per frame,
+// not once per camera: every native part leaves its render instances
+// waiting, and most of them hang under a car that no camera shows. `s_up`
+// holds the chains above the instances one after the other with, per node,
+// whether a WORLDTREELEAF container was met on the way there: the test of
+// camera_sees for any root. The arrays keep their storage between frames.
+static void materialise_pending_instances(void* root) {
+  if (g_mesh_pending.empty()) return;
+  struct Waiting {
+    uint32_t seq;
+    void* key;
+    uint32_t first, count;  // its chain in s_up
+  };
+  static uint32_t s_frame = 0;
+  static std::vector<Waiting> s_waiting;
+  static std::vector<std::pair<void*, bool>> s_up;
+  if (s_frame != g_cam_pass_frame) {
+    s_frame = g_cam_pass_frame;
+    s_waiting.clear();
+    s_up.clear();
+    for (const auto& pk : g_mesh_pending) {
+      if (pk.second.state != 0) continue;
+      Waiting w{pk.second.seq, pk.first, static_cast<uint32_t>(s_up.size()), 0};
+      bool leaf = false;
+      void* cur = chain_parent_of(pk.first);
+      for (int guard = 0; cur && guard < 64; ++guard) {
+        if (gameref_get_flags(static_cast<InvObject*>(cur)) & kGameRefWorldTreeLeaf)
+          leaf = true;
+        s_up.emplace_back(cur, leaf);
+        ++w.count;
+        cur = chain_parent_of(cur);
+      }
+      s_waiting.push_back(w);
+    }
+  }
+  std::vector<std::pair<uint32_t, void*>> todo;
+  for (const Waiting& w : s_waiting) {
+    bool sees = (w.key == root);
+    for (uint32_t i = 0; !sees && i < w.count; ++i) {
+      const std::pair<void*, bool>& up = s_up[w.first + i];
+      if (up.first != root) continue;
+      sees = !up.second;
+      break;
+    }
+    if (sees) todo.emplace_back(w.seq, w.key);
+  }
+  if (todo.empty()) return;
+  std::sort(todo.begin(), todo.end());
+  constexpr size_t kPendingPerPass = 8;
+  if (todo.size() > kPendingPerPass) todo.resize(kPendingPerPass);
+  for (const auto& t : todo) {
+    auto it = g_mesh_pending.find(t.second);
+    if (it == g_mesh_pending.end() || it->second.state != 0) continue;
+    const int32_t type_id = it->second.type_id;
+    // The callback creates meshes and textures: no iterator into the
+    // renderer's maps is held across it.
+    const int32_t made = renderref_materialise_pending(
+        static_cast<InvObject*>(t.second), type_id);
+    it = g_mesh_pending.find(t.second);
+    if (it == g_mesh_pending.end()) continue;
+    if (made > 0)
+      g_mesh_pending.erase(it);
+    else
+      it->second.state = (made == 0) ? 1 : 2;
+  }
+}
 
 // PE 940 present walk (GfxEngine PresentFrame FUN_00421920): every BOUND
 // viewport in list order - FUN_00421e40 keeps the list ascending by
@@ -1940,6 +2445,12 @@ void draw_viewport_cameras() {
     const CameraState& cam = g_cameras[cam_key];
     void* const start = cam.parent ? cam.parent : cam_key;
     void* root = camera_root_of(start);
+    // Instances this camera sees whose render type is not loaded yet.
+    materialise_pending_instances(root);
+    // The light instances it sees (FUN_0045f880 refreshes the camera's
+    // light list every frame).
+    CamLights lights;
+    collect_camera_lights(root, &lights);
     // Instances below the camera root, in creation order (Fork: the exe
     // queues them in tree-walk order).
     std::vector<void*> members;
@@ -2055,8 +2566,8 @@ void draw_viewport_cameras() {
         ndc_of(members[i], &vx, &vy, &vz, &nx, &ny);
         const MeshState& ms = g_meshes[members[i]];
         // Half extents in NDC of the local AABB (cm) at the instance depth.
-        const float hw = vz != 0.f ? 0.5f * (ms.bmax[0] - ms.bmin[0]) * kScxCmToM * xs / -vz : 0.f;
-        const float hh = vz != 0.f ? 0.5f * (ms.bmax[1] - ms.bmin[1]) * kScxCmToM * ys / -vz : 0.f;
+        const float hw = vz != 0.f ? 0.5f * (ms.bmax[0] - ms.bmin[0]) * ms.unit * xs / -vz : 0.f;
+        const float hh = vz != 0.f ? 0.5f * (ms.bmax[1] - ms.bmin[1]) * ms.unit * ys / -vz : 0.f;
         std::snprintf(b, sizeof b, "  inst %p ndc=(%.4f,%.4f) half=(%.4f,%.4f) view_z=%.4f matflags=%08X shader=%d diffuse=%08X typeflags=%u tex=%s",
                       members[i], nx, ny, hw, hh, vz,
                       ms.subs.empty() ? 0u : ms.subs[0].mat_flags,
@@ -2097,7 +2608,7 @@ void draw_viewport_cameras() {
         std::fprintf(stderr, "[render]   ndc %p view=(%g,%g,%g) ndc=(%g,%g)\n", members[i], vx, vy, vz, nx, ny);
       }
     }
-    draw_camera_instances(members, cam_world);
+    draw_camera_instances(members, cam_world, lights);
     draw_camera_text_section(texts);  // rg_text_section: after every mesh group
     g_fold_own_bone0 = false;
   }
@@ -2449,711 +2960,3 @@ void queue_flare_sprites() {
     }
   }
 }
-
-void draw_osd_rects() {
-#ifdef _WIN32
-  if (!g_dev || g_osd.empty() || g_w <= 0 || g_h <= 0) return;
-
-  // Stable-ish draw order: lower pri first (background), matching Osd usage
-  // (createBG uses pri=-2, header -1).
-  std::vector<OsdRect> ordered = g_osd;
-  for (size_t i = 1; i < ordered.size(); ++i) {
-    OsdRect key = ordered[i];
-    size_t j = i;
-    while (j > 0 && ordered[j - 1].pri > key.pri) {
-      ordered[j] = ordered[j - 1];
-      --j;
-    }
-    ordered[j] = key;
-  }
-
-  struct Vtx {
-    float x, y, z, rhw;
-    DWORD color;
-    float u, v;
-  };
-  const DWORD fvf = D3DFVF_XYZRHW | D3DFVF_DIFFUSE | D3DFVF_TEX1;
-  set_fullscreen_viewport();
-  g_dev->SetFVF(fvf);
-  g_dev->SetRenderState(D3DRS_ZENABLE, FALSE);
-  g_dev->SetRenderState(D3DRS_LIGHTING, FALSE);
-  g_dev->SetRenderState(D3DRS_CULLMODE, D3DCULL_NONE);
-  g_dev->SetRenderState(D3DRS_ALPHABLENDENABLE, TRUE);
-  g_dev->SetRenderState(D3DRS_SRCBLEND, D3DBLEND_SRCALPHA);
-  g_dev->SetRenderState(D3DRS_DESTBLEND, D3DBLEND_INVSRCALPHA);
-  g_dev->SetTextureStageState(0, D3DTSS_COLOROP, D3DTOP_MODULATE);
-  g_dev->SetTextureStageState(0, D3DTSS_COLORARG1, D3DTA_TEXTURE);
-  g_dev->SetTextureStageState(0, D3DTSS_COLORARG2, D3DTA_DIFFUSE);
-  g_dev->SetTextureStageState(0, D3DTSS_ALPHAOP, D3DTOP_MODULATE);
-  g_dev->SetTextureStageState(0, D3DTSS_ALPHAARG1, D3DTA_TEXTURE);
-  g_dev->SetTextureStageState(0, D3DTSS_ALPHAARG2, D3DTA_DIFFUSE);
-
-  const float sw = static_cast<float>(g_w);
-  const float sh = static_cast<float>(g_h);
-  for (const auto& r : ordered) {
-    if (!r.visible) continue;
-    IDirect3DTexture9* tex = nullptr;
-    if (r.texture) {
-      auto it = g_textures.find(r.texture);
-      if (it != g_textures.end()) tex = it->second.tex;
-    }
-    g_dev->SetTexture(0, tex);
-    if (tex) {
-      g_dev->SetTextureStageState(0, D3DTSS_COLOROP, D3DTOP_MODULATE);
-      g_dev->SetTextureStageState(0, D3DTSS_ALPHAOP, D3DTOP_MODULATE);
-    } else {
-      g_dev->SetTextureStageState(0, D3DTSS_COLOROP, D3DTOP_SELECTARG2);
-      g_dev->SetTextureStageState(0, D3DTSS_ALPHAOP, D3DTOP_SELECTARG2);
-    }
-    g_dev->SetRenderState(D3DRS_SRCBLEND, D3DBLEND_SRCALPHA);
-    g_dev->SetRenderState(D3DRS_DESTBLEND, D3DBLEND_INVSRCALPHA);
-
-    // Host OSD blit: x right, y up; (0,0,2,2) covers [-1,1]² → full window.
-    // (Stock scripts use the opposite Y via convertTextCoordinates — host
-    // chrome negates Y when materializing stock layouts.)
-    const float left = (r.x - r.w * 0.5f + 1.f) * 0.5f * sw;
-    const float right = (r.x + r.w * 0.5f + 1.f) * 0.5f * sw;
-    const float top = (1.f - (r.y + r.h * 0.5f)) * 0.5f * sh;
-    const float bottom = (1.f - (r.y - r.h * 0.5f)) * 0.5f * sh;
-    const DWORD col = r.color ? r.color : 0xFFFFFFFFu;
-
-    Vtx v[4] = {
-        {left, top, 0.f, 1.f, col, 0.f, 0.f},
-        {right, top, 0.f, 1.f, col, 1.f, 0.f},
-        {left, bottom, 0.f, 1.f, col, 0.f, 1.f},
-        {right, bottom, 0.f, 1.f, col, 1.f, 1.f},
-    };
-    g_dev->DrawPrimitiveUP(D3DPT_TRIANGLESTRIP, 2, v, sizeof(Vtx));
-  }
-
-  g_dev->SetTexture(0, nullptr);
-  g_dev->SetRenderState(D3DRS_ALPHABLENDENABLE, FALSE);
-  g_dev->SetRenderState(D3DRS_ZENABLE, TRUE);
-#endif
-}
-
-void draw_osd_texts() {
-#ifdef _WIN32
-  if (!g_dev || g_osd_text.empty() || g_w <= 0 || g_h <= 0) return;
-
-  struct Vtx {
-    float x, y, z, rhw;
-    DWORD color;
-    float u, v;
-  };
-  const DWORD fvf = D3DFVF_XYZRHW | D3DFVF_DIFFUSE | D3DFVF_TEX1;
-  set_fullscreen_viewport();
-  g_dev->SetFVF(fvf);
-  g_dev->SetRenderState(D3DRS_ZENABLE, FALSE);
-  g_dev->SetRenderState(D3DRS_LIGHTING, FALSE);
-  g_dev->SetRenderState(D3DRS_CULLMODE, D3DCULL_NONE);
-  g_dev->SetRenderState(D3DRS_ALPHABLENDENABLE, TRUE);
-  g_dev->SetRenderState(D3DRS_SRCBLEND, D3DBLEND_SRCALPHA);
-  g_dev->SetRenderState(D3DRS_DESTBLEND, D3DBLEND_INVSRCALPHA);
-  g_dev->SetTextureStageState(0, D3DTSS_COLOROP, D3DTOP_MODULATE);
-  g_dev->SetTextureStageState(0, D3DTSS_COLORARG1, D3DTA_TEXTURE);
-  g_dev->SetTextureStageState(0, D3DTSS_COLORARG2, D3DTA_DIFFUSE);
-  g_dev->SetTextureStageState(0, D3DTSS_ALPHAOP, D3DTOP_MODULATE);
-  g_dev->SetTextureStageState(0, D3DTSS_ALPHAARG1, D3DTA_TEXTURE);
-  g_dev->SetTextureStageState(0, D3DTSS_ALPHAARG2, D3DTA_DIFFUSE);
-  g_dev->SetSamplerState(0, D3DSAMP_MINFILTER, D3DTEXF_LINEAR);
-  g_dev->SetSamplerState(0, D3DSAMP_MAGFILTER, D3DTEXF_LINEAR);
-
-  const float sw = static_cast<float>(g_w);
-  const float sh = static_cast<float>(g_h);
-
-  for (const auto& t : g_osd_text) {
-    if (!t.visible || !t.font || t.text.empty()) continue;
-    {
-      // Fork: a tree text belongs to the camera pass of its Osd (PE 940
-      // rg_text_section) and is hidden with it.
-      auto kit = g_texts.find(t.text_key);
-      if (kit != g_texts.end() && kit->second.tree) continue;
-    }
-    auto fit = g_fonts.find(t.font);
-    if (fit == g_fonts.end() || !fit->second.ready) continue;
-    const FontState& font = fit->second;
-    IDirect3DTexture9* tex = nullptr;
-    if (font.atlas_key) {
-      auto tit = g_textures.find(font.atlas_key);
-      if (tit != g_textures.end()) tex = tit->second.tex;
-    }
-    if (!tex) continue;
-    g_dev->SetTexture(0, tex);
-
-    float width_px = 0.f;
-    for (unsigned char ch : t.text) {
-      if (ch == ' ') {
-        width_px += static_cast<float>(font.px_height) * 0.35f;
-        continue;
-      }
-      // Glyph slots are ASCII-indexed (see font SCX z ≈ -100*code).
-      const size_t gi = static_cast<size_t>(ch);
-      if (gi >= font.glyphs.size()) continue;
-      width_px += font.glyphs[gi].adv_px;
-    }
-    // Text.java getHeight/getWidth: 2*px / video_{y,x}. t.y is top of line
-    // (stock native Text.create), host Y up-positive.
-    const float line_h_osd = 2.f * static_cast<float>(font.px_height) / sh;
-    const float width_osd = 2.f * width_px / sw;
-    float pen_x = t.x;
-    if (t.align == 1) pen_x -= width_osd * 0.5f;       // CENTER
-    else if (t.align == 0) pen_x -= width_osd;          // RIGHT
-    // LEFT (2): pen at t.x — Text.java ALIGN_*
-    const float top_y = t.y;
-    const float bot_y = t.y - line_h_osd;
-    const DWORD col = t.color;
-
-    for (unsigned char ch : t.text) {
-      float adv_px = static_cast<float>(font.px_height) * 0.35f;
-      float u0 = 0, v0 = 0, u1 = 0, v1 = 0;
-      bool draw = false;
-      if (ch != ' ') {
-        const size_t gi = static_cast<size_t>(ch);
-        if (gi < font.glyphs.size()) {
-          const FontGlyph& g = font.glyphs[gi];
-          adv_px = g.adv_px;
-          u0 = g.u0;
-          v0 = g.v0;
-          u1 = g.u1;
-          v1 = g.v1;
-          draw = (u1 > u0 + 1e-6f && v1 > v0 + 1e-6f);
-        }
-      }
-      const float adv_osd = 2.f * adv_px / sw;
-      if (draw) {
-        // Keep glyph pixel aspect from atlas UVs (not line_h vs adv mismatch).
-        const float gw_px = (u1 - u0) * static_cast<float>(font.atlas_w);
-        const float gh_px = (v1 - v0) * static_cast<float>(font.atlas_h);
-        const float gw = 2.f * gw_px / sw;
-        const float gh = 2.f * gh_px / sh;
-        const float g_top_y = top_y;
-        const float g_bot_y = top_y - gh;
-        const float left = (pen_x + 1.f) * 0.5f * sw;
-        const float right = (pen_x + gw + 1.f) * 0.5f * sw;
-        const float top = (1.f - g_top_y) * 0.5f * sh;
-        const float bottom = (1.f - g_bot_y) * 0.5f * sh;
-        Vtx v[4] = {
-            {left, top, 0.f, 1.f, col, u0, v0},
-            {right, top, 0.f, 1.f, col, u1, v0},
-            {left, bottom, 0.f, 1.f, col, u0, v1},
-            {right, bottom, 0.f, 1.f, col, u1, v1},
-        };
-        g_dev->DrawPrimitiveUP(D3DPT_TRIANGLESTRIP, 2, v, sizeof(Vtx));
-      }
-      pen_x += adv_osd;
-    }
-  }
-
-  g_dev->SetTexture(0, nullptr);
-  g_dev->SetRenderState(D3DRS_ALPHABLENDENABLE, FALSE);
-  g_dev->SetRenderState(D3DRS_ZENABLE, TRUE);
-#endif
-}
-
-// Fork: SLRR_CAM_PASS_SHOT=<file.bmp> writes the frame of the N-th flush in
-// which a script camera pass ran (N = SLRR_CAM_PASS_SHOT_N, default 8), once.
-// For runs that never reach the boot-loop dump (SLRR_PE_BOOT_SHOT), e.g. the
-// old build's navigator minimap on the legacy --game path.
-// SLRR_CAM_PASS_SHOT_STAGE=pass takes it right after the camera passes,
-// before the flare sprites and the legacy OSD rectangles / texts (the legacy
-// navigator shim covers the minimap in the finished frame); the default is
-// the finished frame.
-static void cam_pass_shot(bool pass_stage) {
-#ifdef _WIN32
-  if (g_cam_pass_stats.passes <= 0) return;
-  static const char* const shot = std::getenv("SLRR_CAM_PASS_SHOT");
-  if (!shot || !shot[0]) return;
-  static const bool want_pass_stage = [] {
-    const char* e = std::getenv("SLRR_CAM_PASS_SHOT_STAGE");
-    return e && std::strcmp(e, "pass") == 0;
-  }();
-  if (pass_stage != want_pass_stage) return;
-  static const int shot_at = [] {
-    const char* e = std::getenv("SLRR_CAM_PASS_SHOT_N");
-    const int n = e ? std::atoi(e) : 0;
-    return n > 0 ? n : 8;
-  }();
-  static int pass_frames = 0;
-  if (++pass_frames == shot_at)
-    std::printf("[render] camera pass frame %d (%s) -> %s (%d)\n", pass_frames,
-                pass_stage ? "after the passes" : "finished frame", shot,
-                render_d3d9_print_screen(shot) ? 1 : 0);
-#else
-  (void)pass_stage;
-#endif
-}
-
-void render_d3d9_flush() {
-#ifdef _WIN32
-  if (g_dev) {
-    apply_active_viewport();
-    apply_active_camera();
-    // Soft PE GfxEngine_PresentFrame @ 0x004FCA30 (forceRendering@47C1FC /
-    // flush@47C2FC / MainLoop Present slot). Stock order:
-    //   FlushDeferred@52CD40 → SetPendingClearObj(0) device vt+0x128
-    //   → optional SetPendingClearObj(cam+0x4C) → if GfxEngine_skipPresent
-    //   @65AECC==0: GfxDevice_Present @ 0x004BB410 (GfxDevice vt+0x18 →
-    //   IDirect3DDevice9 vt+0x44 Present(0,0,0,0); ++presentCount@6495FC)
-    //   → skipPresent=0 → BeginFrame device vt+0x24 (BeginScene)
-    //   → DrawCameraPass@516A90 → ApplyViewport@516660 + DrawScene@50EBA0
-    //     → ClearTargetZ @ 0x004BA980 (device vt+0x1C / D3D Clear @ vt+0xAC)
-    //   → EndScene device vt+0x28. Soft host: Clear/BeginScene/draw/EndScene
-    //   then Present (PE flips previous frame early when skipPresent==0).
-    //
-    // World Clear: PE ClearTargetZ @ 0x4BA980 — Count=0 pRects=null, Z=
-    // 0x3F7FFF58, flags=(z?ZBUFFER:0)|(target?TARGET:0), color from
-    // DrawScene 0xFF0000FF. Soft pending_clear (Java RENDERFLAG via
-    // Viewport.activate) mirrors flags after apply_active_viewport, before
-    // draw_meshes. Boot/splash (no pending): full TARGET|Z before BeginScene.
-    D3DCOLOR kClear = D3DCOLOR_XRGB(18, 24, 38);
-    if (g_fog.enabled) {
-      kClear = D3DCOLOR_XRGB((g_fog.color >> 16) & 0xff, (g_fog.color >> 8) & 0xff,
-                             g_fog.color & 0xff);
-    }
-    float kPeClearZ = 0.f;
-    {
-      // PE ClearTargetZ a6 immediate @ 0x4BA980 — int_convert 1065353048.
-      const uint32_t zbits = 0x3F7FFF58u;
-      std::memcpy(&kPeClearZ, &zbits, sizeof(kPeClearZ));
-    }
-    DWORD world_clear_flags = 0;
-    bool have_world_clear = false;
-    if (g_active_vp) {
-      auto it = g_viewports.find(g_active_vp);
-      if (it != g_viewports.end() && it->second.pending_clear != 0) {
-        have_world_clear = true;
-        // Java CLEARTARGET=0x2 → D3DCLEAR_TARGET; CLEARDEPTH=0x1 → ZBUFFER.
-        // PE DrawScene@50EBE7: ClearTargetZ(flags&~1, flags&1, 0xFF0000FF).
-        if (it->second.pending_clear & kViewportClearTarget)
-          world_clear_flags |= D3DCLEAR_TARGET;
-        if (it->second.pending_clear & kViewportClearDepth)
-          world_clear_flags |= D3DCLEAR_ZBUFFER;
-        it->second.pending_clear = 0;
-      }
-    }
-    // Fork: frames with script camera passes (draw_viewport_cameras drew at
-    // least one in the previous frame). The exe drops the Java renderflags
-    // (PE 940 Viewport.activate FUN_004e6ab0 -> ViewportBind(handle, -1, -1))
-    // and a camera pass never clears the target (FUN_00460ba0): its scenes
-    // fill the screen. The host has no world scene behind the Osd layers
-    // yet, so its stand-in frame clear has to cover the whole target instead
-    // of the D3D viewport of whichever viewport was activated last, and the
-    // one-shot pending clear is dropped. Without camera passes the legacy
-    // logic above and below is unchanged.
-    const bool script_passes = g_cam_pass_stats.passes > 0;
-    if (script_passes && have_world_clear) {
-      have_world_clear = false;
-      world_clear_flags = 0;
-    }
-    if (!have_world_clear) {
-      if (script_passes) set_fullscreen_viewport();
-      g_dev->Clear(0, nullptr, D3DCLEAR_TARGET | D3DCLEAR_ZBUFFER, kClear,
-                   kPeClearZ, 0);
-    }
-    if (SUCCEEDED(g_dev->BeginScene())) {
-      // FMV + OSD use XYZRHW in full RT space — don't clip to a 3D viewport.
-      set_fullscreen_viewport();
-      video_fmv_present();
-      apply_active_viewport();
-      if (have_world_clear && world_clear_flags != 0) {
-        // Soft ClearTargetZ@4BA980 stand-in (PE color 0xFF0000FF; host
-        // fog/slate so sky/meshes read without a blue flash).
-        g_dev->Clear(0, nullptr, world_clear_flags, kClear, kPeClearZ, 0);
-      }
-      draw_meshes();
-      draw_viewport_cameras();  // Fork: script Osd / world cameras
-      cam_pass_shot(true);
-      queue_flare_sprites();
-      set_fullscreen_viewport();
-      draw_osd_rects();
-      draw_osd_texts();
-      g_dev->EndScene();
-    }
-    cam_pass_shot(false);
-    // Soft PE GfxDevice_Present @ 0x004BB410: Present(0,0,0,0) + ++count.
-    // Host after EndScene; PE PresentFrame calls it before BeginFrame.
-    g_dev->Present(nullptr, nullptr, nullptr, nullptr);
-    ++g_present_count;
-    render_d3d9_pump(0);
-  } else {
-    // Headless: still rebuild flare OSD rects / sprite counts (smoke 2.108+).
-    queue_flare_sprites();
-  }
-#else
-  queue_flare_sprites();
-#endif
-  // Phase 2.118: Frontend.render.wait() — one Object.notify per flush
-  // (including headless / no-device so LoadingScreen can pace).
-  frontend_gfx_engine_frame_notify();
-}
-
-void render_d3d9_drain_gpu_caches() {
-  // Soft PE GfxDevice_DrainGpuCaches @ 0x4B7B90 size 0x40 (int_convert 64).
-  //   mov esi, g_GfxDevice@6495DC; test esi → ret
-  //   [esi+0x33C] → DrainTextureCache(1) @ 0x4F8240
-  //   [esi+0x320] → DrainVertexBufferSlots(1) @ 0x4ECDB0
-  //   [esi+0x324] → DrainIndexBufferSlots(1) @ 0x4EBDF0
-  // Host: g_dev ≡ g_GfxDevice; freelist vectors ≡ manager objects (always
-  // "present" when device open). a2=1 force — no budget early-out.
-#ifdef _WIN32
-  if (!g_dev) return;
-  drain_texture_cache_force();
-  drain_vb_slots_force();
-  drain_ib_slots_force();
-#endif
-}
-
-void render_d3d9_pump(int32_t ms) {
-#ifdef _WIN32
-  if (input_live_enabled()) input_live_poll();
-  MSG msg{};
-  const DWORD start = GetTickCount();
-  for (;;) {
-    while (PeekMessageA(&msg, nullptr, 0, 0, PM_REMOVE)) {
-      if (msg.message == WM_QUIT) {
-        g_quit_requested = true;
-        return;
-      }
-      TranslateMessage(&msg);
-      DispatchMessageA(&msg);
-    }
-    if (ms <= 0) break;
-    if (static_cast<int32_t>(GetTickCount() - start) >= ms) break;
-    Sleep(1);
-  }
-#else
-  (void)ms;
-#endif
-}
-
-bool render_d3d9_quit_requested() {
-#ifdef _WIN32
-  return g_quit_requested;
-#else
-  return false;
-#endif
-}
-
-void render_d3d9_clear_quit() {
-#ifdef _WIN32
-  g_quit_requested = false;
-#endif
-}
-
-void render_d3d9_request_quit() {
-#ifdef _WIN32
-  g_quit_requested = true;
-#else
-  // Headless / non-Win32: no message pump — flag unused.
-#endif
-}
-
-int32_t render_d3d9_num_display_modes() {
-  ensure_modes();
-  return static_cast<int32_t>(g_modes.size());
-}
-
-int32_t render_d3d9_curr_display_mode() {
-  // PE Gfx_GetCurrDisplayMode @ 0x004B9EA0: count<=0 → 0; else index scan.
-  ensure_modes();
-  const int32_t n = static_cast<int32_t>(g_modes.size());
-  if (n <= 0) return 0;
-  const int32_t cw = g_w;
-  const int32_t ch = g_h;
-  const int32_t cdepth = 32;
-  for (int32_t idx = 0; idx < n; ++idx) {
-    const Mode& m = g_modes[static_cast<size_t>(idx)];
-    if (m.w == cw && m.h == ch && m.depth == cdepth) return idx;
-  }
-  return 0;
-}
-
-bool render_d3d9_change_video_mode(int32_t width, int32_t height,
-                                   int32_t depth) {
-  (void)depth;
-  ensure_modes();
-  if (width <= 0 || height <= 0) return false;
-#ifdef _WIN32
-  if (g_dev && g_hwnd) {
-    // Resize window + reset device.
-    RECT rc{0, 0, width, height};
-    AdjustWindowRect(&rc, WS_OVERLAPPEDWINDOW, FALSE);
-    SetWindowPos(g_hwnd, nullptr, 0, 0, rc.right - rc.left, rc.bottom - rc.top,
-                 SWP_NOMOVE | SWP_NOZORDER);
-    if (!create_device(g_hwnd, width, height)) return false;
-  } else {
-    if (!render_d3d9_open(width, height, "SLRR Engine")) return false;
-  }
-  for (size_t i = 0; i < g_modes.size(); ++i) {
-    if (g_modes[i].w == width && g_modes[i].h == height) {
-      g_mode = static_cast<int32_t>(i);
-      return true;
-    }
-  }
-  g_modes.push_back({width, height, depth > 0 ? depth : 32});
-  g_mode = static_cast<int32_t>(g_modes.size() - 1);
-  return true;
-#else
-  return false;
-#endif
-}
-
-void render_d3d9_viewport_create(void* key, int32_t pri, float x, float y,
-                                 float w, float h) {
-  if (!key) return;
-  ViewportState& vp = g_viewports[key];
-  vp.pri = pri;
-  vp.x = x;
-  vp.y = y;
-  vp.w = w;
-  vp.h = h;
-  vp.pending_clear = 0;
-  vp.active = false;  // PE 940 FUN_00420970: a new ViewPortNode starts unbound
-  vp.bind_seq = 0;
-}
-
-void render_d3d9_viewport_destroy(void* key) {
-  if (!key) return;
-  if (g_active_vp == key) g_active_vp = nullptr;
-  g_viewports.erase(key);
-}
-
-void render_d3d9_viewport_activate(void* key, int32_t renderflags) {
-  // PE Viewport.activate(I)V @ 0x00481680: null handle no-op; flags unboxed but
-  // unused — only GfxEngine_ViewportBind@4FD020 (→ sub_4FD280 list bind with
-  // a2=a3=-1). Soft: stash Java RENDERFLAG as pending_clear for flush world
-  // Clear (stand-in for DrawScene→ClearTargetZ@4BA980). apply_active_viewport
-  // is soft ApplyViewport@516660 / SetViewportRect@4BD500 (PE binds list only
-  // here; pixel SetViewport runs at camera-pass draw).
-  // PE 940: Viewport.activate FUN_004e6ab0 -> ViewportBind FUN_004200d0 ->
-  // FUN_00421e40 moves the ViewPortNode from the unbound list to the bound
-  // list (vp+0x24 |= 1, FUN_00464d20). Any number of viewports stay bound;
-  // the previously activated one is NOT unbound, and a viewport that is
-  // already bound keeps its place in the list.
-  if (!key) return;
-  auto it = g_viewports.find(key);
-  if (it == g_viewports.end()) {
-    // Activate before create — treat as full-screen default.
-    render_d3d9_viewport_create(key, 0, 0.f, 0.f, 1.f, 1.f);
-    it = g_viewports.find(key);
-  }
-  g_active_vp = key;
-  if (!it->second.active) {
-    it->second.active = true;
-    it->second.bind_seq = ++g_vp_bind_seq;
-  }
-  it->second.pending_clear = renderflags & kViewportClearMask;
-  apply_active_viewport();
-}
-
-void render_d3d9_viewport_deactivate(void* key) {
-  // PE Viewport.deactivate()V @ 0x004816C0: null handle no-op; else
-  // Engine_ViewportUnbind thiscall (ecx=off_6187B0). Host stand-in:
-  // missing map entry == handle 0 (do not touch g_active_vp).
-  if (!key) return;
-  auto it = g_viewports.find(key);
-  if (it == g_viewports.end()) return;
-  it->second.active = false;
-  if (g_active_vp == key) g_active_vp = nullptr;
-}
-
-void render_d3d9_viewport_resize(void* key, float x, float y, float w,
-                                 float h) {
-  // PE Viewport.resize(FFFF)V @ 0x00481700 size 0xa6: handle 0 / inner 0 /
-  // rect 0 silent (no Mighty ERROR, no create). FSTP unboxed floats as-is
-  // into rect+0x10 left / +0x14 top / +0x18 width / +0x1C height.
-  // Host: map miss == handle 0. apply_active_viewport is D3D stand-in for
-  // a live rect (PE has no SetViewport in this native).
-  if (!key) return;
-  auto it = g_viewports.find(key);
-  if (it == g_viewports.end()) return;
-  it->second.x = x;
-  it->second.y = y;
-  it->second.w = w;
-  it->second.h = h;
-  if (g_active_vp == key) apply_active_viewport();
-}
-
-float render_d3d9_viewport_get_aspect(void* key) {
-  // PE Viewport_getAspect @ 0x004817B0 / inner 0x0048CDA0: missing handle →
-  // 1.0 (flt_5F08F0). Else (rect+0x18 * display_w) / (rect+0x18 * display_h)
-  // = display_w/display_h. Host: map miss == handle 0; g_w/g_h == those ints.
-  auto it = g_viewports.find(key);
-  if (it == g_viewports.end()) return 1.f;
-  if (g_h <= 0) return 1.f;
-  return static_cast<float>(g_w) / static_cast<float>(g_h);
-}
-
-float render_d3d9_viewport_get_width(void* key) {
-  // PE getWidth @ 0x004817F0: FLD [rect+0x18] (normalized). Map miss → 0.f
-  // stand-in for FLD [ESP+8] this-bits.
-  auto it = g_viewports.find(key);
-  return it == g_viewports.end() ? 0.f : it->second.w;
-}
-
-float render_d3d9_viewport_get_height(void* key) {
-  // PE getHeight @ 0x00481870: FLD [rect+0x1C].
-  auto it = g_viewports.find(key);
-  return it == g_viewports.end() ? 0.f : it->second.h;
-}
-
-float render_d3d9_viewport_get_top(void* key) {
-  // PE getTop @ 0x004818F0: FLD [rect+0x14].
-  auto it = g_viewports.find(key);
-  return it == g_viewports.end() ? 0.f : it->second.y;
-}
-
-float render_d3d9_viewport_get_left(void* key) {
-  // PE getLeft @ 0x00481970: FLD [rect+0x10].
-  auto it = g_viewports.find(key);
-  return it == g_viewports.end() ? 0.f : it->second.x;
-}
-
-void* render_d3d9_viewport_active() { return g_active_vp; }
-
-void render_d3d9_camera_create(void* key, void* parent, void* viewport,
-                               int32_t pri, float aov_deg, float dmin,
-                               float dmax, float lod_bias, float lod_amp,
-                               int32_t oc, int32_t pt) {
-  if (!key) return;
-  CameraState& cam = g_cameras[key];
-  cam.parent = parent;
-  cam.viewport = viewport;
-  cam.pri = pri;
-  cam.aov_deg = aov_deg;  // PE 940 params+0x10, unchanged (FUN_00524dc0)
-  // PE 940 Camera.create FUN_004d8de0: params+0xc = 1/(1/(vp+0xec / vp+0xf0))
-  // = the viewport's pixel width / height at creation; FUN_00461dd0 uses the
-  // per-frame viewport aspect only when this is exactly 0.
-  cam.aspect = 0.f;
-  if (viewport && g_w > 0 && g_h > 0) {
-    auto vit = g_viewports.find(viewport);
-    if (vit != g_viewports.end() && vit->second.w > 0.f && vit->second.h > 0.f)
-      cam.aspect = (vit->second.w * static_cast<float>(g_w)) /
-                   (vit->second.h * static_cast<float>(g_h));
-  }
-  // Registered on its viewport's camera list here (FUN_00420080 ->
-  // FUN_00464f60).
-  cam.seq = ++g_cam_seq;
-  cam.dmin = dmin;
-  cam.dmax = dmax;
-  cam.lod_bias = lod_bias;
-  cam.lod_amp = lod_amp;
-  cam.oc = oc;
-  cam.pt = pt;
-  cam.active = false;
-  cam.lookat = false;
-}
-
-void render_d3d9_camera_destroy(void* key) {
-  if (!key) return;
-  if (g_active_cam == key) g_active_cam = nullptr;
-  g_cameras.erase(key);
-}
-
-void render_d3d9_camera_activate(void* key, void* viewport, int32_t pri) {
-  if (!key) return;
-  auto it = g_cameras.find(key);
-  if (it == g_cameras.end()) {
-    render_d3d9_camera_create(key, nullptr, viewport, pri, 45.f, 0.1f, 100.f,
-                              1.f, 1.f, 1, 0);
-    it = g_cameras.find(key);
-  }
-  if (viewport) it->second.viewport = viewport;
-  it->second.pri = pri;
-  it->second.seq = ++g_cam_seq;  // re-registered (FUN_00464f60)
-  if (g_active_cam && g_active_cam != key) {
-    auto prev = g_cameras.find(g_active_cam);
-    if (prev != g_cameras.end()) prev->second.active = false;
-  }
-  g_active_cam = key;
-  it->second.active = true;
-  if (it->second.viewport) {
-    render_d3d9_viewport_activate(it->second.viewport, kViewportClearDepth);
-  }
-  apply_active_camera();
-}
-
-void render_d3d9_camera_deactivate(void* key, void* /*viewport*/) {
-  if (!key) return;
-  auto it = g_cameras.find(key);
-  if (it != g_cameras.end()) it->second.active = false;
-  if (g_active_cam == key) g_active_cam = nullptr;
-}
-
-void* render_d3d9_camera_active() { return g_active_cam; }
-
-float render_d3d9_camera_half_aov(void* key) {
-  // The stored Camera.create aov, unchanged (legacy callers compare it with
-  // the 45 they passed).
-  auto it = g_cameras.find(key);
-  return it == g_cameras.end() ? 0.f : it->second.aov_deg;
-}
-
-float render_d3d9_camera_dmin(void* key) {
-  auto it = g_cameras.find(key);
-  return it == g_cameras.end() ? 0.f : it->second.dmin;
-}
-
-float render_d3d9_camera_dmax(void* key) {
-  auto it = g_cameras.find(key);
-  return it == g_cameras.end() ? 0.f : it->second.dmax;
-}
-
-void render_d3d9_camera_lookat(void* key, float eye_x, float eye_y, float eye_z,
-                               float at_x, float at_y, float at_z) {
-  if (!key) return;
-  CameraState& cam = g_cameras[key];
-  cam.lookat = true;
-  cam.eye_x = eye_x;
-  cam.eye_y = eye_y;
-  cam.eye_z = eye_z;
-  cam.at_x = at_x;
-  cam.at_y = at_y;
-  cam.at_z = at_z;
-  if (g_active_cam == key) apply_active_camera();
-}
-
-void render_d3d9_camera_chase(void* key, float px, float py, float pz, float yaw,
-                              float dist, float height, float look_height) {
-  if (!key) return;
-  if (dist < 0.5f) dist = 0.5f;
-  const float fx = std::sin(yaw);
-  const float fz = std::cos(yaw);
-  const float eye_x = px - fx * dist;
-  const float eye_y = py + height;
-  const float eye_z = pz - fz * dist;
-  const float at_x = px + fx * 2.f;
-  const float at_y = py + look_height;
-  const float at_z = pz + fz * 2.f;
-  render_d3d9_camera_lookat(key, eye_x, eye_y, eye_z, at_x, at_y, at_z);
-}
-
-bool render_d3d9_camera_get_lookat(void* key, float* eye_x, float* eye_y,
-                                   float* eye_z, float* at_x, float* at_y,
-                                   float* at_z) {
-  auto it = g_cameras.find(key);
-  if (it == g_cameras.end() || !it->second.lookat) return false;
-  const CameraState& cam = it->second;
-  if (eye_x) *eye_x = cam.eye_x;
-  if (eye_y) *eye_y = cam.eye_y;
-  if (eye_z) *eye_z = cam.eye_z;
-  if (at_x) *at_x = cam.at_x;
-  if (at_y) *at_y = cam.at_y;
-  if (at_z) *at_z = cam.at_z;
-  return true;
-}
-
-namespace {
-int32_t g_printscreen_count = 0;
-std::string g_printscreen_last;
-}  // namespace
-
-bool render_d3d9_viewport_unproject(void* vp, void* cam, float vx, float vy,
-                                    float* out_x, float* out_y, float* out_z) {
-  if (!out_x || !out_y || !out_z) return false;
-  void* ckey = cam ? cam : g_active_cam;
-  float eye_x = 0, eye_y = 2.f, eye_z = -8.f;
-  float at_x = 0, at_y = 0.f, at_z = 0.f;
-  float half_aov = 45.f;
-  if (ckey) {

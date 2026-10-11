@@ -32,3 +32,4 @@
 #include "render_d3d9_part1.inc"
 #include "render_d3d9_part2.inc"
 #include "render_d3d9_part3.inc"
+#include "render_d3d9_part4.inc"

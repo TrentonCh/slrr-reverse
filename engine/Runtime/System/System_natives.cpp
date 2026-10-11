@@ -369,6 +369,22 @@ InvObject* system_config_host() {
     tree_field_set_float(g_config_host, "particle_density", 0.6f);
     tree_field_set_float(g_config_host, "camera_ext_viewrange", 200.f);
     tree_field_set_float(g_config_host, "camera_int_viewrange", 200.f);
+    // PE 940: the native camera type reads these fields of the script
+    // instance java.util.Config (factory FUN_0048cb30 through FUN_0047c080,
+    // FUN_0048a2d0 for camera_render). The values are the field
+    // initialisers of system/scripts/util/Config.class.
+    // Fork: seeded here until Config.<init> runs on the VM.
+    tree_field_set_float(g_config_host, "camera_AOV", 55.f);
+    tree_field_set_float(g_config_host, "camera_FOV", 0.625f);  // 1.25 * 0.5
+    tree_field_set_float(g_config_host, "camera_torque", 0.02f);
+    tree_field_set_float(g_config_host, "camera_force", 2.f);
+    tree_field_set_float(g_config_host, "camera_damping", 1.f);
+    tree_field_set_float(g_config_host, "camera_perpdamping", 0.7f);
+    tree_field_set_float(g_config_host, "camera_max_force", 20.f);
+    tree_field_set_float(g_config_host, "camera_ext_clipplane", 0.2f);
+    tree_field_set_float(g_config_host, "camera_int_clipplane", 0.1f);
+    tree_field_set_int(g_config_host, "camera_render", 0);
+    tree_field_set_int(g_config_host, "camera_nocollision", 1);
     tree_field_set_float(g_config_host, "trafficDensity", 1.f);
     tree_field_set_float(g_config_host, "pedestrianDensity", 0.f);
     tree_field_set_float(g_config_host, "mouseSensitivity", 1.f);

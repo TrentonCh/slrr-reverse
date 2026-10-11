@@ -119,6 +119,27 @@ void* render_d3d9_camera_active();
 float render_d3d9_camera_half_aov(void* key);
 float render_d3d9_camera_dmin(void* key);
 float render_d3d9_camera_dmax(void* key);
+// Setters for a camera whose values change after it was registered. The
+// native camera type (PE 940 `_type_camera` 0x59B13C) rewrites its camera
+// params node at the end of every physics step (FUN_0048a430: params+0x10
+// aov, +0x14 near, +0x18 far) and in its `render` command (FUN_0048bce0:
+// far, params+0xC = 0, the viewport hook). None of them touches the legacy
+// active camera or binds a viewport; all do nothing for an unknown key.
+void render_d3d9_camera_set_aov(void* key, float aov_deg);
+void render_d3d9_camera_set_planes(void* key, float dmin, float dmax);
+// PE 940 params+0xC, the aspect override: 0 = the viewport's pixel width /
+// height of the frame (FUN_00461dd0).
+void render_d3d9_camera_set_aspect(void* key, float aspect);
+// PE 940 FUN_00420900 + FUN_00420080 -> FUN_00464f60: the camera goes on
+// the viewport's camera list with this priority (ascending priority, the
+// newest first among equals). Fork: one viewport per camera; the exe keeps
+// one CameraNode per (viewport, render instance) pair.
+void render_d3d9_camera_set_viewport(void* key, void* viewport, int32_t pri);
+// What the camera pass uses for a registered camera; false when the key
+// names none. Any out pointer may be null.
+bool render_d3d9_camera_get(void* key, void** viewport, int32_t* pri,
+                            float* aov_deg, float* dmin, float* dmax,
+                            float* aspect);
 
 // Phase 2.35 — look-at / chase view for the camera.
 void render_d3d9_camera_lookat(void* key, float eye_x, float eye_y, float eye_z,
@@ -159,6 +180,45 @@ bool render_d3d9_light_enabled();
 int32_t render_d3d9_light_diffuse();
 int32_t render_d3d9_light_ambient();
 int32_t render_d3d9_light_specular();
+
+// ---- Scene lights (PE 940 cLight) ----
+// The values of a light type: the D3DLIGHT9 a typeof-13 payload holds at
+// +0x0C (PE 940 FUN_005219c0 over the defaults of FUN_005213c0) and the
+// static bit of payload+0x84.
+struct RenderLightDesc {
+  // payload+0x0C: 3 directional, 1 point, 2 spot, 4 fakepoint, 5 fakespot,
+  // 0 when the payload has no `type` line.
+  int32_t type = 0;
+  float diffuse[4] = {1.f, 1.f, 1.f, 0.f};   // +0x10: r g b a
+  float specular[4] = {1.f, 1.f, 1.f, 0.f};  // +0x20
+  float ambient[4] = {1.f, 1.f, 1.f, 0.f};   // +0x30
+  float position[3] = {0.f, 0.f, 0.f};       // +0x40
+  float direction[3] = {0.f, 0.f, 0.f};      // +0x4C
+  float range = 0.f;                         // +0x58
+  float falloff = 0.f;                       // +0x5C
+  float attenuation[3] = {1.f, 0.f, 0.f};    // +0x60
+  float theta = 0.f;                         // +0x6C
+  float phi = 0.f;                           // +0x70
+  // payload+0x84 bit 0: set by the constructor and by `lit_dynamic 0`,
+  // cleared by `lit_dynamic <non-zero>`.
+  bool is_static = true;
+};
+// PE 940 FUN_00462b40 -> FUN_00462970: a render instance whose resource is
+// a light type becomes a cLight on the list of the camera whose walk met
+// it. Host: one scene light per instance, made when a camera first sees the
+// instance (renderref_materialise_pending); every camera pass that sees it
+// lights its lit groups with the lights it sees instead of the stand-in
+// light. A null `desc` drops the light, and so does render_d3d9_mesh_destroy.
+void render_d3d9_scene_light_set(void* instance_key, int32_t type_id,
+                                 const RenderLightDesc* desc);
+// RenderRef.setLight on a light type (PE 940 FUN_004ebef0 writes the type's
+// payload, which every cLight re-reads each frame, FUN_004592d0): the
+// scene lights made from the type take the new values.
+void render_d3d9_scene_light_update_type(int32_t type_id,
+                                         const RenderLightDesc* desc);
+// Fork: `[render-dbg]` line: the scene lights and the device lights of the
+// last camera pass that saw one.
+void render_d3d9_scene_light_debug_dump(FILE* out);
 
 // Phase 2.108 / race71 — RenderRef.setFlare @ 0x00486B20 → OSD glow sprites
 // (PE RenderRef_applyFlare @ 0x0048CB40 stores min/max/color/count/rays as-is).
@@ -455,6 +515,67 @@ void render_d3d9_mesh_set_geometry_source(void* dst, void* src);
 // instances made from it.
 void render_d3d9_mesh_set_type_flags(void* key, uint32_t flags);
 uint32_t render_d3d9_mesh_type_flags(void* key);
+// PE 940 type-3 builder FUN_00462b40: the exe asks for an instance's render
+// type (FUN_0046d890 / FUN_0046bfe0) when a camera walk first meets the
+// instance, not when the instance is created.
+// Fork: RenderRef.create records the type id of an instance whose type is
+// not loaded (script boot); draw_viewport_cameras hands the waiting
+// instances a bound camera sees to renderref_materialise_pending
+// (host_objects.hpp) before it collects its members. type_id 0 drops the
+// entry, and so does render_d3d9_mesh_destroy.
+void render_d3d9_mesh_set_pending_type(void* key, int32_t type_id);
+// The recorded type id; it stays after the type turned out not to be a mesh
+// recipe (a typeof-13 light type: kept for the light pass). 0 = none.
+int32_t render_d3d9_mesh_pending_type(void* key);
+// ---- Ground meshes (PE 940 RT_ground / RI_ground, render object flags
+// 0x800) ----
+// A vertex of the exe's ground stream (FUN_004547a0 format 0x15003f):
+// position, normal, D3D diffuse, D3D specular, three uv sets in file order.
+// Positions are metres (POLY data); the mesh is drawn with unit 1.0.
+struct RenderWideVertex {
+  float pos[3];
+  float normal[3];
+  uint32_t diffuse;
+  uint32_t specular;
+  float uv[3][2];
+};
+// The mesh of a ground render object is a material table: INVO version 1
+// to 3, one material header per block and no geometry (ground mesh loader
+// FUN_00451130; every material is made prelit). Creates the mesh `key` in
+// the ground group with that table and no section; it is not ready (not
+// drawn) until a section is added. False when the data is no such table.
+bool render_d3d9_mesh_create_ground_from_memory(void* key, const uint8_t* data,
+                                                size_t size,
+                                                const char* label);
+bool render_d3d9_mesh_create_ground_from_file(void* key, const char* path);
+// Number of materials in the table of a ground mesh (0 for any other key).
+int32_t render_d3d9_mesh_material_count(void* key);
+// One POLY section (RI_ground ctor FUN_004658b0): `material` indexes the
+// table; three indices per triangle. False, and nothing added, when the
+// material index is not below the table's count (the exe skips such a
+// section) or the data is empty or inconsistent.
+bool render_d3d9_mesh_ground_add_section(void* key, uint32_t material,
+                                         const RenderWideVertex* verts,
+                                         uint32_t vert_count,
+                                         const uint32_t* indices,
+                                         uint32_t index_count);
+// PE 940 FUN_00441c40: binds the texture entries of every material of the
+// mesh by slot. `textures[i]` is the texture key of the i-th `texture` line
+// of the render object that uses the mesh, or null for an empty line or a
+// texture that did not load; a slot past `count` is unbound as well. An
+// unbound entry draws with the engine default texture. Sections bound this
+// way are skipped by the file-name heuristic of mesh creation and cloning.
+void render_d3d9_mesh_bind_slots(void* key, void* const* textures,
+                                 int32_t count);
+// Fork: one `[render-dbg]` line per ground mesh.
+void render_d3d9_ground_debug_dump(FILE* out);
+// Fork: the sections of a mesh as text for a log line, one item per
+// section: name, the slots of its primary / second / lightmap entries (-
+// for none, ! after a slot whose texture is not bound), material flags and
+// the size of the wide vertex array. Returns the number of sections that
+// have a parsed material.
+int32_t render_d3d9_mesh_slot_summary(void* key, char* buf, size_t cap);
+
 // Bind an already-loaded texture to a submesh (0 = default / skydome).
 void render_d3d9_mesh_set_texture_at(void* mesh_key, int32_t submesh,
                                      void* texture_key);

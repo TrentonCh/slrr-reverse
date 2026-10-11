@@ -7,6 +7,7 @@
 #include "jvm.hpp"
 #include "Resources.h"
 #include "System_internal.hpp"
+#include "NativeTypes.hpp"
 
 #include <cctype>
 #include <cmath>

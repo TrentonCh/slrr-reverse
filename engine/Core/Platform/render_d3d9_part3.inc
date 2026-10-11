@@ -238,6 +238,37 @@ void render_d3d9_debug_dump(FILE* out) {
   for (const std::string& line : g_cam_pass_log)  // only under SLRR_RENDER_TRACE
     std::fprintf(out, "[render-dbg] %s\n", line.c_str());
   {
+    // Fork: the depth format of the device and the instances that wait for
+    // (or were refused) their render type.
+    int waiting = 0, not_mesh = 0, failed = 0;
+    for (const auto& pk : g_mesh_pending) {
+      if (pk.second.state == 0) ++waiting;
+      else if (pk.second.state == 1) ++not_mesh;
+      else ++failed;
+    }
+#ifdef _WIN32
+    const char* depth_name = depth_format_name(g_depth_format);
+    const unsigned create_flags = static_cast<unsigned>(g_create_flags);
+#else
+    const char* depth_name = "none";
+    const unsigned create_flags = 0;
+#endif
+    std::fprintf(out, "[render-dbg] depth=%s device_flags=0x%X pending_instances=%zu waiting=%d not_mesh=%d failed=%d\n",
+                 depth_name, create_flags, g_mesh_pending.size(), waiting, not_mesh, failed);
+  }
+  native_camera_debug_dump(out);  // one line per native camera
+  native_part_debug_dump(out);    // the native parts that are drawn
+  render_d3d9_scene_light_debug_dump(out);
+  render_d3d9_ground_debug_dump(out);  // one line per ground mesh
+  // Fork: the object sections of the last flushed frame that went through
+  // rg_horizon and material mode 3, and every bind of the engine default
+  // texture (unbound or failed texture entries, all groups).
+  std::fprintf(out, "[render-dbg] object groups: horizon_sections=%d prelit_mode3_sections=%d prelit_transparent_mode3_sections=%d default_tex_binds=%d\n",
+               g_cam_pass_stats.horizon_sections,
+               g_cam_pass_stats.prelit_mode3_sections,
+               g_cam_pass_stats.prelit_transparent_mode3_sections,
+               g_cam_pass_stats.default_tex_binds);
+  {
     // Fork: render type flags known to the renderer (types and instances),
     // by value; 640 = 0x280 is the only colour-mode value in frontend.rdb.
     std::vector<std::pair<uint32_t, int>> by_value;
@@ -1379,6 +1410,17 @@ uint32_t scx_mat_diffuse(const uint8_t* data, size_t size, uint32_t off,
 // type-1 chunk (count 0x2000x) and are left on the legacy material.
 // Fork: an alpha-test chunk without a type 5 entry uses 0x38, the value the
 // v3 builder sets (FUN_0042ba10); the exe's v4 default was not read.
+// Type 6 = texture entry, 32 bytes (FUN_00440fe0): +0 0x06000000 | kind, +4
+// slot (index into the texture lines of the render object, FUN_00441c40),
+// +8 uv channel, +0xC address bits (1 wrap U, 2 wrap V; a clear bit
+// clamps), +0x10 scaleU, +0x14 scaleV, +0x18 offsetU, +0x1C offsetV. Kinds:
+// 0 primary, 1 second, 3 sphere / env map, 4 lightmap (the reader renames
+// it 7). The host keeps slot, channel, address bits and the uv scale and
+// offset per kind (kind 5 is not kept: no class the host draws reads it).
+// Disk census of the Build 940 install (2,487 v4 files, 4,215 material
+// chunks): 173 primary entries carry a scale / offset that is not 1, 1, 0,
+// 0 (atlas cells of the city facades and signs); every second, env and
+// lightmap entry is 1, 1, 0, 0.
 //
 // PE 940 material factory FUN_0042bff0 (switch on shader id & 0xffffff).
 // The Tex family - FUN_0042af10 (id 0 and every id the switch does not
@@ -1425,6 +1467,12 @@ void scx_v4_material(const uint8_t* data, size_t size, uint32_t off,
       !read_u32(data, size, off + 0x10, &count) || count > 64)
     return;
   uint32_t diffuse = 0xFFFFFFFFu, emissive = 0xFF000000u, alpha_ref = 0x38;
+  struct TexEntry {
+    bool seen = false;
+    uint32_t slot = 0, chan = 0, addr = 0;
+    float xf[4] = {1.f, 1.f, 0.f, 0.f};  // scaleU, scaleV, offsetU, offsetV
+  };
+  TexEntry tex_primary, tex_second, tex_env, tex_lightmap;
   uint32_t p = off + 0x14;
   for (uint32_t i = 0; i < count; ++i) {
     uint32_t head = 0;
@@ -1446,6 +1494,19 @@ void scx_v4_material(const uint8_t* data, size_t size, uint32_t off,
     if (type == 0 && id == 0) diffuse = v;
     else if (type == 0 && id == 2) emissive = v;
     else if (type == 5 && id == 0) alpha_ref = v;
+    else if (type == 6) {
+      TexEntry* e = id == 0 ? &tex_primary
+                    : id == 1 ? &tex_second
+                    : id == 3 ? &tex_env
+                    : (id == 4 || id == 7) ? &tex_lightmap : nullptr;
+      if (e) {
+        e->seen = true;
+        e->slot = v;
+        read_u32(data, size, p + 8, &e->chan);
+        read_u32(data, size, p + 0xC, &e->addr);
+        std::memcpy(e->xf, data + p + 0x10, sizeof(e->xf));
+      }
+    }
     p += len;
   }
   sm->has_mat = true;
@@ -1454,6 +1515,28 @@ void scx_v4_material(const uint8_t* data, size_t size, uint32_t off,
   sm->mat_diffuse = scx_shader_white_diffuse(shader) ? 0xFFFFFFFFu : diffuse;
   sm->mat_emissive = emissive;
   sm->mat_alpha_ref = alpha_ref;
+  auto keep = [](const TexEntry& e, int16_t* slot, int16_t* chan,
+                 uint8_t* addr, float* xf) {
+    if (!e.seen) return;
+    *slot = static_cast<int16_t>(e.slot);
+    if (chan) *chan = static_cast<int16_t>(e.chan);
+    *addr = static_cast<uint8_t>(e.addr & 3u);
+    if (xf) {
+      // Fork: a scale or offset that is not a finite number reads as the
+      // identity (none in the install).
+      bool ok = true;
+      for (int k = 0; k < 4; ++k)
+        if (!(e.xf[k] == e.xf[k]) || std::fabs(e.xf[k]) > 1.0e6f) ok = false;
+      if (ok) std::memcpy(xf, e.xf, sizeof(e.xf));
+    }
+  };
+  keep(tex_primary, &sm->slot_primary, &sm->chan_primary, &sm->addr_primary,
+       sm->uvx_primary);
+  keep(tex_second, &sm->slot_second, &sm->chan_second, &sm->addr_second,
+       sm->uvx_second);
+  keep(tex_env, &sm->slot_env, nullptr, &sm->addr_env, nullptr);
+  keep(tex_lightmap, &sm->slot_lightmap, &sm->chan_lightmap,
+       &sm->addr_lightmap, sm->uvx_lightmap);
 }
 
 // PE 940 INVO v3 material header -> material (FUN_0042ba10), header at the
@@ -1530,6 +1613,24 @@ void scx_v3_material(const uint8_t* data, size_t size, size_t base,
           : (chan(d[3]) << 24) | (chan(d[0]) << 16) | (chan(d[1]) << 8) | chan(d[2]);
   sm->mat_emissive = 0xFF000000u | (chan(e[0]) << 16) | (chan(e[1]) << 8) | chan(e[2]);
   sm->mat_alpha_ref = 0x38;
+  // The texture entries FUN_0042ba10 makes from the header, by slot into
+  // the render object's texture list: +0x2C primary (uv channel = the short
+  // at +0x46), +0x34 second (uv channel +0x48), +0x32 sphere / env map,
+  // +0x38 lightmap (always uv channel 1). The header reader FUN_004583f0
+  // turns a primary channel that is not 0, 1 or 2 into 0.
+  // Not kept apart: for shader 3 (flags & 0x101 == 0x100) the primary slot
+  // goes to entry 0x6000001 instead of 0x6000000.
+  uint16_t ch46 = 0;
+  int16_t ch48 = 0;
+  std::memcpy(&ch46, data + base + 0x46, 2);
+  std::memcpy(&ch48, data + base + 0x48, 2);
+  sm->slot_primary = map2c;
+  sm->slot_second = map34;
+  sm->slot_env = map32;
+  sm->slot_lightmap = map38;
+  sm->chan_primary = ch46 > 2 ? int16_t{0} : static_cast<int16_t>(ch46);
+  sm->chan_second = ch48;
+  sm->chan_lightmap = 1;
 }
 
 std::string ascii_lower(std::string s) {
@@ -1643,6 +1744,10 @@ void bind_mesh_textures(void* mesh_key, MeshState& st) {
   for (size_t i = 0; i < st.subs.size(); ++i) {
     MeshSubmesh& sm = st.subs[i];
     if (sm.name.empty()) continue;
+    // Bound by slot from a render object's texture list (PE 940
+    // FUN_00441c40): the record decides, not a file name. This function
+    // runs again on every clone.
+    if (sm.slot_bound) continue;
     const std::string path = resolve_mat_texture_path(scx, sm.name);
     if (path.empty()) continue;
     void* tkey = mesh_sub_tex_key(mesh_key, i);
@@ -1746,40 +1851,61 @@ bool parse_scx_v4(const uint8_t* data, size_t size, MeshState& out) {
     //   (dword, D3DFVF_SPECULAR); then one uv pair per bit 0x200 .. 0x8000.
     // Census of the Build 940 install: the sum of these sizes equals the
     // chunk stride for all 4365 vertex chunks (19 flag combinations).
-    // The host keeps position, normal and the first uv set. Before this the
-    // uv was read at +24 whatever the flags (the colour pair for 0x3c1 /
-    // 0x7c1, the prelit world meshes) and strides 44 / 48 / 56 were read
-    // with stride 32.
-    // Fork: the colours are not loaded. The first one is 0xFFFFFFFF in
-    // every chunk of the install that has it; the second carries the baked
-    // lighting of prelit sections and reaches the exe's stage setup as
-    // D3DTA_SPECULAR per material pass (not ported).
+    // MeshVertex keeps position, normal and one uv pair (the first set of
+    // the file; on the Build 940 boot the set of the primary texture entry,
+    // see below). Before the flag walk the uv was read at +24 whatever the
+    // flags (the colour pair for 0x3c1 / 0x7c1, the prelit world meshes)
+    // and strides 44 / 48 / 56 were read with stride 32.
+    // The colours and the other uv sets go into the wide array
+    // (MeshVertexWide), filled further down. The first colour is 0xFFFFFFFF
+    // in every chunk of the install that has it; the second carries the
+    // baked lighting of prelit sections and reaches the exe's stage setups
+    // as D3DTA_SPECULAR (material mode 3).
     // Fork: a layout without normals (physics hulls, flags 0x001, stride
     // 12) stays unloaded as before.
     int pos_off = 0;
     int nrm_off = stride >= 24 ? 12 : -1;  // legacy layout guess
     int uv_off = stride >= 32 ? 24 : -1;
+    // Only when the flag walk matches the stride: the two colours and the
+    // start of the uv area. FUN_00454940 addresses a uv set by channel:
+    // local_60[k] = the summed size of the sets below k that the block has
+    // (bit 0x200 << j), so a channel whose own set is absent reads the next
+    // one that is there.
+    bool walk_ok = false;
+    int cola_off = -1, colb_off = -1, uvbase_off = -1;
+    int uv_sets = 0;        // number of uv pairs in the block
+    int chan_off[8] = {};   // offset of channel k inside the uv area
     {
       uint32_t o = 0;
-      int f_pos = -1, f_nrm = -1, f_uv = -1;
+      int f_pos = -1, f_nrm = -1, f_uv = -1, f_cola = -1, f_colb = -1;
       if (vflags & 0x001u) { f_pos = static_cast<int>(o); o += 12; }
       if (vflags & 0x004u) o += 4;
       else if (vflags & 0x008u) o += 8;
       else if (vflags & 0x010u) o += 12;
       if (vflags & 0x020u) o += 4;
       if (vflags & 0x040u) { f_nrm = static_cast<int>(o); o += 12; }
-      if (vflags & 0x080u) o += 4;
-      if (vflags & 0x100u) o += 4;
-      for (uint32_t bit = 0x200u; bit <= 0x8000u; bit <<= 1) {
+      if (vflags & 0x080u) { f_cola = static_cast<int>(o); o += 4; }
+      if (vflags & 0x100u) { f_colb = static_cast<int>(o); o += 4; }
+      const int f_uvbase = static_cast<int>(o);
+      int nsets = 0, k = 0;
+      for (uint32_t bit = 0x200u; bit <= 0x8000u; bit <<= 1, ++k) {
+        chan_off[k] = nsets * 8;
         if (!(vflags & bit)) continue;
         if (f_uv < 0) f_uv = static_cast<int>(o);
         o += 8;
+        ++nsets;
       }
+      chan_off[7] = nsets * 8;
       if (f_pos == 0 && f_nrm > 0 && file_stride != 0 && o == file_stride) {
         stride = file_stride;
         pos_off = f_pos;
         nrm_off = f_nrm;
         uv_off = f_uv;
+        walk_ok = true;
+        cola_off = f_cola;
+        colb_off = f_colb;
+        uvbase_off = f_uvbase;
+        uv_sets = nsets;
       }
     }
     const uint64_t need =
@@ -1828,6 +1954,115 @@ bool parse_scx_v4(const uint8_t* data, size_t size, MeshState& out) {
         v.nz = 0.f;
       }
     }
+    // PE 940 FUN_00454940, the texcoord sets: the material gives its
+    // stages (material vt+8: per stage the uv channel, scaleU, scaleV,
+    // offsetU, offsetV of the stage's texture entry) and the loader writes
+    //   set i = (((u - 0.5) - offsetU) * scaleU + 0.5,
+    //            0.5 - ((0.5 - v) - offsetV) * scaleV)
+    // from uv[channel of stage i]; the D3D diffuse is the first colour OR
+    // 0xFF000000 and the D3D specular the second colour (each 0xFFFFFFFF
+    // when the block has none).
+    // Host: the wide array holds one set per texture entry in a fixed
+    // order - 0 primary, 1 second, 2 lightmap - and the entry's channel is
+    // rewritten to that index (draw_mode3_section selects the set of a
+    // stage with D3DTSS_TEXCOORDINDEX = the channel). That is the exe's
+    // layout up to the order of the sets, and it is what lets two entries
+    // put different transforms on one file channel.
+    // Fork: a channel outside the block reads (0, 0) (the exe reads past
+    // the vertex); channel -1, the planar map from x and -z, is not ported
+    // (no primary, second or lightmap entry of the install has it).
+    // The array is made when the block has a colour or more than one uv
+    // set, or the material has a lightmap entry.
+    const bool want_wide =
+        walk_ok && ((vflags & 0x180u) != 0 || uv_sets > 1 ||
+                    (sm.has_mat && sm.slot_lightmap != -1));
+    struct StageUv {
+      bool on = false;
+      int off = -1;  // offset of the pair in the vertex, -1 = (0, 0)
+      float xf[4] = {1.f, 1.f, 0.f, 0.f};
+    };
+    auto stage_of = [&](bool on, int16_t chan, const float* xf) {
+      StageUv s;
+      s.on = on;
+      if (!on) return s;
+      if (chan >= 0 && chan <= 7 && uvbase_off >= 0 &&
+          static_cast<uint32_t>(uvbase_off + chan_off[chan] + 8) <= stride)
+        s.off = uvbase_off + chan_off[chan];
+      if (xf) std::memcpy(s.xf, xf, sizeof(s.xf));
+      return s;
+    };
+    auto stage_uv = [](const StageUv& s, const uint8_t* p, float* out) {
+      float uv[2] = {0.f, 0.f};
+      if (s.off >= 0) std::memcpy(uv, p + s.off, 8);
+      out[0] = ((uv[0] - 0.5f) - s.xf[2]) * s.xf[0] + 0.5f;
+      out[1] = 0.5f - ((0.5f - uv[1]) - s.xf[3]) * s.xf[1];
+      if (!(out[0] == out[0]) || !(out[1] == out[1])) out[0] = out[1] = 0.f;
+    };
+    auto uvx_identity = [](const float* xf) {
+      return xf[0] == 1.f && xf[1] == 1.f && xf[2] == 0.f && xf[3] == 0.f;
+    };
+    // A material that was not parsed has no entries: its one set is the
+    // first of the file, unchanged.
+    const StageUv st_primary =
+        sm.has_mat ? stage_of(true, sm.chan_primary, sm.uvx_primary)
+                   : stage_of(uv_sets > 0, 0, nullptr);
+    const StageUv st_second =
+        stage_of(sm.has_mat && sm.slot_second != -1, sm.chan_second,
+                 sm.uvx_second);
+    const StageUv st_lightmap =
+        stage_of(sm.has_mat && sm.slot_lightmap != -1, sm.chan_lightmap,
+                 sm.uvx_lightmap);
+    if (want_wide) {
+      sm.wide.resize(vcount);
+      for (uint32_t vi = 0; vi < vcount; ++vi) {
+        const uint8_t* p = vsrc + static_cast<size_t>(vi) * stride;
+        const MeshVertex& v = sm.verts[vi];  // position already checked
+        MeshVertexWide& w = sm.wide[vi];
+        w.x = v.x;
+        w.y = v.y;
+        w.z = v.z;
+        w.nx = v.nx;
+        w.ny = v.ny;
+        w.nz = v.nz;
+        uint32_t ca = 0xFFFFFFFFu, cb = 0xFFFFFFFFu;
+        if (cola_off >= 0) std::memcpy(&ca, p + cola_off, 4);
+        if (colb_off >= 0) std::memcpy(&cb, p + colb_off, 4);
+        w.diffuse = ca | 0xFF000000u;
+        w.specular = cb;
+        w.uv[0][0] = w.uv[0][1] = 0.f;
+        w.uv[1][0] = w.uv[1][1] = 0.f;
+        w.uv[2][0] = w.uv[2][1] = 0.f;
+        if (st_primary.on) stage_uv(st_primary, p, w.uv[0]);
+        if (st_second.on) stage_uv(st_second, p, w.uv[1]);
+        if (st_lightmap.on) stage_uv(st_lightmap, p, w.uv[2]);
+      }
+    }
+    // Stage 0 of CMaterial_Tex and CMaterial_MixVCA is the primary entry
+    // (material vt+8: FUN_0042c840 / FUN_0042c750), and the object modes
+    // sample it with texcoord set 0: the one uv pair of MeshVertex is that
+    // entry's set. With channel 0 and no scale or offset it is the first
+    // set of the file, which is what the host read before.
+    // Fork: the stage lists of the other classes were not read; the host
+    // draws their primary texture the same way. Any other channel or a
+    // transform is applied on the Build 940 boot only (the legacy path
+    // mirrors the old build's loader, whose handling of the entry was not
+    // read).
+    if (walk_ok && sm.has_mat && render_boot940() &&
+        (sm.chan_primary != 0 || !uvx_identity(sm.uvx_primary))) {
+      for (uint32_t vi = 0; vi < vcount; ++vi) {
+        float uv[2] = {0.f, 0.f};
+        stage_uv(st_primary, vsrc + static_cast<size_t>(vi) * stride, uv);
+        sm.verts[vi].u = uv[0];
+        sm.verts[vi].v = uv[1];
+      }
+    }
+    if (want_wide && sm.has_mat) {
+      // The entries now name the sets of the wide array.
+      sm.chan_primary = 0;
+      if (sm.slot_second != -1) sm.chan_second = 1;
+      if (sm.slot_lightmap != -1) sm.chan_lightmap = 2;
+    }
+
     sm.indices.resize(icount);
     std::memcpy(sm.indices.data(), data + ioff + 12, icount * 2);
 
@@ -1936,8 +2171,27 @@ bool parse_scx_v3(const uint8_t* data, size_t size, MeshState& out) {
       std::memcpy(&b, data + mat_base + 0x0C, 4);
       sm.diffuse = 0xFF000000u | (chan(r) << 16) | (chan(g) << 8) | chan(b);
     }
+    // The slots and uv channels of the header's texture entries are kept
+    // by scx_v3_material (primary +0x2C on the channel at +0x46, second
+    // +0x34 on +0x48, env +0x32, lightmap +0x38 on channel 1), so a render
+    // object binds a v3 mesh by slot like a v4 one.
     scx_v3_material(data, size, mat_base, hsz, &sm);
 
+    // PE 940 v1..v3 loader FUN_00451b00: every block becomes a stream of
+    // format 0x15003f. From the 64-byte version 3 vertex: position +0,
+    // normal +12, uv0 +24, uv1 +32, colour +40 (two dwords +44 / +48), uv2
+    // +52, a second colour +60 that header flag 4 selects. A material that
+    // is not prelit gets D3D diffuse = colour | 0xFF000000 and specular 0;
+    // a prelit one gets diffuse 0xFF808080 and specular = colour |
+    // 0xFF000000 (or the dword at +60 with header flag 4). Texcoord set i
+    // = uv[channel of stage i], no scale or offset.
+    // Fork: the host keeps position, normal and uv0 only. The wide array
+    // (colours, uv1, uv2) is not filled for a v3 mesh: no v3 mesh of the
+    // first garage has a lightmap entry or a primary entry off channel 0
+    // (the lift is lit and its five textured sections use uv0; the sky dome
+    // skydome.SCX carries 0xFFFFFFFF in all 376 colours, so its unlit
+    // texture * diffuse is the texture). A prelit v3 object with a lightmap
+    // therefore stays on the object path until this is filled.
     sm.verts.resize(vcount);
     for (uint32_t vi = 0; vi < vcount; ++vi) {
       MeshVertex& v = sm.verts[vi];
@@ -2132,6 +2386,23 @@ uint32_t render_d3d9_mesh_type_flags(void* key) {
   return it == g_mesh_type_flags.end() ? 0u : it->second;
 }
 
+void render_d3d9_mesh_set_pending_type(void* key, int32_t type_id) {
+  if (!key) return;
+  if (!type_id) {
+    g_mesh_pending.erase(key);
+    return;
+  }
+  MeshPending& p = g_mesh_pending[key];
+  p.type_id = type_id;
+  p.state = 0;
+  p.seq = ++g_mesh_pending_seq;
+}
+
+int32_t render_d3d9_mesh_pending_type(void* key) {
+  auto it = g_mesh_pending.find(key);
+  return it == g_mesh_pending.end() ? 0 : it->second.type_id;
+}
+
 namespace {
 void scale_mesh_state(MeshState& st, float sx, float sy, float sz);
 }  // namespace
@@ -2180,6 +2451,11 @@ void scale_mesh_state(MeshState& st, float sx, float sy, float sz) {
       if (v.y > bmax[1]) bmax[1] = v.y;
       if (v.z > bmax[2]) bmax[2] = v.z;
       any = true;
+    }
+    for (MeshVertexWide& w : sm.wide) {  // the same vertices, all streams
+      w.x *= sx;
+      w.y *= sy;
+      w.z *= sz;
     }
   }
   if (any) {
@@ -2253,6 +2529,8 @@ void render_d3d9_mesh_destroy(void* key) {
     g_meshes.erase(it);
   }
   g_mesh_type_flags.erase(key);
+  g_mesh_pending.erase(key);
+  g_scene_lights.erase(key);  // a light instance: its cLight goes with it
   // Fork: geometry links from and to this key.
   g_mesh_geom_src.erase(key);
   for (auto git = g_mesh_geom_src.begin(); git != g_mesh_geom_src.end();) {
@@ -2370,619 +2648,3 @@ void render_d3d9_mesh_set_transform(void* key, float px, float py, float pz,
   xf.sy = sy != 0.f ? sy : 1.f;
   xf.sz = sz != 0.f ? sz : 1.f;
 }
-
-// PE ResHandle_Link @ 0x004290F0 (this = node+0x44, a2 = hook+0x0C).
-static void res_handle_link_node44(void* node, BoneParentHook* hook) {
-  if (!node || !hook) return;
-  auto* head = reinterpret_cast<void**>(reinterpret_cast<char*>(node) + 0x44);
-  void* cur = head[1];  // node+0x48
-  if (cur) *reinterpret_cast<void**>(cur) = &hook->link0;
-  hook->link0 = nullptr;
-  hook->link1 = cur;
-  head[1] = &hook->link0;
-  hook->owner_node = node;
-}
-
-// PE ResHandle_Rebind @ 0x00429060 (this = bone+0x44|light+0xC, a2 = owner_node|0).
-// Exported for voidEvent add_light owner path (RenderNatives / Resources.h).
-void res_handle_rebind(void* rh /*bone+0x44*/, void* owner_node) {
-  if (!rh) return;
-  auto* t = reinterpret_cast<void**>(rh);
-  void* old_owner = t[3];  // rh+0x0C
-  if (old_owner == owner_node) return;
-  if (old_owner) {
-    // Unlink from old owner+0x48 list (same shape as hook dtor slice).
-    if (t[0]) {
-      *reinterpret_cast<void**>(reinterpret_cast<char*>(t[0]) + 4) = t[1];
-    } else {
-      *reinterpret_cast<void**>(reinterpret_cast<char*>(old_owner) + 0x48) =
-          t[1];
-    }
-    if (t[1]) *reinterpret_cast<void**>(t[1]) = t[0];
-    t[3] = nullptr;
-    t[2] = nullptr;
-    t[0] = nullptr;
-    t[1] = nullptr;
-  }
-  if (owner_node) {
-    auto* head =
-        reinterpret_cast<void**>(reinterpret_cast<char*>(owner_node) + 0x44);
-    void* cur = head[1];  // owner+0x48
-    if (cur) *reinterpret_cast<void**>(cur) = rh;
-    t[0] = nullptr;
-    t[1] = cur;
-    head[1] = rh;
-    t[3] = owner_node;
-    t[2] = *reinterpret_cast<void**>(reinterpret_cast<char*>(owner_node) +
-                                     0x50);  // rh+8 ← *(owner+0x50)
-  } else {
-    t[3] = nullptr;
-    t[2] = nullptr;
-    t[0] = nullptr;
-    t[1] = nullptr;
-  }
-}
-
-// PE ResHandle_unlinkIndexedSlot @ 0x004293B0 (idx=1 → bone+0x0C/+0x10).
-static void res_handle_unlink_indexed_slot1(PeBoneNode* bone) {
-  if (!bone) return;
-  auto* b = bone->raw;
-  void* next = *reinterpret_cast<void**>(b + 0x0C);
-  void* prev = *reinterpret_cast<void**>(b + 0x10);
-  if (next && prev) {
-    *reinterpret_cast<void**>(reinterpret_cast<char*>(next) + 0x10) = prev;
-    *reinterpret_cast<void**>(reinterpret_cast<char*>(prev) + 0x0C) = next;
-  }
-  *reinterpret_cast<void**>(b + 0x0C) = nullptr;
-  *reinterpret_cast<void**>(b + 0x10) = nullptr;
-}
-
-// PE ResHandle_insertIndexedSlot @ 0x0048F470 with this=payload+0x150, idx=1
-// ≡ HEAD insert at payload+0x168 sentinel / +0x178 head (a4==0 manual path).
-static void pe_bone_own_list_insert(PeBoneOwnList& own, PeBoneNode* bone) {
-  if (!bone) return;
-  auto* base = own.raw;
-  void* sentinel = base + 0x168;
-  void** head_slot = reinterpret_cast<void**>(base + 0x178);
-  // Ensure empty-list init (map default-ctor already did; defend OOB reuse).
-  if (*head_slot == nullptr) {
-    *head_slot = sentinel;
-    *reinterpret_cast<void**>(reinterpret_cast<char*>(sentinel) + 0x0C) =
-        sentinel;
-  }
-  void* old_head = *head_slot;
-  *reinterpret_cast<void**>(reinterpret_cast<char*>(old_head) + 0x0C) = bone;
-  *reinterpret_cast<void**>(bone->raw + 0x0C) = sentinel;
-  *reinterpret_cast<void**>(bone->raw + 0x10) = old_head;
-  *head_slot = bone;
-}
-
-static PeBoneNode* pe_bone_ensure(MeshXform& xf) {
-  if (!xf.pe_bone) xf.pe_bone = new PeBoneNode{};
-  return xf.pe_bone;
-}
-
-static int32_t pe_bone_type_field(PeBoneNode* bone) {
-  if (!bone) return 0;
-  // bone[+0x4C] = ResHandle at +0x44 field+8 (a3[19] gate / type-match).
-  return *reinterpret_cast<int32_t*>(bone->raw + 0x4C);
-}
-
-static void pe_bone_store_hook(PeBoneNode* bone, BoneParentHook* hook) {
-  if (!bone) return;
-  *reinterpret_cast<BoneParentHook**>(bone->raw + 0xAC) = hook;
-}
-
-// PE ResHandle_maybeRelinkLod @ 0x00425150 — gate then RelinkLodSlot
-// @ 0x00537790 (Resources: tryRelinkLod + freelist skip). Called from
-// both a4!=0 arms @ 0x48BEA9 / 0x48BEC0.
-static void res_handle_maybe_relink_lod(void* parent_key) {
-  if (!parent_key) return;
-  void* inner = native_ptr_node(reinterpret_cast<InvObject*>(parent_key));
-  res_handle_maybe_relink_lod_node(inner);
-}
-
-// PE BoneParentHook_dtor @ 0x0045F8B0 (a2&1 → free): unlink ResHandle slice
-// then payload+0x78 dllist (same splice as ResListNode_dtor @ 0x00429150).
-static void bone_parent_hook_destroy(BoneParentHook* hook, int32_t* node_flags) {
-  constexpr int32_t kHookFlag = 0x4000;
-  if (!hook) return;
-  // Unlink from node+0x44 list (hook+0x0C slice).
-  if (hook->owner_node) {
-    void* link = &hook->link0;
-    auto* l0 = reinterpret_cast<void**>(link);
-    void* owner = hook->owner_node;
-    if (l0[0]) {
-      *reinterpret_cast<void**>(reinterpret_cast<char*>(l0[0]) + 4) = l0[1];
-    } else {
-      *reinterpret_cast<void**>(reinterpret_cast<char*>(owner) + 0x48) = l0[1];
-    }
-    if (l0[1]) *reinterpret_cast<void**>(l0[1]) = l0[0];
-    hook->owner_node = nullptr;
-    hook->node_field50 = 0;
-    hook->link0 = nullptr;
-    hook->link1 = nullptr;
-  }
-  // Unlink from payload+0x78 dllist (+4/+8).
-  if (hook->list_back && hook->list_fwd) {
-    *reinterpret_cast<void**>(reinterpret_cast<char*>(hook->list_fwd) + 8) =
-        hook->list_back;
-    *reinterpret_cast<void**>(reinterpret_cast<char*>(hook->list_back) + 4) =
-        hook->list_fwd;
-  }
-  hook->list_fwd = nullptr;
-  hook->list_back = nullptr;
-  if (node_flags) *node_flags &= ~kHookFlag;
-  delete hook;
-}
-
-// PE ResPayload_createBoneParentHook @ 0x0053F7E0.
-// this=getPayload(parent); arg=render handle → child_node=*(handle+0xC).
-static BoneParentHook* res_payload_create_bone_parent_hook(void* payload,
-                                                          void* child_node) {
-  if (!payload || !child_node) return nullptr;
-  auto* flags =
-      reinterpret_cast<int32_t*>(reinterpret_cast<char*>(child_node) + 0x54);
-  // PE: flags!=0 && !(flags&0x4000). HostResNode has no PE flag word at
-  // +0x54 (mid starts there); stock live nodes carry bits (e.g. |=0x200 @
-  // 0x539988). Seed 0x200 when zero so the gate can pass on host nodes.
-  if (*flags == 0) *flags = 0x200;
-  if ((*flags & 0x4000) != 0) return nullptr;
-
-  auto* hook = new BoneParentHook{};
-  // ResListNode_ctor zeros +4/+8 then create zeros +0x0C..+0x18; vtbl set.
-  // Host: vtbl unused (no PE virtual call); fields match asm stores.
-  if (hook->owner_node != child_node) {
-    res_handle_link_node44(child_node, hook);
-    hook->node_field50 =
-        *reinterpret_cast<int32_t*>(reinterpret_cast<char*>(child_node) + 0x50);
-  }
-  *flags |= 0x4000;
-
-  // payload+0x78 sentinel / +0x80 tail (asm 0x53f88b..0x53f89d).
-  auto* p = reinterpret_cast<char*>(payload);
-  void* sentinel = p + 0x78;
-  auto* tail_slot = reinterpret_cast<void**>(p + 0x80);
-  // PE ctor leaves tail → sentinel; host mid pad is zero — init empty list.
-  if (*tail_slot == nullptr) {
-    *tail_slot = sentinel;
-    *reinterpret_cast<void**>(p + 0x7C) = sentinel;
-  }
-  void* old_tail = *tail_slot;
-  *reinterpret_cast<void**>(reinterpret_cast<char*>(old_tail) + 4) = hook;
-  hook->list_back = old_tail;
-  hook->list_fwd = sentinel;
-  *tail_slot = hook;
-  return hook;
-}
-
-void render_d3d9_mesh_set_parent(void* key, void* parent) {
-  if (!key) return;
-  // Ignore self-parent; break trivial cycles.
-  if (parent == key) parent = nullptr;
-  MeshXform& xf = g_mesh_xforms[key];
-
-  // PE RenderRef_LinkOrUnlinkBone @ 0x0048BE10 (always from
-  // SetBoneMatrixParentLink @ 0x0048BF50 after HEAD|+0x1800).
-  // a1=render handle, a2=THIS payload, a3=bone*, a4=parent_ref|0.
-  //   a4==0 && bone[+0x4C]!=0: teardown hook; ~0x4000; unlink +0xC/+0x10;
-  //     ResHandle_Rebind(bone+0x44, 0); own-list insert +0x168/+0x178.
-  //   a4!=0 && bone[+0x4C]==*(a4+8): ResHandle_maybeRelinkLod(a4) only.
-  //   a4!=0 mismatch: unlinkIndexedSlot(1); Rebind(bone+0x44, *(a4+0xC));
-  //     insertIndexedSlot(payload+0x150,1,bone); getPayload(A0)+hook→+0xAC;
-  //     then maybeRelinkLod(a4) @ 0x48BEA9.
-  // Host: PeBoneNode + PeBoneOwnList side map; RelinkLod gate @ 0x425150.
-  constexpr int32_t kTagA0 = static_cast<int32_t>(0xA0000000u);
-
-  auto node_flags_ptr = [](InvObject* o) -> int32_t* {
-    void* node = native_ptr_node(o);
-    if (!node) return nullptr;
-    return reinterpret_cast<int32_t*>(reinterpret_cast<char*>(node) + 0x54);
-  };
-  auto teardown_hook = [&](InvObject* child) {
-    if (!xf.bone_parent_hook) return;
-    BoneParentHook* hook = xf.bone_parent_hook;
-    xf.bone_parent_hook = nullptr;
-    if (xf.pe_bone) pe_bone_store_hook(xf.pe_bone, nullptr);
-    // PE: (**hook)(hook, 1) → BoneParentHook_dtor; then &= ~0x4000 on
-    // *(handle+0xC)+0x54 (also cleared inside dtor path after vtbl call).
-    bone_parent_hook_destroy(hook, node_flags_ptr(child));
-  };
-
-  auto* child = reinterpret_cast<InvObject*>(key);
-  PeBoneNode* bone = pe_bone_ensure(xf);
-  PeBoneOwnList& own = g_bone_own_lists[key];
-
-  if (!parent) {
-    // a4==0: only when bone[+0x4C]!=0 (PE gate @ 0x48BED0).
-    teardown_hook(child);
-    if (pe_bone_type_field(bone) != 0) {
-      res_handle_unlink_indexed_slot1(bone);
-      res_handle_rebind(bone->raw + 0x44, nullptr);
-      pe_bone_own_list_insert(own, bone);
-    }
-    xf.parent = nullptr;
-    xf.attach_bone = 0;
-    return;
-  }
-
-  // Type-match stand-in: bone[+0x4C]==*(a4+8) → RelinkLod only @ 0x48BEC0.
-  // Host handle+8 is alive (not PE type); InvObject* equality is the stand-in.
-  if (xf.parent == parent) {
-    res_handle_maybe_relink_lod(parent);
-    return;
-  }
-
-  // mismatch path @ 0x48BE2F.. then maybeRelinkLod @ 0x48BEA9.
-  teardown_hook(child);
-  res_handle_unlink_indexed_slot1(bone);
-  native_ptr_ensure(child);
-  native_ptr_ensure(reinterpret_cast<InvObject*>(parent));
-  void* child_inner = native_ptr_node(child);
-  void* parent_inner = native_ptr_node(reinterpret_cast<InvObject*>(parent));
-  // Seed owner+0x50 so Rebind writes non-zero bone[+0x4C] (a4==0 gate later).
-  if (parent_inner) {
-    auto* p50 =
-        reinterpret_cast<int32_t*>(reinterpret_cast<char*>(parent_inner) + 0x50);
-    if (*p50 == 0) *p50 = 1;
-  }
-  res_handle_rebind(bone->raw + 0x44, parent_inner);
-  pe_bone_own_list_insert(own, bone);
-  void* payload =
-      parent_inner ? res_handle_get_payload(parent_inner, kTagA0) : nullptr;
-  if (payload && child_inner) {
-    xf.bone_parent_hook =
-        res_payload_create_bone_parent_hook(payload, child_inner);
-    pe_bone_store_hook(bone, xf.bone_parent_hook);
-  } else {
-    pe_bone_store_hook(bone, nullptr);
-  }
-  xf.parent = parent;
-  res_handle_maybe_relink_lod(parent);
-}
-
-// Fork: creation parent from RenderRef.create (see MeshXform::tree_parent).
-void render_d3d9_mesh_set_tree_parent(void* key, void* parent) {
-  if (!key) return;
-  g_mesh_xforms[key].tree_parent = (parent == key) ? nullptr : parent;
-}
-
-void render_d3d9_mesh_set_attach_bone(void* key, int32_t bone_id) {
-  if (!key) return;
-  g_mesh_xforms[key].attach_bone = bone_id < 0 ? 0 : bone_id;
-}
-
-void* render_d3d9_mesh_get_parent(void* key) {
-  if (!key) return nullptr;
-  auto it = g_mesh_xforms.find(key);
-  return it == g_mesh_xforms.end() ? nullptr : it->second.parent;
-}
-
-int32_t render_d3d9_mesh_get_attach_bone(void* key) {
-  if (!key) return 0;
-  auto it = g_mesh_xforms.find(key);
-  return it == g_mesh_xforms.end() ? 0 : it->second.attach_bone;
-}
-
-int32_t render_d3d9_mesh_get_bone_id(void* key, const char* alias) {
-  // PE getBoneId @ 0x00481020: handle 0 → Mighty ERROR, return 0 (never -1).
-  if (!key) return 0;
-  std::string name = alias ? alias : "";
-  // Stock Camera path attaches under parent + "bone00".
-  if (name.empty() || name == "bone00" || name == "root" || name == "Root")
-    return 0;
-  auto& aliases = g_mesh_bone_alias[key];
-  auto it = aliases.find(name);
-  if (it != aliases.end()) return it->second;
-  int32_t& next = g_mesh_bone_next[key];
-  if (next < 1) next = 1;
-  const int32_t id = next++;
-  aliases[name] = id;
-  return id;
-}
-
-void render_d3d9_mesh_set_bone_local(void* key, int32_t bone_id, float px,
-                                     float py, float pz, float yaw, float pitch,
-                                     float roll) {
-  if (!key || bone_id < 0) return;
-  MeshXform& b = g_mesh_bones[key][bone_id];
-  b.px = px;
-  b.py = py;
-  b.pz = pz;
-  b.oy = yaw;
-  b.op = pitch;
-  b.or_ = roll;
-  b.sx = b.sy = b.sz = 1.f;
-}
-
-void render_d3d9_mesh_get_transform(void* key, float* px, float* py, float* pz,
-                                    float* yaw, float* pitch, float* roll,
-                                    float* sx, float* sy, float* sz) {
-  MeshXform xf;
-  auto it = g_mesh_xforms.find(key);
-  if (it != g_mesh_xforms.end()) xf = it->second;
-  if (px) *px = xf.px;
-  if (py) *py = xf.py;
-  if (pz) *pz = xf.pz;
-  if (yaw) *yaw = xf.oy;
-  if (pitch) *pitch = xf.op;
-  if (roll) *roll = xf.or_;
-  if (sx) *sx = xf.sx;
-  if (sy) *sy = xf.sy;
-  if (sz) *sz = xf.sz;
-}
-
-void render_d3d9_mesh_world_origin(void* key, float* wx, float* wy, float* wz) {
-  float x = 0, y = 0, z = 0;
-#ifdef _WIN32
-  D3DMATRIX world{};
-  resolve_world(key, &world, 0);
-  x = world.m[3][0];
-  y = world.m[3][1];
-  z = world.m[3][2];
-#else
-  (void)key;
-  auto it = g_mesh_xforms.find(key);
-  if (it != g_mesh_xforms.end()) {
-    x = it->second.px;
-    y = it->second.py;
-    z = it->second.pz;
-  }
-#endif
-  if (wx) *wx = x;
-  if (wy) *wy = y;
-  if (wz) *wz = z;
-}
-
-int32_t render_d3d9_mesh_vb_stride_from_fvf(uint32_t pe_fvf) {
-  // Soft PE GfxVbLayout_FromFvf @ 0x4FE980 — running offset at layout[17]
-  // (= wrapper+0x60). Field offset table OOS; stride only.
-  int32_t off = 0;
-  if ((pe_fvf & 1u) != 0) {
-    const int32_t blends = static_cast<int32_t>((pe_fvf >> 8) & 7u);
-    off = 12;
-    for (int32_t i = 0; i < blends; ++i) off += 4;
-  }
-  if ((pe_fvf & 0x800u) != 0) off += 4;
-  if ((pe_fvf & 2u) != 0) off += 12;
-  if ((pe_fvf & 4u) != 0) off += 4;
-  if ((pe_fvf & 8u) != 0) off += 4;
-  const int32_t tex_n = static_cast<int32_t>((pe_fvf >> 4) & 0xFu);
-  int32_t bit = 16;
-  for (int32_t t = 0; t < tex_n; ++t) {
-    switch ((pe_fvf >> bit) & 3u) {
-      case 0:
-        off += 4;
-        break;
-      case 1:
-        off += 8;
-        break;
-      case 2:
-        off += 12;
-        break;
-      case 3:
-        off += 16;
-        break;
-      default:
-        break;
-    }
-    bit += 2;
-  }
-  return off;
-}
-
-uint32_t render_d3d9_mesh_invo_flags_to_fvf(uint32_t invo_flags,
-                                            int32_t tex_count) {
-  // Soft PE UploadVbFvf @ 0x503475..0x5034EE (before GfxVbLayout_FromFvf).
-  uint32_t fvf = (invo_flags & 1u) != 0 ? 1u : 0u;
-  if ((invo_flags & 0x40u) != 0) fvf |= 2u;
-  if ((invo_flags & 0x80u) != 0) fvf |= 4u;
-  if ((invo_flags & 0x100u) != 0) fvf |= 8u;
-  if ((invo_flags & 4u) != 0 || (invo_flags & 0x18u) != 0) fvf |= 0x300u;
-  if ((invo_flags & 0x20u) != 0) fvf |= 0x800u;
-  if (tex_count < 0) tex_count = 0;
-  if (tex_count > 8) tex_count = 8;
-  fvf |= static_cast<uint32_t>(tex_count) << 4;
-  // PE: for each UV slot, OR (1 << (16 + 2*i)) — texcoord format case0.
-  for (int32_t i = 0, bit = 16; i < tex_count; ++i, bit += 2)
-    fvf |= 1u << bit;
-  return fvf;
-}
-
-bool render_d3d9_mesh_vb_create(void* key, int32_t vert_count, uint32_t pe_fvf,
-                                int32_t stride, const void* bytes,
-                                size_t bytes_len) {
-  // Soft PE AsyncLoad_Mesh_UploadVbFvf @ 0x503400 — alloc wrapper + blob;
-  // CreateVertexBuffer with FVF=pe_fvf (Present SetFVF bind). Attach / pack /
-  // AABB OOS (ParseInvo later).
-  if (!key || vert_count <= 0) return false;
-  int32_t stride_use = stride;
-  if (stride_use <= 0)
-    stride_use = render_d3d9_mesh_vb_stride_from_fvf(pe_fvf);
-  if (stride_use <= 0) return false;
-  const size_t need =
-      static_cast<size_t>(vert_count) * static_cast<size_t>(stride_use);
-
-  MeshVbState& st = g_mesh_vbs[key];
-#ifdef _WIN32
-  if (st.vb) {
-    st.vb->Release();
-    st.vb = nullptr;
-  }
-#endif
-  st.vert_count = vert_count;
-  st.stride = stride_use;
-  st.pe_fvf = pe_fvf;
-  st.cpu.assign(need, 0);
-  if (bytes && bytes_len > 0) {
-    const size_t n = bytes_len < need ? bytes_len : need;
-    std::memcpy(st.cpu.data(), bytes, n);
-  }
-  st.ready = true;
-
-#ifdef _WIN32
-  if (!g_dev) return true;  // bookkeeping without GPU (headless), like dims
-  // PE wrapper+0x0C pe_fvf → CreateVertexBuffer FVF (host soft Present bind).
-  if (FAILED(g_dev->CreateVertexBuffer(static_cast<UINT>(need), 0, pe_fvf,
-                                       D3DPOOL_MANAGED, &st.vb, nullptr)) ||
-      !st.vb) {
-    st.vb = nullptr;
-    return false;
-  }
-  if (bytes && bytes_len > 0) {
-    void* locked = nullptr;
-    if (SUCCEEDED(st.vb->Lock(0, static_cast<UINT>(need), &locked, 0)) &&
-        locked) {
-      const size_t n = bytes_len < need ? bytes_len : need;
-      std::memcpy(locked, bytes, n);
-      st.vb->Unlock();
-    }
-  }
-  return true;
-#else
-  (void)bytes_len;
-  return st.ready;
-#endif
-}
-
-void render_d3d9_mesh_vb_destroy(void* key) {
-  if (!key) return;
-  auto it = g_mesh_vbs.find(key);
-  if (it == g_mesh_vbs.end()) return;
-#ifdef _WIN32
-  // W35-02: soft PE VBSlots freelist (device+0x320) — enqueue; DrainVBSlots.
-  if (it->second.vb) {
-    g_vb_drain_list.push_back(it->second.vb);
-    it->second.vb = nullptr;
-  }
-#endif
-  g_mesh_vbs.erase(it);
-}
-
-bool render_d3d9_mesh_vb_ready(void* key) {
-  if (!key) return false;
-  auto it = g_mesh_vbs.find(key);
-  return it != g_mesh_vbs.end() && it->second.ready;
-}
-
-int32_t render_d3d9_mesh_vb_vert_count(void* key) {
-  if (!key) return 0;
-  auto it = g_mesh_vbs.find(key);
-  return it == g_mesh_vbs.end() ? 0 : it->second.vert_count;
-}
-
-int32_t render_d3d9_mesh_vb_stride(void* key) {
-  if (!key) return 0;
-  auto it = g_mesh_vbs.find(key);
-  return it == g_mesh_vbs.end() ? 0 : it->second.stride;
-}
-
-uint32_t render_d3d9_mesh_vb_fvf(void* key) {
-  if (!key) return 0;
-  auto it = g_mesh_vbs.find(key);
-  return it == g_mesh_vbs.end() ? 0u : it->second.pe_fvf;
-}
-
-void* render_d3d9_mesh_vb_d3d(void* key) {
-  if (!key) return nullptr;
-  auto it = g_mesh_vbs.find(key);
-  if (it == g_mesh_vbs.end()) return nullptr;
-#ifdef _WIN32
-  return it->second.vb;
-#else
-  return nullptr;
-#endif
-}
-
-bool render_d3d9_mesh_ib_create(void* key, int32_t index_count,
-                                const uint16_t* indices) {
-  // Soft PE AsyncLoad_Mesh_UploadIbTris @ 0x5038E0 — malloc 20B wrapper
-  // (count / blob / type=2 / stride=2) + 2*count bytes; vtbl+20 attach OOS.
-  if (!key || index_count <= 0) return false;
-  MeshIbState& st = g_mesh_ibs[key];
-#ifdef _WIN32
-  if (st.ib) {
-    st.ib->Release();
-    st.ib = nullptr;
-  }
-#endif
-  st.index_count = index_count;
-  st.cpu.assign(static_cast<size_t>(index_count), 0);
-  if (indices) {
-    std::memcpy(st.cpu.data(), indices,
-                static_cast<size_t>(index_count) * sizeof(uint16_t));
-  }
-  st.ready = true;
-
-#ifdef _WIN32
-  if (!g_dev) return true;
-  const UINT bytes =
-      static_cast<UINT>(index_count) * static_cast<UINT>(sizeof(uint16_t));
-  if (FAILED(g_dev->CreateIndexBuffer(bytes, 0, D3DFMT_INDEX16, D3DPOOL_MANAGED,
-                                      &st.ib, nullptr)) ||
-      !st.ib) {
-    st.ib = nullptr;
-    return false;
-  }
-  if (indices) {
-    void* locked = nullptr;
-    if (SUCCEEDED(st.ib->Lock(0, bytes, &locked, 0)) && locked) {
-      std::memcpy(locked, indices, bytes);
-      st.ib->Unlock();
-    }
-  }
-  return true;
-#else
-  return st.ready;
-#endif
-}
-
-void render_d3d9_mesh_ib_destroy(void* key) {
-  if (!key) return;
-  auto it = g_mesh_ibs.find(key);
-  if (it == g_mesh_ibs.end()) return;
-#ifdef _WIN32
-  // W35-02: soft PE IBSlots freelist (device+0x324) — enqueue; DrainIBSlots.
-  if (it->second.ib) {
-    g_ib_drain_list.push_back(it->second.ib);
-    it->second.ib = nullptr;
-  }
-#endif
-  g_mesh_ibs.erase(it);
-}
-
-bool render_d3d9_mesh_ib_ready(void* key) {
-  if (!key) return false;
-  auto it = g_mesh_ibs.find(key);
-  return it != g_mesh_ibs.end() && it->second.ready;
-}
-
-int32_t render_d3d9_mesh_ib_index_count(void* key) {
-  if (!key) return 0;
-  auto it = g_mesh_ibs.find(key);
-  return it == g_mesh_ibs.end() ? 0 : it->second.index_count;
-}
-
-void* render_d3d9_mesh_ib_d3d(void* key) {
-  if (!key) return nullptr;
-  auto it = g_mesh_ibs.find(key);
-  if (it == g_mesh_ibs.end()) return nullptr;
-#ifdef _WIN32
-  return it->second.ib;
-#else
-  return nullptr;
-#endif
-}
-
-void render_d3d9_mesh_queue_clear() { g_mesh_queue.clear(); }
-
-void render_d3d9_mesh_queue_add(void* key) {
-  if (!key || !render_d3d9_mesh_ready(key)) return;
-  g_mesh_queue.push_back(key);
-}
-
-int32_t render_d3d9_mesh_queue_count() {
-  return static_cast<int32_t>(g_mesh_queue.size());
-}
-
-}  // namespace inv

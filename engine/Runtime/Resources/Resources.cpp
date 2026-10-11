@@ -9,7 +9,10 @@
 #include "System.h"
 #include "Resources.h"
 #include "Resources_internal.hpp"
+#include "NativeTypes.hpp"
 
+#include <algorithm>
+#include <bitset>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>

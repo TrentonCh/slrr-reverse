@@ -968,8 +968,29 @@ static_assert(sizeof(HostLoadGameInitGi) == 348, "InstanceNode slot 348");
 
 std::vector<HostLoadGameInitGi*> g_loadgameinit_gis;
 // PE ResourceEngine_AllocLocalRid @ 0x536ED0: u16 freelist @ eng+0xDA0,
-// refill 128, return rid|0xFFFF0000 (empty → 0xFFFF0000). Host seq stand-in.
+// refill 128, return rid|0xFFFF0000 (empty → 0xFFFF0000).
+// Build 940 has the same allocator: FUN_00518a40 pops the top of a stack of
+// 16-bit numbers (table+0x1600, count +0x1604) and ORs 0xFFFF0000 into it;
+// an empty stack is first refilled with 128 numbers of a running counter
+// (FUN_00468a70); the destructor of a node pushes the number of its
+// 0xFFFFxxxx id back (FUN_0051eca0 -> FUN_005173e0). A number that a live
+// node has is therefore never handed out a second time.
+// Host: the stack of the numbers given back (host_free_local_rid) and a
+// counter for the fresh ones.
+// Fork: fresh numbers go out in ascending order (the exe takes each block
+// of 128 from its top down); the legacy path has always numbered its
+// LoadGameInit nodes that way.
+// Fork: the LoadGameInit / CreateGameInstanceNative / gametype stand-ins
+// below never free their node, so their numbers do not come back. When all
+// 65,535 numbers have been out once and the stack is empty, the next number
+// is the next one that no live script-made node has (g_local_rid_live): a
+// number that only such a stand-in still carries is used again, as it was
+// before the numbers became node ids (M2 step 6).
 uint16_t g_lgi_rid_seq = 1;
+bool g_lgi_rid_seq_done = false;         // the counter has been round once
+std::vector<uint16_t> g_local_rid_free;  // table+0x1600: numbers given back
+std::bitset<0x10000> g_local_rid_live;   // numbers of live script-made nodes
+std::mutex g_local_rid_mu;               // guards the four; a leaf lock
 // g_lgi_create_count — PE @ 0x765F60; defined with GCSweep soft lives (W32C).
 
 // PE ResolveParent RID cache @ eng+0x106E9C (active) / +0x106E94 (MRU).
@@ -989,9 +1010,45 @@ struct HostInstanceNodePool {
 HostInstanceNodePool g_inode_pool;
 
 uint32_t host_alloc_local_rid() {
-  uint16_t rid = g_lgi_rid_seq++;
-  if (rid == 0) rid = g_lgi_rid_seq++;
+  std::lock_guard<std::mutex> lock(g_local_rid_mu);
+  uint16_t rid = 0;
+  if (!g_local_rid_free.empty()) {
+    // FUN_00518a40: the top of the stack.
+    rid = g_local_rid_free.back();
+    g_local_rid_free.pop_back();
+  } else if (!g_lgi_rid_seq_done) {
+    // FUN_00468a70: a fresh number (1 .. 65535).
+    rid = g_lgi_rid_seq++;
+    if (g_lgi_rid_seq == 0) g_lgi_rid_seq_done = true;
+  } else {
+    for (uint32_t tries = 0; tries < 0x10000u && rid == 0; ++tries) {
+      const uint16_t c = g_lgi_rid_seq++;
+      if (c != 0 && !g_local_rid_live[c]) rid = c;
+    }
+  }
+  // Number 0 is left when every number is a live node's: 0xFFFF0000, which
+  // is also what the exe returns from a stack it could not refill.
   return 0xFFFF0000u | static_cast<uint32_t>(rid);
+}
+
+// A script-made node took this id (script_node_register): its number is
+// not handed out again until the node gives it back.
+void host_local_rid_claim(uint32_t id) {
+  if ((id & 0xFFFF0000u) != 0xFFFF0000u) return;
+  std::lock_guard<std::mutex> lock(g_local_rid_mu);
+  g_local_rid_live[id & 0xFFFFu] = true;
+}
+
+// PE 940 FUN_005173e0, called by the node destructor FUN_0051eca0 with the
+// node's id: the number of a 0xFFFFxxxx id goes back on the stack. Only a
+// number a script-made node claimed is taken, so none is pushed twice.
+void host_free_local_rid(uint32_t id) {
+  if ((id & 0xFFFF0000u) != 0xFFFF0000u) return;
+  const uint16_t rid = static_cast<uint16_t>(id & 0xFFFFu);
+  std::lock_guard<std::mutex> lock(g_local_rid_mu);
+  if (rid == 0 || !g_local_rid_live[rid]) return;
+  g_local_rid_live[rid] = false;
+  g_local_rid_free.push_back(rid);
 }
 
 HostLoadGameInitGi* host_instance_node_pool_alloc() {

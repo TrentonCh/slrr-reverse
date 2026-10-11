@@ -4,6 +4,7 @@
 #include "jvm.hpp"
 #include "System.h"
 #include "Resources.h"
+#include "NativeTypes.hpp"
 
 #include <algorithm>
 #include <chrono>
@@ -855,6 +856,14 @@ void java_lang_GameType_createNativeInstance(InvObject* self, InvObject* parent,
   if (!fqn || !fqn[0]) fqn = "java.lang.GameType";
   (void)resource_engine_type_gametype(/*parent_rh=*/nullptr, /*clazz=*/nullptr,
                                       fqn);
+  // The factory makes a node under the parent as GameRef.create_native does
+  // (940 FUN_005240e0, with this object as its script instance) and `this`
+  // becomes a handle on it: id() is the node's own id from then on. The
+  // host had no id here, so a child's getParentID was 0 (Part.addPart gives
+  // up on that: a car is created under the player). Script boot only; an
+  // object that already has an id keeps it.
+  if (native_script_boot() && java_util_resource_ResourceRef_id(self) == 0)
+    script_node_register(self, self, gameref_node_object(parent), typeID, 0);
   std::lock_guard<std::mutex> lock(g_mu);
   GameTypeState& s = st(self);
   s.native_created = 1;

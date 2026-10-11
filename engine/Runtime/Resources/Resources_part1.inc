@@ -143,6 +143,72 @@ bool load_mesh_from_res_id(InvObject* self, int32_t mesh_id) {
 // Returns false when PE would skip vt+0x0C (sub_5447D0 sign bit / no payload).
 InvObject* make_bound_ref(int32_t res_id);
 
+// PE 940 RT_object (ctor FUN_0046bfe0, init FUN_0046e1a0): the template of
+// a render object takes the object's mesh, clones the materials of every
+// section (FUN_0043eb90) and binds the object's textures into their texture
+// entries by slot, once (FUN_0046f4b0 -> FUN_00441c40): entry slot = the
+// zero-based index of a `texture` line. A slot past the list, an empty line
+// (`texture 0x00000000`) or a texture that did not load leaves the entry
+// unbound, and an unbound entry draws with the engine default texture
+// (FUN_0043d990, C3DLow+0x340).
+// Host: `self` is the render object's handle; its mesh is the type mesh
+// that RenderRef.create and the pending list clone per instance. The
+// texture handles are the render object's own (render_object_textures), so
+// RenderRef.changeResource(old, new) keeps matching a section's texture by
+// the id of its handle.
+// Fork: a mesh none of whose sections has a parsed material (an INVO
+// layout the host's material reader refuses) keeps the old rule, the last
+// texture line on section 0.
+bool render_object_bind_mesh(InvObject* self, int32_t id,
+                             const RenderObjectDesc* desc) {
+  if (!self || !desc || !desc->found || !desc->mesh_id) return false;
+  if (!load_mesh_from_res_id(self, desc->mesh_id)) return false;
+  // Render type flags (RT_object template+0x18, FUN_0046e1a0): the colour
+  // mode, the horizon bit and the slot-copy bit of everything made from it.
+  render_d3d9_mesh_set_type_flags(self, desc->flags);
+  int missing = 0;
+  std::string missing_slots;
+  const std::vector<void*> keys =
+      render_object_texture_keys(id, &missing, &missing_slots);
+  render_d3d9_mesh_bind_slots(self, keys.empty() ? nullptr : keys.data(),
+                              static_cast<int32_t>(keys.size()));
+  char summary[900];
+  const int32_t parsed =
+      render_d3d9_mesh_slot_summary(self, summary, sizeof summary);
+  if (parsed == 0) {
+    for (size_t i = keys.size(); i-- > 0;) {
+      if (!desc->textures[i]) continue;
+      if (keys[i]) render_d3d9_mesh_set_texture(self, keys[i]);
+      break;
+    }
+  }
+  if (native_type_log()) {
+    // One line per render object, on its first load.
+    static std::mutex s_mu;
+    static std::unordered_map<int32_t, bool> s_seen;
+    bool first = false;
+    {
+      std::lock_guard<std::mutex> lock(s_mu);
+      first = s_seen.emplace(id, true).second;
+    }
+    if (first) {
+      const RpakEntry* e = rpak_find_entry(id);
+      std::fprintf(stderr,
+                   "[native-type] object mesh 0x%08X '%s' flags %u: mesh "
+                   "0x%08X, %d section(s), %d with a parsed material; %zu "
+                   "texture slot(s), %d not loaded%s%s; sections "
+                   "(primary/second/lightmap slot, material flags, wide "
+                   "vertices):%s\n",
+                   static_cast<unsigned>(id), e ? e->name.c_str() : "",
+                   desc->flags, static_cast<unsigned>(desc->mesh_id),
+                   render_d3d9_mesh_submesh_count(self), parsed, keys.size(),
+                   missing, missing ? ":" : "", missing_slots.c_str(),
+                   summary);
+    }
+  }
+  return true;
+}
+
 bool resource_ref_bind_payload(InvObject* self, int32_t id, int32_t type,
                                const std::string& entry_path) {
   if (!self || id == 0) return false;
@@ -151,6 +217,26 @@ bool resource_ref_bind_payload(InvObject* self, int32_t id, int32_t type,
   if (!rpak_read_entry(id, &blob)) return false;
   const RpakEntry* ent = rpak_find_entry(id);
   if (ent) entry_name = ent->name;
+  if (native_script_boot() && ent && ent->restype == 14) {
+    // PE 940 FUN_0046d890: the template class of a render object comes
+    // from its flags. Script boot only; the legacy path keeps the recipe
+    // reader below for every render object.
+    const RenderObjectDesc* desc = render_object_desc(id);
+    if (desc->found) {
+      const int cls = render_template_class(desc->flags);
+      // RT_object: the mesh, bound by slot.
+      if (cls == kRenderTemplateObject)
+        return render_object_bind_mesh(self, id, desc);
+      // RT_ground: the `mesh` is a material table and the geometry comes
+      // from the map's POLY chunks (ground_mesh_build makes it for the
+      // ground's own render instance); the handle itself gets no mesh.
+      if (cls == kRenderTemplateGround) return false;
+      // Fork: the text, particle, skidmark and welding templates have
+      // builders of their own in the exe, which are not ported; their
+      // render objects keep the recipe reader below (fonts are read by
+      // render_d3d9_font_load_charset).
+    }
+  }
   const bool is_sourcefile = !blob.empty() && blob.size() >= 10 &&
                              std::memcmp(blob.data(), "sourcefile", 10) == 0;
   bool sourcefile_is_mesh = false;
@@ -218,19 +304,90 @@ bool resource_ref_bind_payload(InvObject* self, int32_t id, int32_t type,
   return false;
 }
 
+// ---- Nodes made by GameRef.create (NativeTypes.hpp; script boot only) ----
+// ResState::parent (the object pointer) is left alone for these nodes: the
+// host's child enumeration (getFirstChild / getNextChild) scans it, and a
+// node with two host objects must not show up there twice.
+struct ScriptNode {
+  InvObject* object = nullptr;  // the node object (NativeTypes.hpp)
+  InvObject* other = nullptr;   // the second host object of the create
+  InvObject* parent = nullptr;  // the node object of the parent
+  int32_t parent_id = 0;
+  int32_t type_id = 0;
+};
+std::unordered_map<int32_t, ScriptNode> g_script_nodes;  // guarded by g_mu
+// The ids of nodes that left the table and whose handles are still bound
+// (script_nodes_retire unbinds them and gives the numbers back); guarded by
+// g_mu. The number of such an id stays reserved until then.
+std::vector<int32_t> g_script_nodes_gone;
+// The default root and its id, once script_node_default_root made it.
+InvObject* g_script_root = nullptr;
+int32_t g_script_root_id = 0;
+// How deep this thread is inside ResourceRef.destroy. A destroy can call
+// destroy (a part's render instances, the parts installed on it, the nodes
+// under a node); the nodes that went are retired when the outermost call
+// has ended, never in between.
+thread_local int t_node_destroy_depth = 0;
+
+uint32_t host_alloc_local_rid();         // Resources_part4.inc
+void host_local_rid_claim(uint32_t id);  // Resources_part4.inc
+void host_free_local_rid(uint32_t id);   // Resources_part4.inc
+
+// Caller holds g_mu. The node leaves the table; its id waits for
+// script_nodes_retire.
+void script_node_drop(std::unordered_map<int32_t, ScriptNode>::iterator it) {
+  g_script_nodes_gone.push_back(it->first);
+  g_script_nodes.erase(it);
+}
+
+// Caller holds g_mu. The entry of a live script-made node; null when the id
+// names none, or when the node object was bound to another id since (the
+// exe unlinks a handle that is set again; here the object is the node).
+ScriptNode* script_node_find(int32_t id) {
+  if (id == 0 || g_script_nodes.empty()) return nullptr;
+  auto it = g_script_nodes.find(id);
+  if (it == g_script_nodes.end()) return nullptr;
+  auto oi = g_res.find(it->second.object);
+  if (oi == g_res.end() || oi->second.id != id) {
+    script_node_drop(it);
+    return nullptr;
+  }
+  return &it->second;
+}
+
 void bind_res_id(ResState& st, int32_t ID) {
   st.id = ID;
   st.entry_path.clear();
   st.blob_size = 0;
   st.type = 0;
+  st.restype = 0;
+  st.rec_flags = 0;
   st.parent_id = 0;
   st.parent = nullptr;
   st.first_child = nullptr;
   st.next_child = nullptr;
   if (ID == 0) return;
+  if (const ScriptNode* sn = script_node_find(ID)) {
+    // PE 940 FUN_0051fa40 -> FUN_005183a0: the id of a node GameRef.create
+    // made finds that node. The handle is one more handle on it: restype 1,
+    // the descriptor flags 0x21 of FUN_00523c80, the node's parent and its
+    // type. `type` keeps the stand-in the node object has (the kind of the
+    // type record), which the natives that branch on ResourceRef.type()
+    // see today.
+    st.restype = 1;
+    st.rec_flags = 0x21;
+    st.parent_id = sn->parent_id;
+    st.type_id = sn->type_id;
+    auto oi = g_res.find(sn->object);
+    if (oi != g_res.end() && &oi->second != &st) st.type = oi->second.type;
+    return;
+  }
   const RpakEntry* e = rpak_find_entry(ID);
   if (!e) return;
   st.type = map_rpak_kind(e->kind);
+  // The pack's own typeof and record flags (ResourceRef.type() keeps `type`).
+  st.restype = e->restype;
+  st.rec_flags = e->rec_flags;
   st.entry_path = e->path;
   st.blob_size = e->size;
   st.parent_id = rpak_parent_id(ID);
@@ -254,6 +411,231 @@ std::unordered_map<InvObject*, LineState> g_lines;
 std::unordered_map<InvObject*, ResState> g_res;
 int32_t g_next_id = 1;
 static uint64_t g_res_seq = 0;
+
+// PE 940: such a node gets its id from the allocator of the script-made
+// nodes (FUN_00524840 -> FUN_00518a40 for a render instance: 0xFFFF0000 |
+// number), so it can never equal the id of a pack record.
+// Fork: the host counts up from 1. A pack record's id is (pack number << 16)
+// | local id with pack numbers from 1 (rpak.cpp), which the counter would
+// reach after 65,535 objects: a new viewport would then share its id with a
+// record of the first pack, and a lookup by id could answer with a handle
+// on that record. On the script boot the counter therefore goes on at
+// 0x40000000, above every pack number and below the 0xFFFFxxxx node ids.
+// The legacy path counts on as before.
+int32_t resref_next_runtime_id() {
+  const int32_t id = g_next_id++;
+  if (g_next_id == 0x10000 && native_script_boot()) g_next_id = 0x40000000;
+  return id;
+}
+ResState& R(InvObject* self);
+
+// ---- Nodes made by GameRef.create (NativeTypes.hpp) ----
+InvObject* script_node_default_root() {
+  if (!native_script_boot()) return nullptr;
+  static InvObject* s_root = nullptr;
+  if (s_root) return s_root;
+  InvObject* o = gameref_new();
+  if (!o) return nullptr;
+  const int32_t id = static_cast<int32_t>(host_alloc_local_rid());
+  std::lock_guard<std::mutex> lock(g_mu);
+  ScriptNode n;
+  n.object = o;
+  n.other = o;
+  g_script_nodes[id] = n;
+  host_local_rid_claim(static_cast<uint32_t>(id));
+  g_script_root = o;
+  g_script_root_id = id;
+  ResState& st = R(o);
+  st.id = id;
+  st.restype = 1;
+  st.rec_flags = 0x21;
+  st.alias = "_default_root";
+  s_root = o;
+  return s_root;
+}
+
+int32_t script_node_register(InvObject* object, InvObject* other,
+                             InvObject* parent, int32_t type_id, int32_t id) {
+  if (!object || !native_script_boot()) return 0;
+  // A null parent, or a parent handle that is bound to nothing (id 0): the
+  // node hangs under the default root (DAT_005fde50).
+  InvObject* const root = script_node_default_root();
+  // The nodes that went since the last call: their handles are unbound and
+  // their numbers are free before a new id is taken.
+  script_nodes_retire();
+  // PE 940 FUN_00518a40: number | 0xFFFF0000. Fork: a number of the host's
+  // allocator when the caller has none from its LoadGameInit stand-in.
+  if (id == 0) id = static_cast<int32_t>(host_alloc_local_rid());
+  if (static_cast<uint32_t>(id) == 0xFFFF0000u) {
+    // Every number is a live node's. Fork: no node is made (both objects
+    // keep the type id, as on the legacy path); the exe goes on with the id
+    // 0xFFFF0000 its allocator returns then.
+    static bool s_logged = false;
+    if (!s_logged) {
+      s_logged = true;
+      std::fprintf(stderr,
+                   "[native-type] no node id left: 65535 script-made nodes "
+                   "are alive\n");
+    }
+    return 0;
+  }
+  std::lock_guard<std::mutex> lock(g_mu);
+  host_local_rid_claim(static_cast<uint32_t>(id));
+  ScriptNode n;
+  n.object = object;
+  n.other = other ? other : object;
+  n.parent = parent;
+  n.type_id = type_id;
+  for (InvObject* const up : {parent, root}) {
+    if (!up || n.parent_id != 0) continue;
+    auto pi = g_res.find(up);
+    if (pi != g_res.end()) n.parent_id = pi->second.id;
+  }
+  g_script_nodes[id] = n;
+  for (InvObject* o : {n.object, n.other}) {
+    ResState& st = R(o);
+    st.id = id;
+    st.restype = 1;      // node+0x7C: INSTANCE_GAME
+    st.rec_flags = 0x21; // the descriptor flags of FUN_00523c80
+    st.parent_id = n.parent_id;
+    st.type_id = type_id;
+  }
+  return id;
+}
+
+InvObject* script_node_object(int32_t id) {
+  if (!native_script_boot()) return nullptr;
+  std::lock_guard<std::mutex> lock(g_mu);
+  const ScriptNode* n = script_node_find(id);
+  return n ? n->object : nullptr;
+}
+
+int32_t script_node_type_id(InvObject* handle) {
+  if (!handle || !native_script_boot()) return 0;
+  std::lock_guard<std::mutex> lock(g_mu);
+  auto it = g_res.find(handle);
+  if (it == g_res.end() || it->second.restype != 1) return 0;
+  const ScriptNode* n = script_node_find(it->second.id);
+  return n ? n->type_id : 0;
+}
+
+bool script_node_release(InvObject* handle, InvObject** object,
+                         InvObject** other, int32_t* node_id) {
+  if (object) *object = nullptr;
+  if (other) *other = nullptr;
+  if (node_id) *node_id = 0;
+  if (!handle || !native_script_boot()) return false;
+  std::lock_guard<std::mutex> lock(g_mu);
+  auto it = g_res.find(handle);
+  if (it == g_res.end() || it->second.restype != 1) return false;
+  const int32_t id = it->second.id;
+  const ScriptNode* n = script_node_find(id);
+  if (!n) return false;
+  if (object) *object = n->object;
+  if (other) {
+    // The second object only while it is still a handle on this node: a
+    // handle that was set or created on again has left it.
+    auto oi = g_res.find(n->other);
+    if (oi != g_res.end() && oi->second.id == id) *other = n->other;
+  }
+  if (node_id) *node_id = id;
+  script_node_drop(g_script_nodes.find(id));
+  return true;
+}
+
+void script_node_children(int32_t id, std::vector<int32_t>* out) {
+  if (!out || id == 0 || !native_script_boot()) return;
+  std::lock_guard<std::mutex> lock(g_mu);
+  std::vector<int32_t> ids;
+  for (const auto& kv : g_script_nodes)
+    if (kv.second.parent_id == id) ids.push_back(kv.first);
+  // script_node_find drops an entry whose node object is gone.
+  for (int32_t cid : ids)
+    if (script_node_find(cid)) out->push_back(cid);
+}
+
+void script_nodes_retire() {
+  if (!native_script_boot() || t_node_destroy_depth != 0) return;
+  std::vector<int32_t> gone;
+  {
+    std::lock_guard<std::mutex> lock(g_mu);
+    if (g_script_nodes_gone.empty()) return;
+    gone.swap(g_script_nodes_gone);
+    std::sort(gone.begin(), gone.end());
+    gone.erase(std::unique(gone.begin(), gone.end()), gone.end());
+    auto is_gone = [&gone](int32_t id) {
+      return (static_cast<uint32_t>(id) >> 16) == 0xFFFFu &&
+             std::binary_search(gone.begin(), gone.end(), id);
+    };
+    // PE 940 FUN_0051f970: every handle on the node loses its id and its
+    // node pointer (the two objects of the create and each `new GameRef(id)`).
+    for (auto& kv : g_res)
+      if (is_gone(kv.second.id)) bind_res_id(kv.second, 0);
+    // Fork: a node whose parent left the table without being destroyed (its
+    // node object was bound to something else) hangs under the default root
+    // from now on, so that it is no child of the node that gets the number
+    // next. The exe has no such case: there the node is not its handle.
+    for (auto& kv : g_script_nodes) {
+      if (!is_gone(kv.second.parent_id)) continue;
+      kv.second.parent = g_script_root;
+      kv.second.parent_id = g_script_root_id;
+      for (InvObject* o : {kv.second.object, kv.second.other}) {
+        auto oi = g_res.find(o);
+        if (oi != g_res.end() && oi->second.id == kv.first)
+          oi->second.parent_id = g_script_root_id;
+      }
+    }
+  }
+  // The handles native objects hold on those nodes (a camera's `move` and
+  // `look` targets), before a new node can take one of the ids.
+  native_nodes_gone(gone);
+  // PE 940 FUN_005173e0.
+  for (int32_t id : gone) host_free_local_rid(static_cast<uint32_t>(id));
+}
+
+bool script_node_set_parent(InvObject* node, InvObject* parent,
+                            InvObject** object, InvObject** other) {
+  if (object) *object = nullptr;
+  if (other) *other = nullptr;
+  if (!node || !native_script_boot()) return false;
+  std::lock_guard<std::mutex> lock(g_mu);
+  auto it = g_res.find(node);
+  if (it == g_res.end() || it->second.restype != 1) return false;
+  ScriptNode* n = script_node_find(it->second.id);
+  if (!n || (n->object != node && n->other != node)) return false;
+  n->parent = parent;
+  n->parent_id = 0;
+  if (parent) {
+    auto pi = g_res.find(parent);
+    if (pi != g_res.end()) n->parent_id = pi->second.id;
+  }
+  for (InvObject* o : {n->object, n->other}) {
+    auto oi = g_res.find(o);
+    if (oi == g_res.end()) continue;
+    oi->second.parent_id = n->parent_id;
+  }
+  if (object) *object = n->object;
+  if (other) *other = n->other;
+  return true;
+}
+
+InvObject* gameref_node_object(InvObject* handle) {
+  if (!handle || !native_script_boot()) return handle;
+  int32_t id = 0;
+  {
+    std::lock_guard<std::mutex> lock(g_mu);
+    auto it = g_res.find(handle);
+    if (it == g_res.end() || it->second.restype != 1 || it->second.id == 0)
+      return handle;
+    id = it->second.id;
+    if (const ScriptNode* n = script_node_find(id)) return n->object;
+  }
+  // A pack instance: the handle whose payload request built the node is
+  // the object every child of the node names as its parent.
+  if (InvObject* built = instance_node_handle(id)) return built;
+  return handle;
+}
+
 ResState& R(InvObject* self) {
   auto it = g_res.find(self);
   if (it != g_res.end()) return it->second;

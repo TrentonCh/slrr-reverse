@@ -1156,10 +1156,38 @@ void resref_ensure(InvObject* self) {
 InvObject* resref_find_by_id(int32_t id) {
   if (!id) return nullptr;
   std::lock_guard<std::mutex> lock(g_mu);
+  // The id of a node GameRef.create made names the node, whatever handles
+  // are bound to it (940 FUN_005183a0). Script boot only (the table is
+  // empty on the legacy path).
+  if (const ScriptNode* n = script_node_find(id)) return n->object;
   for (auto& kv : g_res) {
     if (kv.second.id == id) return kv.first;
   }
   return nullptr;
+}
+
+InvObject* resref_find_by_id_restype(int32_t id, int32_t restype) {
+  if (!id) return nullptr;
+  std::lock_guard<std::mutex> lock(g_mu);
+  for (auto& kv : g_res) {
+    if (kv.second.id == id && kv.second.restype == restype) return kv.first;
+  }
+  return nullptr;
+}
+
+int32_t resref_peek_id(InvObject* o) {
+  if (!o) return 0;
+  std::lock_guard<std::mutex> lock(g_mu);
+  auto it = g_res.find(o);
+  return it == g_res.end() ? 0 : it->second.id;
+}
+
+int32_t resref_node_flags(InvObject* o) {
+  if (!o) return 0;
+  std::lock_guard<std::mutex> lock(g_mu);
+  auto it = g_res.find(o);  // never creates an entry
+  if (it == g_res.end() || it->second.restype != 1) return 0;
+  return it->second.rec_flags;
 }
 
 void resref_set_parent(InvObject* self, InvObject* parent) {
@@ -1254,6 +1282,14 @@ void java_util_resource_ResourceRef_load(InvObject* self) {
   }
   if (id == 0) return;  // inner=[handle+0xC]==0
   // [inner+0x4C]!=1 → vtbl+0x14(1.0f) LOD — not mirrored (type==1 skip).
+  // PE 940 FUN_004e3de0 -> FUN_0051f4f0: on a game instance (typeof 1) the
+  // payload request parses the node and builds its game object
+  // (FUN_005195a0). Script boot only; false for every other handle.
+  if (instance_node_request(self)) {
+    std::lock_guard<std::mutex> lock(g_mu);
+    R(self).loaded = true;
+    return;
+  }
   const bool bound = resource_ref_bind_payload(self, id, type, entry_path);
   if (!bound) return;  // sub_5447D0 sign → skip vtbl+0x0C
   {
@@ -1279,6 +1315,9 @@ void java_util_resource_ResourceRef_unload(InvObject* self) {
   // textures; GameLogic.erase unload then destroy.
   // Host: GPU tex/mesh destroy + loaded=false (vtable+0x1C stand-in).
   if (!self) return;
+  // INSTANCE_GAME: the node's game object goes (the ground of a map, with
+  // its render instance); the next payload request builds it again.
+  instance_node_unload(self);
   render_d3d9_texture_destroy(self);
   render_d3d9_mesh_destroy(self);
   std::lock_guard<std::mutex> lock(g_mu);
@@ -1340,6 +1379,7 @@ void java_util_resource_ResourceRef_destroy(InvObject* self) {
   // Host: GPU tex/mesh destroy + gameref_on_destroy (deferred queue
   // stand-in). Keeps g_res — PE leaves Native.ptr until deleteNative.
   if (!self) return;
+  ++t_node_destroy_depth;  // script_nodes_retire waits for the outermost call
   // Fork: a Text's render instance (Text.finalize -> renderinst.destroy()):
   // the glyph instance lives under the Text object on the host.
   if (InvObject* owner = tree_field_get_obj(self, "_text_owner")) {
@@ -1347,12 +1387,57 @@ void java_util_resource_ResourceRef_destroy(InvObject* self) {
     render_d3d9_mesh_destroy(owner);
     tree_field_set_obj(self, "_text_owner", nullptr);
   }
+  // A node GameRef.create made goes through any handle on it (sub_427620
+  // queues the node, not the handle): its host objects first, which takes
+  // the native game object with it.
+  int32_t node_id = 0;
+  std::vector<int32_t> kids;  // the nodes under it, for the end of the call
+  {
+    InvObject* node_object = nullptr;
+    InvObject* node_other = nullptr;
+    if (script_node_release(self, &node_object, &node_other, &node_id)) {
+      script_node_children(node_id, &kids);
+      for (InvObject* o : {node_object, node_other}) {
+        if (!o || o == self) continue;
+        render_d3d9_mesh_destroy(o);
+        gameref_on_destroy(o);
+        if (node_object == node_other) break;  // one object: once
+      }
+    }
+  }
   render_d3d9_texture_destroy(self);
   render_d3d9_mesh_destroy(self);
   gameref_on_destroy(self);
-  std::lock_guard<std::mutex> lock(g_mu);
-  auto it = g_res.find(self);
-  if (it != g_res.end()) it->second.loaded = false;
+  {
+    std::lock_guard<std::mutex> lock(g_mu);
+    auto it = g_res.find(self);
+    if (it != g_res.end()) it->second.loaded = false;
+  }
+  if (node_id != 0) {
+    // PE 940 FUN_00569890, the TreeNode destructor at the end of the node's
+    // destructor chain: every child node is deleted with it, each through
+    // its own destructors (its game object, its handles, its id). A car
+    // takes the parts `install` moved under it; nothing else destroys them
+    // (Vehicle.java has no destroy of its own).
+    // Fork: only the nodes GameRef.create, create_native and
+    // createNativeInstance made are followed. A RenderRef or PhysicsRef the
+    // script made under the node is a host object without a node and stays
+    // until the script destroys it.
+    for (int32_t kid : kids)
+      if (InvObject* k = script_node_object(kid))  // not gone meanwhile
+        java_util_resource_ResourceRef_destroy(k);
+  }
+  // PE 940 node destructor FUN_0051eca0: the handles on the node are
+  // unbound (FUN_0051f970) and its id goes back to the allocator
+  // (FUN_005173e0).
+  // Fork: ResourceRef.destroy of the exe (FUN_004e32b0 -> FUN_004e9450 ->
+  // FUN_0047b970) only puts an entry for the node on the list at
+  // engine+0x158; the destructor runs when that list is processed (not
+  // read: where), so a handle keeps its id until then. The host tears the
+  // node down in this call and unbinds the handles when the outermost
+  // destroy ends.
+  --t_node_destroy_depth;
+  script_nodes_retire();
 }
 void java_util_resource_ResourceRef_set(InvObject* self, int32_t ID) {
   // PE @ 0x0047CF80 size 0x3a (58): Unbox this+I (JVM_UnboxArg @
@@ -1369,6 +1454,15 @@ void java_util_resource_ResourceRef_set(InvObject* self, int32_t ID) {
   // Host: bind_res_id (rpak stand-in for sub_545FC0). !self = handle 0.
   if (!self) return;
   std::lock_guard<std::mutex> lock(g_mu);
+  // `[handle+8] == ID` is a no-op in the exe. The host needs that for a
+  // node GameRef.create made: its script constructor gets the node's id
+  // and GameType.<init>(I) hands it to ResourceRef.set through super(id),
+  // which must leave the node object as it is.
+  if (ID != 0 && !g_script_nodes.empty()) {
+    auto it = g_res.find(self);
+    if (it != g_res.end() && it->second.id == ID && script_node_find(ID))
+      return;
+  }
   bind_res_id(R(self), ID);
   gameref_on_res_bound(self);
 }
@@ -1434,7 +1528,13 @@ int32_t java_util_resource_ResourceRef_getParentID(InvObject* self) {
   // space. !self = handle 0 (silent).
   if (!self) return 0;
   std::lock_guard<std::mutex> lock(g_mu);
-  return R(self).parent_id;
+  const ResState& st = R(self);
+  // A handle on a node GameRef.create made: the parent the node has now
+  // (a part's `install` moves it; Part.addPart tests exactly this).
+  if (st.restype == 1) {
+    if (const ScriptNode* n = script_node_find(st.id)) return n->parent_id;
+  }
+  return st.parent_id;
 }
 InvObject* java_util_resource_ResourceRef_getParent(InvObject* self) {
   // PE @ 0x0047D4B0 size 0xba (186): twin of getFirstChild @ 0x0047D630 /
@@ -1448,7 +1548,11 @@ InvObject* java_util_resource_ResourceRef_getParent(InvObject* self) {
   int32_t pid = 0;
   {
     std::lock_guard<std::mutex> lock(g_mu);
-    pid = R(self).parent_id;
+    const ResState& st = R(self);
+    pid = st.parent_id;
+    if (st.restype == 1) {
+      if (const ScriptNode* n = script_node_find(st.id)) pid = n->parent_id;
+    }
   }
   return make_bound_ref(pid);
 }
@@ -1585,7 +1689,7 @@ void java_util_resource_ResourceRef_makeTexture(InvObject* self, InvObject* pare
   {
     std::lock_guard<std::mutex> lock(g_mu);
     auto& r = R(self);
-    r.id = g_next_id++;
+    r.id = resref_next_runtime_id();
     r.type = 7;  // RESTYPE_TEXTURE (PE ResourceEngine_type_texture v9[0]=7)
     r.parent = parent;
     r.parent_id = R(parent).id;
@@ -1606,7 +1710,7 @@ void java_util_resource_ResourceRef_makeSound(InvObject* self, InvObject* parent
   if (!fn) return;
   std::lock_guard<std::mutex> lock(g_mu);
   auto& r = R(self);
-  r.id = g_next_id++;
+  r.id = resref_next_runtime_id();
   r.type = 6;  // RESTYPE_SOUND (PE ResourceEngine_type_sfx v9[0]=6)
   r.parent = parent;
   r.parent_id = R(parent).id;
@@ -1654,6 +1758,79 @@ void java_util_resource_ResourceRef_duplicate(InvObject* self, InvObject* src) {
   gameref_on_res_bound(self);
 }
 
+// PE 940 type-3 builder FUN_00462b40 -> FUN_0046d890: a render instance's
+// render type is requested when a camera walk first meets the instance.
+// Host: the camera pass (draw_viewport_cameras) calls this for an instance
+// whose type was not loaded at RenderRef.create and that a bound camera
+// sees (render_d3d9_mesh_set_pending_type).
+// Fork: the type is loaded at once, through a host handle bound to its id,
+// one per type id (the exe has one type node per id and every handle shares
+// it), so the instances of one type share one loaded mesh.
+int32_t renderref_materialise_pending(InvObject* instance, int32_t type_id) {
+  if (!instance || !type_id) return -1;
+  const RpakEntry* e = rpak_find_entry(type_id);
+  const int restype = e ? e->restype : -1;
+  const std::string name = e ? e->name : std::string();
+  int32_t made = -1;
+  uint32_t flags = 0;
+  bool object_class = true;
+  bool ground_class = false;
+  if (restype == 13) {
+    // A light type (`light = new RenderRef(map, lighttype, "neon")`): its
+    // instance becomes a scene light (FUN_00462970), not a mesh: the type's
+    // values, placed by the instance's bone00 every frame.
+    made = 0;
+    if (const RenderLightDesc* light = light_type_payload(type_id))
+      render_d3d9_scene_light_set(instance, type_id, light);
+  } else if (restype == 14) {
+    // FUN_0046d890: the template class comes from the render object's
+    // flags: 0x4 text, 0x100 particle, 0x2000 skidmark, 0x100000 welding,
+    // 0x800 ground, else object. Only the object class is a mesh under the
+    // instance; the others have builders of their own.
+    const RenderObjectDesc* desc = render_object_desc(type_id);
+    flags = desc->flags;
+    const int cls = render_template_class(flags);
+    if (cls == kRenderTemplateGround) {
+      // RT_ground: the mesh is a material table and the geometry comes from
+      // the POLY chunks of the map. The exe's type-3 builder makes nothing
+      // for such an instance (template class id 0); the geometry is built
+      // for the map's own render instance only (ground getinfo 0x17).
+      object_class = false;
+      ground_class = true;
+      made = ground_mesh_build(instance, type_id);
+    } else if (cls != kRenderTemplateObject) {
+      object_class = false;
+      made = 0;
+    }
+  }
+  if (made != 0 && !ground_class) {
+    static std::unordered_map<int32_t, InvObject*> s_types;  // main thread
+    InvObject*& type = s_types[type_id];
+    if (!type) type = make_bound_ref(type_id);
+    if (type && !render_d3d9_mesh_ready(type))
+      java_util_resource_ResourceRef_load(type);
+    if (type && render_d3d9_mesh_ready(type)) {
+      // What RenderRef.create does for a type that is loaded.
+      render_d3d9_mesh_clone(instance, type);
+      render_d3d9_mesh_set_geometry_source(instance, type);
+      render_d3d9_mesh_set_type_flags(instance,
+                                      render_d3d9_mesh_type_flags(type));
+      made = 1;
+    }
+  }
+  if (native_type_log())
+    std::fprintf(stderr,
+                 "[native-type] pending instance %p: type 0x%08X '%s' typeof "
+                 "%d flags %u -> %s\n",
+                 static_cast<void*>(instance), static_cast<unsigned>(type_id),
+                 name.c_str(), restype, flags,
+                 made > 0 ? (ground_class ? "ground mesh" : "mesh")
+                          : made == 0 ? (object_class ? "light type, no mesh"
+                                                      : "not an object template, no mesh")
+                                      : "NOT LOADED");
+  return made;
+}
+
 // ---- RenderRef ----
 void java_util_resource_RenderRef_create(InvObject* self, InvObject* parent,
                                          InvObject* type, InvObject* alias) {
@@ -1666,6 +1843,15 @@ void java_util_resource_RenderRef_create(InvObject* self, InvObject* parent,
   if (!self) return;
   // PE Mighty ERROR if type && !parent. Camera.create shims type=null.
   if (type && !parent) return;
+  // Fork (M2 spec Q2): the exe builds a pack instance's game object on the
+  // first payload request for the node; whether its render-instance factory
+  // FUN_00524840 makes one for the parent was not read. The host also
+  // builds here, so the map exists when its first child is a RenderRef
+  // (Garage.enter: `stuff` comes before the lift's GameRef.create).
+  instance_node_request(parent);
+  // The parent is a handle; the instance hangs under the node it is bound
+  // to (script boot; the handle itself on the legacy path).
+  parent = gameref_node_object(parent);
   const char* alias_s = alias ? string_cstr(alias) : nullptr;
   if (type && (!alias_s || !alias_s[0])) alias_s = "_renderinst";
   int32_t type_id = 0;
@@ -1682,7 +1868,7 @@ void java_util_resource_RenderRef_create(InvObject* self, InvObject* parent,
       r.entry_path = R(type).entry_path;
       r.blob_size = R(type).blob_size;
     } else {
-      r.id = g_next_id++;
+      r.id = resref_next_runtime_id();
       r.type = 3;
     }
     if (alias_s) r.alias = alias_s;
@@ -1695,6 +1881,14 @@ void java_util_resource_RenderRef_create(InvObject* self, InvObject* parent,
     // PE 940 RI_object ctor FUN_00465e40: the instance colour mode comes
     // from the render type's flags (template+0x18).
     render_d3d9_mesh_set_type_flags(self, render_d3d9_mesh_type_flags(type));
+    render_d3d9_mesh_set_pending_type(self, 0);
+  } else if (type && type_id != 0 && native_script_boot()) {
+    // PE 940: the exe does not load a render type here either; the type-3
+    // builder FUN_00462b40 requests it when a camera walk first meets the
+    // instance. The host's camera pass does that for the instances on this
+    // list (renderref_materialise_pending). Script boot only: on the legacy
+    // path such an instance stays without a mesh, as before.
+    render_d3d9_mesh_set_pending_type(self, type_id);
   }
   render_d3d9_mesh_set_tree_parent(self, parent);
   render_d3d9_mesh_set_parent(self, parent);

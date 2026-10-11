@@ -345,6 +345,19 @@ void java_util_resource_RenderRef_setLight(InvObject* self, int32_t diffuse,
     r.light_specular = specular;
   }
   if (self) render_ref_apply_light_soft(self, diffuse, ambient, specular);
+  // PE 940 FUN_004e29f0 -> FUN_004ebef0: on a light type the three colours
+  // go into its payload, and the lights made from it follow. Script boot
+  // only; the stand-in light below is left as it is on both paths.
+  if (self && native_script_boot()) {
+    int32_t id = 0;
+    int32_t restype = 0;
+    {
+      std::lock_guard<std::mutex> lock(g_mu);
+      id = R(self).id;
+      restype = R(self).restype;
+    }
+    if (restype == 13) light_type_set_colours(id, diffuse, ambient, specular);
+  }
   render_d3d9_set_light(diffuse, ambient, specular);
 }
 void java_util_resource_RenderRef_setFlare(InvObject* self, InvObject* glowtexture,
@@ -418,7 +431,7 @@ int32_t java_util_resource_RenderRef_lineCreate(InvObject* self, InvObject* pare
   if (!self || !parent || !type) return 0;
   std::lock_guard<std::mutex> lock(g_mu);
   auto& r = R(self);
-  if (!r.id) r.id = g_next_id++;
+  if (!r.id) r.id = resref_next_runtime_id();
   r.type = 3;
   r.parent = parent;
   r.parent_id = R(parent).id;

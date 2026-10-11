@@ -1451,7 +1451,12 @@ bool part_find_cfg_install(InvObject* car, InvObject* part, int32_t* parent_slot
     return true;
   }
 
-  const int32_t part_id = java_util_resource_ResourceRef_id(part);
+  // The attach lists name part TYPES. An instance made by GameRef.create
+  // has a node id of its own on the script boot (940 FUN_00523c80), and
+  // the node keeps its type; on the legacy path both objects of a create
+  // carry the type id, as before.
+  int32_t part_id = script_node_type_id(part);
+  if (!part_id) part_id = java_util_resource_ResourceRef_id(part);
   InvObject* slots = tree_field_get_obj(car, "part_slots");
   const int32_t n = slots ? tree_vector_size(slots) : 0;
 

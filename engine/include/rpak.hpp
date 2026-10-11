@@ -20,6 +20,17 @@ struct RpakEntry {
   int32_t parent_local = -1;
   int32_t first_child_local = -1;
   int32_t next_sibling_local = -1;
+  // PE TOC record +8 / +9, the descriptor the ResourceNode ctor copies
+  // (940 FUN_0051eaa0: node+0x7C restype, node+0x84 flags). restype:
+  // 1 game instance, 2 physics instance, 3 render instance, 5 mesh,
+  // 7 texture, 8 game type, 13 light type, 14 render object type,
+  // 0x12 viewport. rec_flags bit 0 = twelve floats follow the name,
+  // bit 0x10 = RIF_WORLDTREEROOT (31 of the 33 map instances carry 0x11).
+  uint8_t restype = 0;
+  uint8_t rec_flags = 0;
+  // The twelve floats of rec_flags bit 0. For a game instance: box centre
+  // xyz, box half extents xyz (metres), six unused. Zero without the bit.
+  float bounds[12] = {};
 };
 
 // Soft PE EnsureIndex dep record @ 0x54425E (0x40B) → TOC slot @ +0x5C.
@@ -92,6 +103,15 @@ int32_t rpak_parent_id(int32_t child_res_id);
 
 // Read raw entry bytes (re-opens pack file). Returns false if missing/dir/empty.
 bool rpak_read_entry(int32_t res_id, std::vector<uint8_t>* out);
+
+// Read `size` bytes at the absolute file offset `offset` of an open pack.
+// The nested nodes of a game instance carry file offsets, not ids (940
+// FUN_00519940 child records). Re-opens the pack file like rpak_read_entry,
+// so a reader that walks many nodes asks for one range that covers them.
+// A range that runs past the end of the file is cut there. Returns false
+// when the pack is unknown or no byte could be read.
+bool rpak_read_range(int32_t pack_id, uint32_t offset, uint32_t size,
+                     std::vector<uint8_t>* out);
 
 inline int32_t rpak_make_id(int32_t pack_id, uint16_t local) {
   return (pack_id << 16) | static_cast<int32_t>(local);

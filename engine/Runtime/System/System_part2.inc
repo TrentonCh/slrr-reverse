@@ -1476,6 +1476,9 @@ void engine_simulate_frame() {
   s_sim_dt_accum += frame_dt;
   if (s_sim_dt_accum > kAccumEps) {
     engine_tick_sim_objects(s_sim_dt_accum);
+    // PE 940 game tick FUN_0047e050 -> FUN_0047bc20(dt): type vt+0x2C
+    // ("control") of every registered native instance, once per tick.
+    native_tick_control(s_sim_dt_accum);
     s_sim_dt_accum = 0.f;
   }
 
@@ -1492,6 +1495,13 @@ void engine_simulate_frame() {
     // Pending flag left set until Soft consume below (ordering note only).
     (void)g_physics_step_reset_pending;
     g_physics_step_reset_pending = 0;
+
+    // PE 940 FUN_00502060(step) -> FUN_0047be30(step): type vt+0x30
+    // ("drive") of every registered native instance inside each step of the
+    // exe's world (0.02 s at most). Fork: the soft world below keeps its own
+    // 0.05 s substep, so the native objects get the frame dt once and cut
+    // the exe's steps themselves.
+    if (frame_dt > 0.f) native_tick_drive(frame_dt);
 
     // PE @ 0x00428545: if v23<=0 → LABEL_27.
     while (remaining > 0.f && !exit_requested()) {

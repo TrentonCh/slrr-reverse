@@ -204,6 +204,12 @@ bool parse_entries_pe(const std::vector<uint8_t>& data, size_t off,
       }
       e.offset = file_off;
       e.size = file_sz;
+      // PE ResourceNode ctor (940 FUN_0051eaa0): restype and the flags byte
+      // go into the node descriptor; the twelve floats are the node bounds.
+      e.restype = restype;
+      e.rec_flags = flags;
+      if ((flags & 1u) != 0)
+        std::memcpy(e.bounds, data.data() + off + 23 + nsz, sizeof(e.bounds));
       out->push_back(std::move(e));
       off = end;
     }
@@ -542,6 +548,36 @@ bool rpak_read_entry(int32_t res_id, std::vector<uint8_t>* out) {
           static_cast<std::streamsize>(ent->size));
   if (!(static_cast<bool>(in) ||
         in.gcount() == static_cast<std::streamsize>(ent->size))) {
+    out->clear();
+    return false;
+  }
+  return true;
+}
+
+// Fork: one range of the pack file by absolute offset. The exe reads a
+// nested node's range when that node's payload is requested (940
+// FUN_0051e500 from FUN_00518a80); the host reads on the caller's demand.
+bool rpak_read_range(int32_t pack_id, uint32_t offset, uint32_t size,
+                     std::vector<uint8_t>* out) {
+  if (!out) return false;
+  out->clear();
+  const RpakPack* pack = rpak_get(pack_id);
+  if (!pack || size == 0) return false;
+
+  std::ifstream in(pack->path, std::ios::binary);
+  if (!in) return false;
+  in.seekg(0, std::ios::end);
+  const std::streamoff file_size = in.tellg();
+  if (file_size <= 0 || static_cast<std::streamoff>(offset) >= file_size)
+    return false;
+  const uint64_t avail = static_cast<uint64_t>(file_size) - offset;
+  const size_t want =
+      static_cast<size_t>(avail < size ? avail : static_cast<uint64_t>(size));
+  out->resize(want);
+  in.seekg(static_cast<std::streamoff>(offset));
+  in.read(reinterpret_cast<char*>(out->data()),
+          static_cast<std::streamsize>(want));
+  if (in.gcount() != static_cast<std::streamsize>(want)) {
     out->clear();
     return false;
   }

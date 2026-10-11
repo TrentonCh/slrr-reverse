@@ -2,6 +2,753 @@
 // Split only to stay under the 128 KB editor buffer cap; the
 // translation unit is unchanged. See native/tools/split_source.py.
 
+void draw_osd_rects() {
+#ifdef _WIN32
+  if (!g_dev || g_osd.empty() || g_w <= 0 || g_h <= 0) return;
+
+  // Stable-ish draw order: lower pri first (background), matching Osd usage
+  // (createBG uses pri=-2, header -1).
+  std::vector<OsdRect> ordered = g_osd;
+  for (size_t i = 1; i < ordered.size(); ++i) {
+    OsdRect key = ordered[i];
+    size_t j = i;
+    while (j > 0 && ordered[j - 1].pri > key.pri) {
+      ordered[j] = ordered[j - 1];
+      --j;
+    }
+    ordered[j] = key;
+  }
+
+  struct Vtx {
+    float x, y, z, rhw;
+    DWORD color;
+    float u, v;
+  };
+  const DWORD fvf = D3DFVF_XYZRHW | D3DFVF_DIFFUSE | D3DFVF_TEX1;
+  set_fullscreen_viewport();
+  g_dev->SetFVF(fvf);
+  g_dev->SetRenderState(D3DRS_ZENABLE, FALSE);
+  g_dev->SetRenderState(D3DRS_LIGHTING, FALSE);
+  g_dev->SetRenderState(D3DRS_CULLMODE, D3DCULL_NONE);
+  g_dev->SetRenderState(D3DRS_ALPHABLENDENABLE, TRUE);
+  g_dev->SetRenderState(D3DRS_SRCBLEND, D3DBLEND_SRCALPHA);
+  g_dev->SetRenderState(D3DRS_DESTBLEND, D3DBLEND_INVSRCALPHA);
+  g_dev->SetTextureStageState(0, D3DTSS_COLOROP, D3DTOP_MODULATE);
+  g_dev->SetTextureStageState(0, D3DTSS_COLORARG1, D3DTA_TEXTURE);
+  g_dev->SetTextureStageState(0, D3DTSS_COLORARG2, D3DTA_DIFFUSE);
+  g_dev->SetTextureStageState(0, D3DTSS_ALPHAOP, D3DTOP_MODULATE);
+  g_dev->SetTextureStageState(0, D3DTSS_ALPHAARG1, D3DTA_TEXTURE);
+  g_dev->SetTextureStageState(0, D3DTSS_ALPHAARG2, D3DTA_DIFFUSE);
+
+  const float sw = static_cast<float>(g_w);
+  const float sh = static_cast<float>(g_h);
+  for (const auto& r : ordered) {
+    if (!r.visible) continue;
+    IDirect3DTexture9* tex = nullptr;
+    if (r.texture) {
+      auto it = g_textures.find(r.texture);
+      if (it != g_textures.end()) tex = it->second.tex;
+    }
+    g_dev->SetTexture(0, tex);
+    if (tex) {
+      g_dev->SetTextureStageState(0, D3DTSS_COLOROP, D3DTOP_MODULATE);
+      g_dev->SetTextureStageState(0, D3DTSS_ALPHAOP, D3DTOP_MODULATE);
+    } else {
+      g_dev->SetTextureStageState(0, D3DTSS_COLOROP, D3DTOP_SELECTARG2);
+      g_dev->SetTextureStageState(0, D3DTSS_ALPHAOP, D3DTOP_SELECTARG2);
+    }
+    g_dev->SetRenderState(D3DRS_SRCBLEND, D3DBLEND_SRCALPHA);
+    g_dev->SetRenderState(D3DRS_DESTBLEND, D3DBLEND_INVSRCALPHA);
+
+    // Host OSD blit: x right, y up; (0,0,2,2) covers [-1,1]² → full window.
+    // (Stock scripts use the opposite Y via convertTextCoordinates — host
+    // chrome negates Y when materializing stock layouts.)
+    const float left = (r.x - r.w * 0.5f + 1.f) * 0.5f * sw;
+    const float right = (r.x + r.w * 0.5f + 1.f) * 0.5f * sw;
+    const float top = (1.f - (r.y + r.h * 0.5f)) * 0.5f * sh;
+    const float bottom = (1.f - (r.y - r.h * 0.5f)) * 0.5f * sh;
+    const DWORD col = r.color ? r.color : 0xFFFFFFFFu;
+
+    Vtx v[4] = {
+        {left, top, 0.f, 1.f, col, 0.f, 0.f},
+        {right, top, 0.f, 1.f, col, 1.f, 0.f},
+        {left, bottom, 0.f, 1.f, col, 0.f, 1.f},
+        {right, bottom, 0.f, 1.f, col, 1.f, 1.f},
+    };
+    g_dev->DrawPrimitiveUP(D3DPT_TRIANGLESTRIP, 2, v, sizeof(Vtx));
+  }
+
+  g_dev->SetTexture(0, nullptr);
+  g_dev->SetRenderState(D3DRS_ALPHABLENDENABLE, FALSE);
+  g_dev->SetRenderState(D3DRS_ZENABLE, TRUE);
+#endif
+}
+
+void draw_osd_texts() {
+#ifdef _WIN32
+  if (!g_dev || g_osd_text.empty() || g_w <= 0 || g_h <= 0) return;
+
+  struct Vtx {
+    float x, y, z, rhw;
+    DWORD color;
+    float u, v;
+  };
+  const DWORD fvf = D3DFVF_XYZRHW | D3DFVF_DIFFUSE | D3DFVF_TEX1;
+  set_fullscreen_viewport();
+  g_dev->SetFVF(fvf);
+  g_dev->SetRenderState(D3DRS_ZENABLE, FALSE);
+  g_dev->SetRenderState(D3DRS_LIGHTING, FALSE);
+  g_dev->SetRenderState(D3DRS_CULLMODE, D3DCULL_NONE);
+  g_dev->SetRenderState(D3DRS_ALPHABLENDENABLE, TRUE);
+  g_dev->SetRenderState(D3DRS_SRCBLEND, D3DBLEND_SRCALPHA);
+  g_dev->SetRenderState(D3DRS_DESTBLEND, D3DBLEND_INVSRCALPHA);
+  g_dev->SetTextureStageState(0, D3DTSS_COLOROP, D3DTOP_MODULATE);
+  g_dev->SetTextureStageState(0, D3DTSS_COLORARG1, D3DTA_TEXTURE);
+  g_dev->SetTextureStageState(0, D3DTSS_COLORARG2, D3DTA_DIFFUSE);
+  g_dev->SetTextureStageState(0, D3DTSS_ALPHAOP, D3DTOP_MODULATE);
+  g_dev->SetTextureStageState(0, D3DTSS_ALPHAARG1, D3DTA_TEXTURE);
+  g_dev->SetTextureStageState(0, D3DTSS_ALPHAARG2, D3DTA_DIFFUSE);
+  g_dev->SetSamplerState(0, D3DSAMP_MINFILTER, D3DTEXF_LINEAR);
+  g_dev->SetSamplerState(0, D3DSAMP_MAGFILTER, D3DTEXF_LINEAR);
+
+  const float sw = static_cast<float>(g_w);
+  const float sh = static_cast<float>(g_h);
+
+  for (const auto& t : g_osd_text) {
+    if (!t.visible || !t.font || t.text.empty()) continue;
+    {
+      // Fork: a tree text belongs to the camera pass of its Osd (PE 940
+      // rg_text_section) and is hidden with it.
+      auto kit = g_texts.find(t.text_key);
+      if (kit != g_texts.end() && kit->second.tree) continue;
+    }
+    auto fit = g_fonts.find(t.font);
+    if (fit == g_fonts.end() || !fit->second.ready) continue;
+    const FontState& font = fit->second;
+    IDirect3DTexture9* tex = nullptr;
+    if (font.atlas_key) {
+      auto tit = g_textures.find(font.atlas_key);
+      if (tit != g_textures.end()) tex = tit->second.tex;
+    }
+    if (!tex) continue;
+    g_dev->SetTexture(0, tex);
+
+    float width_px = 0.f;
+    for (unsigned char ch : t.text) {
+      if (ch == ' ') {
+        width_px += static_cast<float>(font.px_height) * 0.35f;
+        continue;
+      }
+      // Glyph slots are ASCII-indexed (see font SCX z ≈ -100*code).
+      const size_t gi = static_cast<size_t>(ch);
+      if (gi >= font.glyphs.size()) continue;
+      width_px += font.glyphs[gi].adv_px;
+    }
+    // Text.java getHeight/getWidth: 2*px / video_{y,x}. t.y is top of line
+    // (stock native Text.create), host Y up-positive.
+    const float line_h_osd = 2.f * static_cast<float>(font.px_height) / sh;
+    const float width_osd = 2.f * width_px / sw;
+    float pen_x = t.x;
+    if (t.align == 1) pen_x -= width_osd * 0.5f;       // CENTER
+    else if (t.align == 0) pen_x -= width_osd;          // RIGHT
+    // LEFT (2): pen at t.x — Text.java ALIGN_*
+    const float top_y = t.y;
+    const float bot_y = t.y - line_h_osd;
+    const DWORD col = t.color;
+
+    for (unsigned char ch : t.text) {
+      float adv_px = static_cast<float>(font.px_height) * 0.35f;
+      float u0 = 0, v0 = 0, u1 = 0, v1 = 0;
+      bool draw = false;
+      if (ch != ' ') {
+        const size_t gi = static_cast<size_t>(ch);
+        if (gi < font.glyphs.size()) {
+          const FontGlyph& g = font.glyphs[gi];
+          adv_px = g.adv_px;
+          u0 = g.u0;
+          v0 = g.v0;
+          u1 = g.u1;
+          v1 = g.v1;
+          draw = (u1 > u0 + 1e-6f && v1 > v0 + 1e-6f);
+        }
+      }
+      const float adv_osd = 2.f * adv_px / sw;
+      if (draw) {
+        // Keep glyph pixel aspect from atlas UVs (not line_h vs adv mismatch).
+        const float gw_px = (u1 - u0) * static_cast<float>(font.atlas_w);
+        const float gh_px = (v1 - v0) * static_cast<float>(font.atlas_h);
+        const float gw = 2.f * gw_px / sw;
+        const float gh = 2.f * gh_px / sh;
+        const float g_top_y = top_y;
+        const float g_bot_y = top_y - gh;
+        const float left = (pen_x + 1.f) * 0.5f * sw;
+        const float right = (pen_x + gw + 1.f) * 0.5f * sw;
+        const float top = (1.f - g_top_y) * 0.5f * sh;
+        const float bottom = (1.f - g_bot_y) * 0.5f * sh;
+        Vtx v[4] = {
+            {left, top, 0.f, 1.f, col, u0, v0},
+            {right, top, 0.f, 1.f, col, u1, v0},
+            {left, bottom, 0.f, 1.f, col, u0, v1},
+            {right, bottom, 0.f, 1.f, col, u1, v1},
+        };
+        g_dev->DrawPrimitiveUP(D3DPT_TRIANGLESTRIP, 2, v, sizeof(Vtx));
+      }
+      pen_x += adv_osd;
+    }
+  }
+
+  g_dev->SetTexture(0, nullptr);
+  g_dev->SetRenderState(D3DRS_ALPHABLENDENABLE, FALSE);
+  g_dev->SetRenderState(D3DRS_ZENABLE, TRUE);
+#endif
+}
+
+// Fork: SLRR_CAM_PASS_SHOT=<file.bmp> writes the frame of the N-th flush in
+// which a script camera pass ran (N = SLRR_CAM_PASS_SHOT_N, default 8), once.
+// For runs that never reach the boot-loop dump (SLRR_PE_BOOT_SHOT), e.g. the
+// old build's navigator minimap on the legacy --game path.
+// SLRR_CAM_PASS_SHOT_STAGE=pass takes it right after the camera passes,
+// before the flare sprites and the legacy OSD rectangles / texts (the legacy
+// navigator shim covers the minimap in the finished frame); the default is
+// the finished frame.
+static void cam_pass_shot(bool pass_stage) {
+#ifdef _WIN32
+  if (g_cam_pass_stats.passes <= 0) return;
+  static const char* const shot = std::getenv("SLRR_CAM_PASS_SHOT");
+  if (!shot || !shot[0]) return;
+  static const bool want_pass_stage = [] {
+    const char* e = std::getenv("SLRR_CAM_PASS_SHOT_STAGE");
+    return e && std::strcmp(e, "pass") == 0;
+  }();
+  if (pass_stage != want_pass_stage) return;
+  static const int shot_at = [] {
+    const char* e = std::getenv("SLRR_CAM_PASS_SHOT_N");
+    const int n = e ? std::atoi(e) : 0;
+    return n > 0 ? n : 8;
+  }();
+  static int pass_frames = 0;
+  if (++pass_frames == shot_at)
+    std::printf("[render] camera pass frame %d (%s) -> %s (%d)\n", pass_frames,
+                pass_stage ? "after the passes" : "finished frame", shot,
+                render_d3d9_print_screen(shot) ? 1 : 0);
+#else
+  (void)pass_stage;
+#endif
+}
+
+void render_d3d9_flush() {
+#ifdef _WIN32
+  if (g_dev) {
+    apply_active_viewport();
+    apply_active_camera();
+    // Soft PE GfxEngine_PresentFrame @ 0x004FCA30 (forceRendering@47C1FC /
+    // flush@47C2FC / MainLoop Present slot). Stock order:
+    //   FlushDeferred@52CD40 → SetPendingClearObj(0) device vt+0x128
+    //   → optional SetPendingClearObj(cam+0x4C) → if GfxEngine_skipPresent
+    //   @65AECC==0: GfxDevice_Present @ 0x004BB410 (GfxDevice vt+0x18 →
+    //   IDirect3DDevice9 vt+0x44 Present(0,0,0,0); ++presentCount@6495FC)
+    //   → skipPresent=0 → BeginFrame device vt+0x24 (BeginScene)
+    //   → DrawCameraPass@516A90 → ApplyViewport@516660 + DrawScene@50EBA0
+    //     → ClearTargetZ @ 0x004BA980 (device vt+0x1C / D3D Clear @ vt+0xAC)
+    //   → EndScene device vt+0x28. Soft host: Clear/BeginScene/draw/EndScene
+    //   then Present (PE flips previous frame early when skipPresent==0).
+    //
+    // World Clear: PE ClearTargetZ @ 0x4BA980 — Count=0 pRects=null, Z=
+    // 0x3F7FFF58, flags=(z?ZBUFFER:0)|(target?TARGET:0), color from
+    // DrawScene 0xFF0000FF. Soft pending_clear (Java RENDERFLAG via
+    // Viewport.activate) mirrors flags after apply_active_viewport, before
+    // draw_meshes. Boot/splash (no pending): full TARGET|Z before BeginScene.
+    D3DCOLOR kClear = D3DCOLOR_XRGB(18, 24, 38);
+    if (g_fog.enabled) {
+      kClear = D3DCOLOR_XRGB((g_fog.color >> 16) & 0xff, (g_fog.color >> 8) & 0xff,
+                             g_fog.color & 0xff);
+    }
+    float kPeClearZ = 0.f;
+    {
+      // PE ClearTargetZ a6 immediate @ 0x4BA980 — int_convert 1065353048.
+      const uint32_t zbits = 0x3F7FFF58u;
+      std::memcpy(&kPeClearZ, &zbits, sizeof(kPeClearZ));
+    }
+    DWORD world_clear_flags = 0;
+    bool have_world_clear = false;
+    if (g_active_vp) {
+      auto it = g_viewports.find(g_active_vp);
+      if (it != g_viewports.end() && it->second.pending_clear != 0) {
+        have_world_clear = true;
+        // Java CLEARTARGET=0x2 → D3DCLEAR_TARGET; CLEARDEPTH=0x1 → ZBUFFER.
+        // PE DrawScene@50EBE7: ClearTargetZ(flags&~1, flags&1, 0xFF0000FF).
+        if (it->second.pending_clear & kViewportClearTarget)
+          world_clear_flags |= D3DCLEAR_TARGET;
+        if (it->second.pending_clear & kViewportClearDepth)
+          world_clear_flags |= D3DCLEAR_ZBUFFER;
+        it->second.pending_clear = 0;
+      }
+    }
+    // Fork: frames with script camera passes (draw_viewport_cameras drew at
+    // least one in the previous frame). The exe drops the Java renderflags
+    // (PE 940 Viewport.activate FUN_004e6ab0 -> ViewportBind(handle, -1, -1))
+    // and a camera pass never clears the target (FUN_00460ba0): its scenes
+    // fill the screen. The host has no world scene behind the Osd layers
+    // yet, so its stand-in frame clear has to cover the whole target instead
+    // of the D3D viewport of whichever viewport was activated last, and the
+    // one-shot pending clear is dropped. Without camera passes the legacy
+    // logic above and below is unchanged.
+    const bool script_passes = g_cam_pass_stats.passes > 0;
+    if (script_passes && have_world_clear) {
+      have_world_clear = false;
+      world_clear_flags = 0;
+    }
+    if (!have_world_clear) {
+      if (script_passes) set_fullscreen_viewport();
+      g_dev->Clear(0, nullptr, D3DCLEAR_TARGET | D3DCLEAR_ZBUFFER, kClear,
+                   kPeClearZ, 0);
+    }
+    if (SUCCEEDED(g_dev->BeginScene())) {
+      // FMV + OSD use XYZRHW in full RT space — don't clip to a 3D viewport.
+      set_fullscreen_viewport();
+      video_fmv_present();
+      apply_active_viewport();
+      if (have_world_clear && world_clear_flags != 0) {
+        // Soft ClearTargetZ@4BA980 stand-in (PE color 0xFF0000FF; host
+        // fog/slate so sky/meshes read without a blue flash).
+        g_dev->Clear(0, nullptr, world_clear_flags, kClear, kPeClearZ, 0);
+      }
+      draw_meshes();
+      draw_viewport_cameras();  // Fork: script Osd / world cameras
+      cam_pass_shot(true);
+      queue_flare_sprites();
+      set_fullscreen_viewport();
+      draw_osd_rects();
+      draw_osd_texts();
+      g_dev->EndScene();
+    }
+    cam_pass_shot(false);
+    // Soft PE GfxDevice_Present @ 0x004BB410: Present(0,0,0,0) + ++count.
+    // Host after EndScene; PE PresentFrame calls it before BeginFrame.
+    g_dev->Present(nullptr, nullptr, nullptr, nullptr);
+    ++g_present_count;
+    render_d3d9_pump(0);
+  } else {
+    // Headless: still rebuild flare OSD rects / sprite counts (smoke 2.108+).
+    queue_flare_sprites();
+  }
+#else
+  queue_flare_sprites();
+#endif
+  // Phase 2.118: Frontend.render.wait() — one Object.notify per flush
+  // (including headless / no-device so LoadingScreen can pace).
+  frontend_gfx_engine_frame_notify();
+}
+
+void render_d3d9_drain_gpu_caches() {
+  // Soft PE GfxDevice_DrainGpuCaches @ 0x4B7B90 size 0x40 (int_convert 64).
+  //   mov esi, g_GfxDevice@6495DC; test esi → ret
+  //   [esi+0x33C] → DrainTextureCache(1) @ 0x4F8240
+  //   [esi+0x320] → DrainVertexBufferSlots(1) @ 0x4ECDB0
+  //   [esi+0x324] → DrainIndexBufferSlots(1) @ 0x4EBDF0
+  // Host: g_dev ≡ g_GfxDevice; freelist vectors ≡ manager objects (always
+  // "present" when device open). a2=1 force — no budget early-out.
+#ifdef _WIN32
+  if (!g_dev) return;
+  drain_texture_cache_force();
+  drain_vb_slots_force();
+  drain_ib_slots_force();
+#endif
+}
+
+void render_d3d9_pump(int32_t ms) {
+#ifdef _WIN32
+  if (input_live_enabled()) input_live_poll();
+  MSG msg{};
+  const DWORD start = GetTickCount();
+  for (;;) {
+    while (PeekMessageA(&msg, nullptr, 0, 0, PM_REMOVE)) {
+      if (msg.message == WM_QUIT) {
+        g_quit_requested = true;
+        return;
+      }
+      TranslateMessage(&msg);
+      DispatchMessageA(&msg);
+    }
+    if (ms <= 0) break;
+    if (static_cast<int32_t>(GetTickCount() - start) >= ms) break;
+    Sleep(1);
+  }
+#else
+  (void)ms;
+#endif
+}
+
+bool render_d3d9_quit_requested() {
+#ifdef _WIN32
+  return g_quit_requested;
+#else
+  return false;
+#endif
+}
+
+void render_d3d9_clear_quit() {
+#ifdef _WIN32
+  g_quit_requested = false;
+#endif
+}
+
+void render_d3d9_request_quit() {
+#ifdef _WIN32
+  g_quit_requested = true;
+#else
+  // Headless / non-Win32: no message pump — flag unused.
+#endif
+}
+
+int32_t render_d3d9_num_display_modes() {
+  ensure_modes();
+  return static_cast<int32_t>(g_modes.size());
+}
+
+int32_t render_d3d9_curr_display_mode() {
+  // PE Gfx_GetCurrDisplayMode @ 0x004B9EA0: count<=0 → 0; else index scan.
+  ensure_modes();
+  const int32_t n = static_cast<int32_t>(g_modes.size());
+  if (n <= 0) return 0;
+  const int32_t cw = g_w;
+  const int32_t ch = g_h;
+  const int32_t cdepth = 32;
+  for (int32_t idx = 0; idx < n; ++idx) {
+    const Mode& m = g_modes[static_cast<size_t>(idx)];
+    if (m.w == cw && m.h == ch && m.depth == cdepth) return idx;
+  }
+  return 0;
+}
+
+bool render_d3d9_change_video_mode(int32_t width, int32_t height,
+                                   int32_t depth) {
+  (void)depth;
+  ensure_modes();
+  if (width <= 0 || height <= 0) return false;
+#ifdef _WIN32
+  if (g_dev && g_hwnd) {
+    // Resize window + reset device.
+    RECT rc{0, 0, width, height};
+    AdjustWindowRect(&rc, WS_OVERLAPPEDWINDOW, FALSE);
+    SetWindowPos(g_hwnd, nullptr, 0, 0, rc.right - rc.left, rc.bottom - rc.top,
+                 SWP_NOMOVE | SWP_NOZORDER);
+    if (!create_device(g_hwnd, width, height)) return false;
+  } else {
+    if (!render_d3d9_open(width, height, "SLRR Engine")) return false;
+  }
+  for (size_t i = 0; i < g_modes.size(); ++i) {
+    if (g_modes[i].w == width && g_modes[i].h == height) {
+      g_mode = static_cast<int32_t>(i);
+      return true;
+    }
+  }
+  g_modes.push_back({width, height, depth > 0 ? depth : 32});
+  g_mode = static_cast<int32_t>(g_modes.size() - 1);
+  return true;
+#else
+  return false;
+#endif
+}
+
+void render_d3d9_viewport_create(void* key, int32_t pri, float x, float y,
+                                 float w, float h) {
+  if (!key) return;
+  ViewportState& vp = g_viewports[key];
+  vp.pri = pri;
+  vp.x = x;
+  vp.y = y;
+  vp.w = w;
+  vp.h = h;
+  vp.pending_clear = 0;
+  vp.active = false;  // PE 940 FUN_00420970: a new ViewPortNode starts unbound
+  vp.bind_seq = 0;
+}
+
+void render_d3d9_viewport_destroy(void* key) {
+  if (!key) return;
+  if (g_active_vp == key) g_active_vp = nullptr;
+  g_viewports.erase(key);
+}
+
+void render_d3d9_viewport_activate(void* key, int32_t renderflags) {
+  // PE Viewport.activate(I)V @ 0x00481680: null handle no-op; flags unboxed but
+  // unused — only GfxEngine_ViewportBind@4FD020 (→ sub_4FD280 list bind with
+  // a2=a3=-1). Soft: stash Java RENDERFLAG as pending_clear for flush world
+  // Clear (stand-in for DrawScene→ClearTargetZ@4BA980). apply_active_viewport
+  // is soft ApplyViewport@516660 / SetViewportRect@4BD500 (PE binds list only
+  // here; pixel SetViewport runs at camera-pass draw).
+  // PE 940: Viewport.activate FUN_004e6ab0 -> ViewportBind FUN_004200d0 ->
+  // FUN_00421e40 moves the ViewPortNode from the unbound list to the bound
+  // list (vp+0x24 |= 1, FUN_00464d20). Any number of viewports stay bound;
+  // the previously activated one is NOT unbound, and a viewport that is
+  // already bound keeps its place in the list.
+  if (!key) return;
+  auto it = g_viewports.find(key);
+  if (it == g_viewports.end()) {
+    // Activate before create — treat as full-screen default.
+    render_d3d9_viewport_create(key, 0, 0.f, 0.f, 1.f, 1.f);
+    it = g_viewports.find(key);
+  }
+  g_active_vp = key;
+  if (!it->second.active) {
+    it->second.active = true;
+    it->second.bind_seq = ++g_vp_bind_seq;
+  }
+  it->second.pending_clear = renderflags & kViewportClearMask;
+  apply_active_viewport();
+}
+
+void render_d3d9_viewport_deactivate(void* key) {
+  // PE Viewport.deactivate()V @ 0x004816C0: null handle no-op; else
+  // Engine_ViewportUnbind thiscall (ecx=off_6187B0). Host stand-in:
+  // missing map entry == handle 0 (do not touch g_active_vp).
+  if (!key) return;
+  auto it = g_viewports.find(key);
+  if (it == g_viewports.end()) return;
+  it->second.active = false;
+  if (g_active_vp == key) g_active_vp = nullptr;
+}
+
+void render_d3d9_viewport_resize(void* key, float x, float y, float w,
+                                 float h) {
+  // PE Viewport.resize(FFFF)V @ 0x00481700 size 0xa6: handle 0 / inner 0 /
+  // rect 0 silent (no Mighty ERROR, no create). FSTP unboxed floats as-is
+  // into rect+0x10 left / +0x14 top / +0x18 width / +0x1C height.
+  // Host: map miss == handle 0. apply_active_viewport is D3D stand-in for
+  // a live rect (PE has no SetViewport in this native).
+  if (!key) return;
+  auto it = g_viewports.find(key);
+  if (it == g_viewports.end()) return;
+  it->second.x = x;
+  it->second.y = y;
+  it->second.w = w;
+  it->second.h = h;
+  if (g_active_vp == key) apply_active_viewport();
+}
+
+float render_d3d9_viewport_get_aspect(void* key) {
+  // PE Viewport_getAspect @ 0x004817B0 / inner 0x0048CDA0: missing handle →
+  // 1.0 (flt_5F08F0). Else (rect+0x18 * display_w) / (rect+0x18 * display_h)
+  // = display_w/display_h. Host: map miss == handle 0; g_w/g_h == those ints.
+  auto it = g_viewports.find(key);
+  if (it == g_viewports.end()) return 1.f;
+  if (g_h <= 0) return 1.f;
+  return static_cast<float>(g_w) / static_cast<float>(g_h);
+}
+
+float render_d3d9_viewport_get_width(void* key) {
+  // PE getWidth @ 0x004817F0: FLD [rect+0x18] (normalized). Map miss → 0.f
+  // stand-in for FLD [ESP+8] this-bits.
+  auto it = g_viewports.find(key);
+  return it == g_viewports.end() ? 0.f : it->second.w;
+}
+
+float render_d3d9_viewport_get_height(void* key) {
+  // PE getHeight @ 0x00481870: FLD [rect+0x1C].
+  auto it = g_viewports.find(key);
+  return it == g_viewports.end() ? 0.f : it->second.h;
+}
+
+float render_d3d9_viewport_get_top(void* key) {
+  // PE getTop @ 0x004818F0: FLD [rect+0x14].
+  auto it = g_viewports.find(key);
+  return it == g_viewports.end() ? 0.f : it->second.y;
+}
+
+float render_d3d9_viewport_get_left(void* key) {
+  // PE getLeft @ 0x00481970: FLD [rect+0x10].
+  auto it = g_viewports.find(key);
+  return it == g_viewports.end() ? 0.f : it->second.x;
+}
+
+void* render_d3d9_viewport_active() { return g_active_vp; }
+
+void render_d3d9_camera_create(void* key, void* parent, void* viewport,
+                               int32_t pri, float aov_deg, float dmin,
+                               float dmax, float lod_bias, float lod_amp,
+                               int32_t oc, int32_t pt) {
+  if (!key) return;
+  CameraState& cam = g_cameras[key];
+  cam.parent = parent;
+  cam.viewport = viewport;
+  cam.pri = pri;
+  cam.aov_deg = aov_deg;  // PE 940 params+0x10, unchanged (FUN_00524dc0)
+  // PE 940 Camera.create FUN_004d8de0: params+0xc = 1/(1/(vp+0xec / vp+0xf0))
+  // = the viewport's pixel width / height at creation; FUN_00461dd0 uses the
+  // per-frame viewport aspect only when this is exactly 0.
+  cam.aspect = 0.f;
+  if (viewport && g_w > 0 && g_h > 0) {
+    auto vit = g_viewports.find(viewport);
+    if (vit != g_viewports.end() && vit->second.w > 0.f && vit->second.h > 0.f)
+      cam.aspect = (vit->second.w * static_cast<float>(g_w)) /
+                   (vit->second.h * static_cast<float>(g_h));
+  }
+  // Registered on its viewport's camera list here (FUN_00420080 ->
+  // FUN_00464f60).
+  cam.seq = ++g_cam_seq;
+  cam.dmin = dmin;
+  cam.dmax = dmax;
+  cam.lod_bias = lod_bias;
+  cam.lod_amp = lod_amp;
+  cam.oc = oc;
+  cam.pt = pt;
+  cam.active = false;
+  cam.lookat = false;
+}
+
+void render_d3d9_camera_destroy(void* key) {
+  if (!key) return;
+  if (g_active_cam == key) g_active_cam = nullptr;
+  g_cameras.erase(key);
+}
+
+void render_d3d9_camera_activate(void* key, void* viewport, int32_t pri) {
+  if (!key) return;
+  auto it = g_cameras.find(key);
+  if (it == g_cameras.end()) {
+    render_d3d9_camera_create(key, nullptr, viewport, pri, 45.f, 0.1f, 100.f,
+                              1.f, 1.f, 1, 0);
+    it = g_cameras.find(key);
+  }
+  if (viewport) it->second.viewport = viewport;
+  it->second.pri = pri;
+  it->second.seq = ++g_cam_seq;  // re-registered (FUN_00464f60)
+  if (g_active_cam && g_active_cam != key) {
+    auto prev = g_cameras.find(g_active_cam);
+    if (prev != g_cameras.end()) prev->second.active = false;
+  }
+  g_active_cam = key;
+  it->second.active = true;
+  if (it->second.viewport) {
+    render_d3d9_viewport_activate(it->second.viewport, kViewportClearDepth);
+  }
+  apply_active_camera();
+}
+
+void render_d3d9_camera_deactivate(void* key, void* /*viewport*/) {
+  if (!key) return;
+  auto it = g_cameras.find(key);
+  if (it != g_cameras.end()) it->second.active = false;
+  if (g_active_cam == key) g_active_cam = nullptr;
+}
+
+void* render_d3d9_camera_active() { return g_active_cam; }
+
+float render_d3d9_camera_half_aov(void* key) {
+  // The stored Camera.create aov, unchanged (legacy callers compare it with
+  // the 45 they passed).
+  auto it = g_cameras.find(key);
+  return it == g_cameras.end() ? 0.f : it->second.aov_deg;
+}
+
+float render_d3d9_camera_dmin(void* key) {
+  auto it = g_cameras.find(key);
+  return it == g_cameras.end() ? 0.f : it->second.dmin;
+}
+
+float render_d3d9_camera_dmax(void* key) {
+  auto it = g_cameras.find(key);
+  return it == g_cameras.end() ? 0.f : it->second.dmax;
+}
+
+void render_d3d9_camera_set_aov(void* key, float aov_deg) {
+  auto it = g_cameras.find(key);
+  if (it != g_cameras.end()) it->second.aov_deg = aov_deg;  // params+0x10
+}
+
+void render_d3d9_camera_set_planes(void* key, float dmin, float dmax) {
+  auto it = g_cameras.find(key);
+  if (it == g_cameras.end()) return;
+  it->second.dmin = dmin;  // params+0x14 (the exe: metres x 10)
+  it->second.dmax = dmax;  // params+0x18
+}
+
+void render_d3d9_camera_set_aspect(void* key, float aspect) {
+  auto it = g_cameras.find(key);
+  if (it != g_cameras.end()) it->second.aspect = aspect;  // params+0xC
+}
+
+void render_d3d9_camera_set_viewport(void* key, void* viewport, int32_t pri) {
+  auto it = g_cameras.find(key);
+  if (it == g_cameras.end()) return;
+  it->second.viewport = viewport;
+  it->second.pri = pri;
+  it->second.seq = ++g_cam_seq;  // re-registered (FUN_00464f60)
+}
+
+bool render_d3d9_camera_get(void* key, void** viewport, int32_t* pri,
+                            float* aov_deg, float* dmin, float* dmax,
+                            float* aspect) {
+  auto it = g_cameras.find(key);
+  if (it == g_cameras.end()) return false;
+  const CameraState& cam = it->second;
+  if (viewport) *viewport = cam.viewport;
+  if (pri) *pri = cam.pri;
+  if (aov_deg) *aov_deg = cam.aov_deg;
+  if (dmin) *dmin = cam.dmin;
+  if (dmax) *dmax = cam.dmax;
+  if (aspect) *aspect = cam.aspect;
+  return true;
+}
+
+void render_d3d9_camera_lookat(void* key, float eye_x, float eye_y, float eye_z,
+                               float at_x, float at_y, float at_z) {
+  if (!key) return;
+  CameraState& cam = g_cameras[key];
+  cam.lookat = true;
+  cam.eye_x = eye_x;
+  cam.eye_y = eye_y;
+  cam.eye_z = eye_z;
+  cam.at_x = at_x;
+  cam.at_y = at_y;
+  cam.at_z = at_z;
+  if (g_active_cam == key) apply_active_camera();
+}
+
+void render_d3d9_camera_chase(void* key, float px, float py, float pz, float yaw,
+                              float dist, float height, float look_height) {
+  if (!key) return;
+  if (dist < 0.5f) dist = 0.5f;
+  const float fx = std::sin(yaw);
+  const float fz = std::cos(yaw);
+  const float eye_x = px - fx * dist;
+  const float eye_y = py + height;
+  const float eye_z = pz - fz * dist;
+  const float at_x = px + fx * 2.f;
+  const float at_y = py + look_height;
+  const float at_z = pz + fz * 2.f;
+  render_d3d9_camera_lookat(key, eye_x, eye_y, eye_z, at_x, at_y, at_z);
+}
+
+bool render_d3d9_camera_get_lookat(void* key, float* eye_x, float* eye_y,
+                                   float* eye_z, float* at_x, float* at_y,
+                                   float* at_z) {
+  auto it = g_cameras.find(key);
+  if (it == g_cameras.end() || !it->second.lookat) return false;
+  const CameraState& cam = it->second;
+  if (eye_x) *eye_x = cam.eye_x;
+  if (eye_y) *eye_y = cam.eye_y;
+  if (eye_z) *eye_z = cam.eye_z;
+  if (at_x) *at_x = cam.at_x;
+  if (at_y) *at_y = cam.at_y;
+  if (at_z) *at_z = cam.at_z;
+  return true;
+}
+
+namespace {
+int32_t g_printscreen_count = 0;
+std::string g_printscreen_last;
+}  // namespace
+
+bool render_d3d9_viewport_unproject(void* vp, void* cam, float vx, float vy,
+                                    float* out_x, float* out_y, float* out_z) {
+  if (!out_x || !out_y || !out_z) return false;
+  void* ckey = cam ? cam : g_active_cam;
+  float eye_x = 0, eye_y = 2.f, eye_z = -8.f;
+  float at_x = 0, at_y = 0.f, at_z = 0.f;
+  float half_aov = 45.f;
+  if (ckey) {
     auto it = g_cameras.find(ckey);
     if (it != g_cameras.end()) {
 #ifdef _WIN32
@@ -623,14 +1370,18 @@ bool adopt_d3d_cube(TextureState& st, IDirect3DCubeTexture9* cube,
 }
 
 // Soft PE CreateTextureFromMem_Body path when d3dx9_*.dll is present.
+// `exact_levels` != 0 asks for that many mip levels instead (the Build 940
+// DDS class, see render_d3d9_texture_create_from_memory).
 bool try_d3dx_create_from_mem(TextureState& st, const uint8_t* data, size_t size,
-                              int32_t engine_fmt, int32_t a5_mip_flag) {
+                              int32_t engine_fmt, int32_t a5_mip_flag,
+                              uint32_t exact_levels = 0) {
   auto* pfn = d3dx_create_from_mem_ex();
   if (!pfn || !g_dev || !data || size == 0) return false;
 
   // PE Body@4F7AFB: v6 = (a5 == 0); remapped to MipLevels via @5924FF → 1 or 0.
   // MipLevels=1 → single level (Type0); 0 → D3DX_DEFAULT full chain.
-  const UINT mip_levels = (a5_mip_flag == 0) ? 1u : 0u;
+  const UINT mip_levels =
+      exact_levels != 0 ? exact_levels : ((a5_mip_flag == 0) ? 1u : 0u);
   DWORD usage = 0;
   D3DPOOL pool = D3DPOOL_MANAGED;
   if (engine_fmt == 9 || engine_fmt == 11) {
@@ -1287,6 +2038,32 @@ bool render_d3d9_texture_create_from_memory(void* key, const uint8_t* data,
   // camera-pass rectangles softer than the stock frames.
   const bool dds = data && size >= 4 && data[0] == 'D' && data[1] == 'D' &&
                    data[2] == 'S' && data[3] == ' ';
+  // PE 940 CompatibleTexture_DDS FUN_00457e90: the texture is created with
+  // the mip count of the DDS header (1 when the header says 0) through
+  // C3DLow vt+0xec and its levels are copied from the file one by one; no
+  // level is generated. A one-level file (garazs1.dds 2048x1024, both
+  // garage lightmaps, g1Fal.dds) is therefore sampled from its only level,
+  // and the stock garage frame shows that on the diamond-plate ramps. The
+  // D3DX call below with MipLevels 0 builds a full chain for such a file.
+  // (M2 spec Q5, the mip half.)
+  // Fork: only on the Build 940 boot (SLRR_PE_BOOT_INIT=1); the legacy path
+  // mirrors the old build's D3DX loader and keeps its full chain. The
+  // exe's texture-detail setting, which drops the largest levels
+  // (DAT_005da338), is not ported.
+  if (dds && render_boot940() && key && size >= 4 + sizeof(DdsHeader)) {
+    DdsHeader hdr{};
+    std::memcpy(&hdr, data + 4, sizeof(hdr));
+    const uint32_t levels = hdr.mipmap_count != 0 ? hdr.mipmap_count : 1u;
+#ifdef _WIN32
+    if (levels <= 16 && !looks_like_ptx(data, size)) {
+      TextureState& st = g_textures[key];
+      st.label = label ? label : "";
+      if (try_d3dx_create_from_mem(st, data, size, 3, 1, levels)) return true;
+    }
+#endif
+    // Without D3DX the fallback of the call below (upload_dds) already
+    // keeps the levels of the file.
+  }
   return render_d3d9_texture_create_from_mem(key, data, size, 3, dds ? 1 : 0,
                                              label);
 }

@@ -30,6 +30,14 @@ struct ResState {
   uint64_t seq = 0;  // Fork: creation order (runtime child enumeration)
   int32_t id = 0;
   int32_t type = 0;
+  // The descriptor of the node this handle is bound to (940 FUN_0051eaa0:
+  // node+0x7C restype, node+0x84 flags, which start as the pack record's
+  // flags byte). `type` keeps its historic stand-in value (map_rpak_kind
+  // of the parent id); these two are what the pack says. Written by
+  // bind_res_id from the pack record, and by Viewport.create (0x12) on the
+  // script boot; 0 for every other handle.
+  int32_t restype = 0;
+  int32_t rec_flags = 0;
   int32_t parent_id = 0;
   InvObject* parent = nullptr;
   InvObject* first_child = nullptr;
@@ -114,6 +122,10 @@ extern std::mutex g_mu;
 extern std::unordered_map<InvObject*, ResState> g_res;
 extern std::unordered_map<InvObject*, LineState> g_lines;
 extern int32_t g_next_id;
+// The id of a host object that has neither a pack record nor a script-made
+// node: a viewport, a render or physics instance, a texture or sound made
+// from a file. Caller holds g_mu.
+int32_t resref_next_runtime_id();
 ResState& R(InvObject* self);
 
 }  // namespace inv
