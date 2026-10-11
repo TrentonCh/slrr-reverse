@@ -51,15 +51,39 @@ welcome dialog), frame dump compared with
    - texture addressing clamp per texture entry (thin seams between map
      tiles on the old-build minimap), per-instance hide bit 22, the old
      build's minimap pass has no reference frame.
-2. Garage scene (ENGINE.md M2 and the "Drawing the garage scene" row of its
-   dependency map). The garage is a native `ground` instance
-   (`map = new GroundRef(...)`, payload `gametype 0x00010035`) whose render
-   object is the shell mesh; the camera is a native `camera` GameType
-   driven by text commands (`render <vp> 0 0 1 <flags>`, `dist`, `zoom`,
-   `move`, `look`, Garage.java:499-515), not a `java.render.Camera`. The
-   host recognises no `native <type>` payload line and parses `render` in
-   its old three-number form. Target: `stock_17_garage.png` in the
-   reference frames.
+2. Garage scene (in progress 2026-10-10). Mapped from the exe, the pack
+   bytes and the scripts, then checked by software-rendering the decoded
+   data with the derived camera against the stock frame (features within
+   1-3 px). The spec and maps are in `../slrr-ghidra/notes/m2/`
+   (`m2_spec.md`, `exe_ground.md`, `exe_camera.md`, `data_garage.md`,
+   `host_gaps.md`, check script `m2_check.py`). What they establish, and
+   where ENGINE.md sections 6, 7 and 11 are out of date until this lands:
+   - The garage shell is not a mesh file. The typeof-1 record
+     misc.garage:0x7A is a binary tree of 188 nested nodes with RSD, POLY
+     and PHYS chunks; the POLY chunks hold the render triangles in metres
+     (10 sections, 3,229 vertices, 1,274 triangles, 9 materials). Render
+     object 0x05 (`flags 2048` = ground template) names `garazs_01.scY`,
+     which only supplies the nine materials.
+   - The shell and the props are prelit: colour map x lightmap on the
+     second uv set, no D3D light; the floor mixes two textures by vertex
+     colour. Textures bind by a slot index stored in each material entry.
+   - INVO v4 positions are multiplied by 0.1 at load like v3: mesh
+     centimetres, POLY metres and script metres meet in engine units.
+   - The native `camera` type (system:0x33) is a small rigid body steered
+     by forces: `move` is a distance spring, `look` a torque spring. For
+     `render <vp> 0 0 1 3` only the viewport id and the fourth number (the
+     camera priority on that viewport) are used. Settled garage pose: eye
+     about (-2.87, 1.43, -1.93), looking at (0, 0, -0.5), 60 degree full
+     vertical field of view, near 0.05 m.
+   - A typeof-13 light payload is a D3DLIGHT9; the garage "neon" light is
+     directional and only lit materials (the lift, cars) receive it.
+   - The lift is a `native part <cfg>` object whose cfg names its render
+     entries and body; its arm is installed by the script through the
+     part type's `install` command and needs real node ids.
+   Steps: nodes and the ground object; the camera; the shell; object
+   materials and the horizon group; the lift and lights; the lift arm.
+   Acceptance: `m2_check.py` (2D rows unchanged, luminance difference of
+   the 3D area against `stock_17_garage.png` at most 7; it is 82.7 before).
 3. Mouse: `MouseCursor` (Controller `Mouse` device axes, `getPos`,
    `getPickedPos`, EVENT_CURSOR to the Osd), `Osd.hoverEffect` /
    `click` / `mapClickPosH`, pointer visibility.
