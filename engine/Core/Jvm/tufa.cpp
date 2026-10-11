@@ -481,22 +481,45 @@ bool tufa_parse(const uint8_t* data, size_t size, JvmClass* out, std::string* er
       std::memcpy(&n_name_first, p, 4);
       const uint32_t n_total = static_cast<uint32_t>((psz - 8) / 20);
       if (n_name_first > n_total) n_name_first = 0;
+      // Fork: strict layout (PE JVM_addClass_fromChunks, 940 @ 0x554F4F):
+      // u32 static count, static rows, u32 instance count, instance rows;
+      // every row is {flags, name, descriptor, tree, w4}. Holds for every
+      // blob of the Build 940 and pre-940 installs.
+      bool strict = false;
+      {
+        const uint64_t ns = n_name_first;
+        if (4 + 20 * ns + 4 <= psz) {
+          uint32_t ni = 0;
+          std::memcpy(&ni, p + 4 + 20 * ns, 4);
+          strict = (4 + 20 * ns + 4 + 20 * static_cast<uint64_t>(ni) == psz);
+        }
+      }
       if (n_total > 0 && (psz - 8) % 20 == 0) {
         size_t off = 8;
         for (uint32_t mi = 0; mi < n_total; ++mi) {
           uint32_t w0, w1, w2, w3, w4;
-          std::memcpy(&w0, p + off, 4);
-          std::memcpy(&w1, p + off + 4, 4);
-          std::memcpy(&w2, p + off + 8, 4);
-          std::memcpy(&w3, p + off + 12, 4);
-          std::memcpy(&w4, p + off + 16, 4);
+          // Static rows start at +4 (right after their count); the instance
+          // rows that follow the second count line up with the old +8 walk.
+          const size_t row = (strict && mi < n_name_first) ? off - 4 : off;
+          std::memcpy(&w0, p + row, 4);
+          std::memcpy(&w1, p + row + 4, 4);
+          std::memcpy(&w2, p + row + 8, 4);
+          std::memcpy(&w3, p + row + 12, 4);
+          std::memcpy(&w4, p + row + 16, 4);
           (void)w4;
           off += 20;
 
           std::string name, sig;
           uint32_t tree_i = 0;
           uint32_t flags = 0;
-          if (mi < n_name_first) {
+          if (strict && mi < n_name_first) {
+            // Static row read at its real offset: same field order as an
+            // instance row. 0x8 is set on every static row in the files.
+            flags = w0 | 0x8u;
+            name = pool.get_str(w1);
+            sig = pool.get_str(w2);
+            tree_i = w3;
+          } else if (mi < n_name_first) {
             // PE JVM_addClass_fromChunks (940 @ 0x554F4F): MTHD holds two
             // containers read back to back, STATIC methods (class+0x58)
             // then instance methods (class+0x50). The leading count is the
@@ -534,6 +557,8 @@ bool tufa_parse(const uint8_t* data, size_t size, JvmClass* out, std::string* er
               static_cast<size_t>(m.tree_index) >= out->trees.size() ||
               out->trees[static_cast<size_t>(m.tree_index)].nodes.empty();
           m.is_native = empty_tree || (flags & 0x100) != 0;
+          m.acc_exact = strict;
+          m.empty_tree = empty_tree;
           out->methods.push_back(std::move(m));
         }
       }

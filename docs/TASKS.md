@@ -87,12 +87,16 @@ welcome dialog), frame dump compared with
 8. Frame-loop differences listed in ENGINE.md section 3 (rate gates, four
    `input_tick` calls per iteration, the load rate that never reaches
    the pump). The window size from `save/game/options` is done (75569af).
-9. Loader quick wins (ENGINE.md section 12, "independent"): test native
-   flag 0x40 instead of "empty tree" (a longer garage run logs about 450
-   `no native binding` lines for empty script methods such as
-   `Part.addStockParts`, `Part.check4warnings`, `Osd.pressEffect`);
-   resolve dotted `script <class name>` payloads through the classpath;
-   add the ninth classpath entry (`java.net`).
+9. Loader quick wins (ENGINE.md section 12, "independent"). Done: the
+   MTHD rows are read at their real offsets and an empty script method
+   (`Part.addStockParts`, `Part.check4warnings`, `Osd.pressEffect`: no
+   0x40 flag, zero nodes) returns at once instead of going down the native
+   branch; about 470 `no native binding` lines per garage run are gone.
+   Open: resolve dotted `script <class name>` payloads through the
+   classpath; add the ninth classpath entry (`java.net`); the CONS decoder
+   misreads a class ref that is the last pool entry (`GameState.class`);
+   21 host native entries shadow methods that have script bodies in 940
+   (`RenderRef.getPos`, `Text.setDefaultColor`, `Object.hashCode`, ...).
 
 Ground truth for anything visual: the stock-game reference frames
 (`../slrr-ghidra/notes/reference_frames/stock_*.png`, 1366x768, outside

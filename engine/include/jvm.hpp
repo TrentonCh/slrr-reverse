@@ -60,6 +60,14 @@ struct JvmMethod {
   bool is_native = false;
   int tree_index = -1;
   uint32_t flags = 0;
+  // Fork: set by the TUFA loader. `acc_exact` = `flags` is the row's real
+  // access mask (0x1 public, 0x4 private, 0x8 static, 0x10 abstract,
+  // 0x20 final, 0x40 native); `empty_tree` = the body has no nodes. A row
+  // with an empty tree and without 0x40 is an empty script method
+  // (`void install() {}`), not a native: `is_native` keeps its historic
+  // "empty tree" meaning for the legacy evaluator.
+  bool acc_exact = false;
+  bool empty_tree = false;
 };
 
 // Instance field with a dedicated TREE initializer (FILD: w0==0, tree!=-1).

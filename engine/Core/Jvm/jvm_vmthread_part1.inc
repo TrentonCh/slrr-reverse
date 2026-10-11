@@ -389,16 +389,37 @@ int vmthread_invoke_method(VmThread* thr, InvObject* self, const char* class_fqn
 
   const NativeEntry* ne = resolve_native(class_fqn, method, signature);
   bool is_native = ne && ne->fn;
+  const JvmMethod* slot = resolved;
   if (!is_native) {
     if (resolved) {
       is_native = resolved->is_native;  // Fork: the resolved slot decides
     } else {
       if (!j->find_class(class_fqn)) j->load_class(class_fqn);
       if (const JvmClass* cls = j->find_class(class_fqn)) {
-        if (const JvmMethod* m = j->find_method(*cls, method, signature))
+        if (const JvmMethod* m = j->find_method(*cls, method, signature)) {
           is_native = m->is_native;
+          slot = m;
+        }
       }
     }
+  }
+
+  // PE: ACC_NATIVE is flag 0x40 of the method row. A row without it whose
+  // tree has no nodes is an empty script body (`void install() {}`,
+  // `Part.addStockParts`, `Osd.pressEffect`): VMThread_run on it returns at
+  // once. Fork: the loader's historic "empty tree = native" sent these down
+  // the native branch, through the legacy Jvm::invoke name hooks, to
+  // "[jvm] no native binding". Only rows with exact flags and no host
+  // native entry take this exit.
+  if (!(ne && ne->fn) && slot && slot->acc_exact && slot->empty_tree &&
+      (slot->flags & 0x40u) == 0) {
+    const JvmValue result = JvmValue::make_void();
+    fr->operand.push_back(result);
+    fr->pe.op_count = static_cast<uint32_t>(fr->operand.size());
+    thr->native_ret = result;
+    thr->has_native_ret = false;
+    thr->pending.live = false;
+    return 1;
   }
 
   if (is_native) {
