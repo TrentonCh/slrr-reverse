@@ -208,6 +208,9 @@ void java_render_Camera_create(InvObject* self, InvObject* parent, InvObject* vp
     native_ptr_ensure(self);
     // Soft ≡ factory params write @ 0x5395DD.. + create pt @ 0x4862C5.
     tree_field_set_float(self, "cam_aspect", aspect);       // +0xC
+    // PE 940 FUN_00524dc0 stores aov unchanged at params+0x10; FUN_00461dd0
+    // uses it as the FULL vertical angle (fovy = aov * pi/180). The tree
+    // field keeps its old name.
     tree_field_set_float(self, "half_aov", aov);            // +0x10
     tree_field_set_float(self, "dmin", dmin);
     tree_field_set_float(self, "dmax", dmax);
@@ -493,6 +496,27 @@ int32_t java_render_GfxEngine_isPlayingVideo() {
 namespace {
 // PE dword_612C64 .data ; u32 init 0xFFFFFFFF (int_convert 4294967295).
 int32_t g_text_default_color = static_cast<int32_t>(0xFFFFFFFFu);
+
+// PE 940: the charset of a Text is a render object (typeof 14) and the text
+// instance uses its mesh and its texture (Text_createRenderInst FUN_004e8f40
+// -> FUN_00524840(parent, charset, "r_text"); RT_text FUN_0046dc10). The
+// glyph table therefore comes from the pack: font SCX files and fade.SCX
+// (Osd.darken) alike.
+// Fork: when the pack lookup fails the font is looked up by the entry name,
+// and a charset that cannot be resolved at all falls back to simple20 with
+// one warning per charset id.
+bool text_charset_font(InvObject* charset) {
+  if (!charset) return false;
+  if (render_d3d9_font_ready(charset)) return true;
+  const int32_t rid = java_util_resource_ResourceRef_id(charset);
+  if (render_d3d9_font_load_charset(charset, rid)) return true;
+  if (render_d3d9_font_load_from_rid(charset, rid)) return true;
+  static std::unordered_map<int32_t, int> warned;
+  if (warned[rid]++ == 0)
+    std::fprintf(stderr, "[text] charset 0x%08X not resolved, using simple20\n",
+                 static_cast<unsigned>(rid));
+  return render_d3d9_font_load(charset, "simple20");
+}
 }
 
 void java_render_Text_create(InvObject* self, InvObject* parent, InvObject* charset, float x, float z) {
@@ -506,16 +530,18 @@ void java_render_Text_create(InvObject* self, InvObject* parent, InvObject* char
   // @ 0x48C4B0 wires parent + bone00 local via setBoneLocal @ 0x48C0F0
   // (same SetBoneMatrixParentLink matrix path as setMatrix @ 0x4810B0).
   // Host: mesh parent + bone00 local + world TREE publish; D3D text stand-in.
-  if (charset && !render_d3d9_font_ready(charset)) {
-    const int32_t rid = java_util_resource_ResourceRef_id(charset);
-    if (!render_d3d9_font_load_from_rid(charset, rid))
-      render_d3d9_font_load(charset, "simple20");
-  }
+  // PE 940: FUN_004e5b30 -> FUN_004e8f40 (payload +0x170 text, +0x174 align
+  // = 2, +0x178 scale = 1.0, +0x17c colour).
+  text_charset_font(charset);
   if (std::getenv("SLRR_PE_STREAM_TRACE"))
     std::fprintf(stderr, "[native] Text.create self=%p parent=%p charset=%p font_ready=%d x=%g z=%g\n",
                  static_cast<void*>(self), static_cast<void*>(parent), static_cast<void*>(charset),
                  charset ? (render_d3d9_font_ready(charset) ? 1 : 0) : -1, x, z);
   render_d3d9_text_create(self, charset, x, z);
+  // PE 940: the r_text node is created under `parent`, so the camera walk of
+  // the tree it hangs in draws it (rg_text_section) and nothing else does.
+  // Fork: a text without a parent stays on the legacy screen pass.
+  render_d3d9_text_set_tree(self, parent ? 1 : 0);
   if (self) {
     // Fork: PE Text_createRenderInst hangs the r_text node off the Text's
     // renderinst handle; Text.finalize -> renderinst.destroy() frees it.
@@ -553,14 +579,12 @@ bool text_create_rtext2_inst_soft(InvObject* self, InvObject* parent,
   //   bone00 setBoneLocal + PrepareLod walk.
   // Soft: D3D text stand-in + TREE kind=2; factory/PrepareLod/mid OOS.
   if (!self || !charset) return false;
-  if (charset && !render_d3d9_font_ready(charset)) {
-    const int32_t rid = java_util_resource_ResourceRef_id(charset);
-    if (!render_d3d9_font_load_from_rid(charset, rid))
-      render_d3d9_font_load(charset, "simple20");
-  }
-  if (!render_d3d9_font_ready(charset)) return false;
-  (void)scale;
+  if (!text_charset_font(charset)) return false;
   render_d3d9_text_create(self, charset, x, z);
+  render_d3d9_text_set_tree(self, parent ? 1 : 0);
+  // PE 940 FUN_004e8df0: payload+0x178 = scale -> RI_text+0xd8, the factor
+  // on the pen advance (FUN_0044bdc0 param_7).
+  render_d3d9_text_set_advance_scale(self, scale);
   if (InvObject* ri = tree_field_get_obj(self, "renderinst"))
     tree_field_set_obj(ri, "_text_owner", self);  // Fork: see Text.create
   tree_field_set_int(self, "_text_kind", 2);  // PE type "r_text2"
@@ -705,13 +729,29 @@ float java_render_Text_getWidthPixels(InvObject* str, InvObject* font) {
   // PE @ 0x00487410 size 0x44. Static UnboxArg. cstr==0 → 0.0 (no Mighty).
   // Inner Engine_TextMeasureWidth @ 0x004FDE50 unique; scale 1.0f flags 0.
   // font==0 PE crash [eax+8]; host-safe 0. PE ready-fail → 0.0 (no simple20).
+  // PE 940 FUN_004e5ae0 -> FUN_00421100(charset, cstr, 1.0, 0): SetFont +
+  // C3DLow vt+0x214 (FUN_0044bfb0) = sum of vertex[c*4+1].x of the charset
+  // mesh, in pixels.
   if (!str) return 0.f;
-  if (font && !render_d3d9_font_ready(font)) {
-    const int32_t rid = java_util_resource_ResourceRef_id(font);
-    if (!render_d3d9_font_load_from_rid(font, rid))
-      render_d3d9_font_load(font, "simple20");
-  }
+  text_charset_font(font);
   return render_d3d9_font_measure_px(font, string_cstr(str));
+}
+
+void java_render_Text_setScale(InvObject* self, float x, float y) {
+  // PE 940 FUN_004e5d80(this, sx, sy): renderinst payload -> handle at
+  // payload+0x114 -> mesh payload -> FUN_004d8710(meshdata, (sx, sy, 0)),
+  // which runs the per-section scale op (section vt+0x4c) used by
+  // ResourceRef.scaleMesh. The glyph vertices of the charset mesh are
+  // scaled, so both the glyph quads and the advance (vertex[1].x) change.
+  // No script in system/scripts calls it.
+  // Fork: the factors are kept on the text and applied to its glyph
+  // vertices and advance at draw time; the exe scales the mesh behind the
+  // instance (whether that is shared with other texts of the font was not
+  // read), and repeated calls compound there.
+  if (!self) return;
+  tree_field_set_float(self, "_text_sx", x);
+  tree_field_set_float(self, "_text_sy", y);
+  render_d3d9_text_set_scale(self, x, y);
 }
 
 void java_render_Viewport_create(InvObject* self, int32_t pri, float x, float y, float w, float h) {

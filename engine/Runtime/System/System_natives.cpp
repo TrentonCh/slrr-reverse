@@ -80,11 +80,63 @@ void java_lang_System_log(InvObject* s) {
   std::fprintf(stderr, "%s\n", string_cstr(s));
 }
 
+// Fork: the script boot path (SLRR_PE_BOOT_INIT=1) runs the Build 940 scripts.
+static bool system_script_boot() {
+  static const bool on = [] {
+    const char* e = std::getenv("SLRR_PE_BOOT_INIT");
+    return e && e[0] == '1';
+  }();
+  return on;
+}
+
 int32_t java_lang_System_buildNumber() {
   // PE @ 0x0047C0B0 System.buildNumber ()I size 0x6 (6). Static; no UnboxArg;
   // no callees. Bytes: B8 5E 02 00 00 C3 (mov eax,25Eh; retn).
   // 1 xref: Natives_RegisterAll. Always returns 0x25e (606).
-  return 0x25e;
+  // PE 940 @ 0x004E5470: B8 AC 03 00 00 C3 (mov eax,3ACh; retn) = 940.
+  // Fork: the build of the running game is known from the boot path only;
+  // the script boot path runs Build 940, the legacy path the old exe.
+  return system_script_boot() ? 0x3ac : 0x25e;
+}
+
+// --- java.util.Steam (Build 940 only; registration 0x4D83A7..0x4D843D) ---
+// Fork: the host has no Steam client. On the script boot path these stand in
+// for a working one, so the frontend reads as the stock game started from
+// Steam does (MainMenu appends " [WARNING: FAILED TO INITIALIZE STEAM API]"
+// to the version line when Steam.ready is 0). Elsewhere initAPI reports 0.
+int32_t java_util_Steam_initAPI() {
+  // PE 940 FUN_004e4c80: FUN_00564af0 = SteamInternal_SteamAPI_Init(
+  // "SteamUtils010", 0) == 0; on failure it logs "vm_steam_init_api: Failed
+  // to initialize Steam API" and returns 0, else 1. Steam.init() stores the
+  // result in Steam.ready.
+  return system_script_boot() ? 1 : 0;
+}
+
+void java_util_Steam_neutralize() {
+  // PE 940 @ 0x004E4D40: C6 05 DF 75 7A 00 01 C3 (mov byte [7A75DFh],1).
+  // No host reader of that flag.
+}
+
+InvObject* java_util_Steam_getPackage(int32_t id) {
+  // PE 940 FUN_004e4c10 -> FUN_00564ac0(id): id < 0 -> "Error! Invalid Steam
+  // package ID!"; 0x7D5DC -> the remake pack directory; else "Invalid DLC
+  // ID!"; the string goes through JVM_String_from_cstr. Steam.postInit()
+  // passes it to System.rpkScan when its length is not 0.
+  // Fork: the exe also sets DAT_007a75e4 (INVO versions 5 / 6 read as 3 / 4
+  // in FUN_00451b00) and asks the Steam client about the package
+  // (FUN_00564b10); neither is mirrored.
+  if (id < 0) return string_new("Error! Invalid Steam package ID!");
+  if (id == 0x7d5dc) return string_new("dlc\\redline_cars_remake_pack\\");
+  return string_new("Invalid DLC ID!");
+}
+
+void java_util_Steam_setAchievement(InvObject* name) {
+  // PE 940 FUN_004e4e00 (vm_steam_set_achievement). Fork: no Steam client.
+  (void)name;
+}
+
+void java_util_Steam_resetAchievements() {
+  // PE 940 FUN_004e4d50 (vm_steam_reset_achievements). Fork: no Steam client.
 }
 
 // PE @ 0x0047C0C0 System.info (I)Ljava.lang.String; size 0xf2 (242).

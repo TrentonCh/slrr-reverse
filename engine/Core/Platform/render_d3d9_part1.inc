@@ -133,16 +133,41 @@ struct ViewportState {
   float w = 1.f;
   float h = 1.f;
   int32_t pending_clear = 0;
+  // Bound: on the exe's bound viewport list (PE 940 FUN_00421e40 bind /
+  // FUN_00421f50 unbind). Every bound viewport is drawn each frame.
   bool active = false;
+  // Fork: bind order stamp. FUN_00421e40 inserts a viewport in front of the
+  // first bound one whose priority is >= its own, so among equal priorities
+  // the most recently bound one is drawn first (underneath).
+  uint32_t bind_seq = 0;
 };
 std::unordered_map<void*, ViewportState> g_viewports;
+// Fork: the most recently activated viewport that is still bound; only the
+// legacy single-viewport readers use it (apply_active_viewport, the world
+// clear in render_d3d9_flush, render_d3d9_viewport_active).
 void* g_active_vp = nullptr;
+uint32_t g_vp_bind_seq = 0;
 
 struct CameraState {
   void* parent = nullptr;
   void* viewport = nullptr;
   int32_t pri = 0;
-  float half_aov_deg = 45.f;
+  // PE 940 camera params+0x10 (FUN_00524dc0): the Camera.create aov, stored
+  // unchanged. FUN_00461dd0 uses it as the FULL vertical angle in degrees.
+  // Fork: legacy host cameras (apply_active_camera, project / unproject)
+  // still read it as a half angle.
+  float aov_deg = 45.f;
+  // PE 940 params+0xc: aspect captured at Camera.create from the viewport's
+  // pixel rect (FUN_004d8de0); 0 = use the viewport aspect of the frame.
+  float aspect = 0.f;
+  // Fork: registration stamp on the viewport's camera list (FUN_00464f60:
+  // ascending camera priority, the newest first among equals).
+  uint32_t seq = 0;
+  // Fork: g_cam_pass_frame of the last frame in which draw_viewport_cameras
+  // ran a pass for this camera (0 = never). render_d3d9_project /
+  // render_d3d9_viewport_unproject use the pass's own view and projection
+  // for such a camera and the legacy look-at model for the others.
+  uint32_t pass_frame = 0;
   float dmin = 0.1f;
   float dmax = 100.f;
   float lod_bias = 1.f;
@@ -157,6 +182,23 @@ struct CameraState {
 };
 std::unordered_map<void*, CameraState> g_cameras;
 void* g_active_cam = nullptr;
+uint32_t g_cam_seq = 0;
+// Fork: counts draw_viewport_cameras calls (one per flushed frame).
+uint32_t g_cam_pass_frame = 0;
+
+// Fork: what draw_viewport_cameras did in the last flushed frame
+// (render_d3d9_debug_dump prints it; the log only under SLRR_RENDER_TRACE).
+struct CamPassStats {
+  int32_t bound_vps = 0;
+  int32_t passes = 0;
+  int32_t instances = 0;
+  int32_t texts = 0;
+  // Below a camera root but under a WORLDTREELEAF container (not drawn).
+  int32_t hidden_instances = 0;
+  int32_t hidden_texts = 0;
+};
+CamPassStats g_cam_pass_stats;
+std::vector<std::string> g_cam_pass_log;
 
 struct FogState {
   bool enabled = false;
@@ -357,8 +399,21 @@ struct OsdRect {
 std::vector<OsdRect> g_osd;
 
 struct FontGlyph {
+  // Legacy screen pass (draw_osd_texts): UV box and its width in atlas
+  // pixels as the advance.
   float u0 = 0, v0 = 0, u1 = 0, v1 = 0;
   float adv_px = 0;
+  // PE 940: glyph c = vertices c*4 .. c*4+3 of the charset mesh, kept as
+  // stored (FUN_0044bdc0 copies them in file order; fade.SCX glyph 'a' has
+  // vertex 2 == vertex 0). Positions are the SCX values * 0.1 (INVO v3
+  // loader FUN_00451b00, DAT_005935d4) = pixels; uv from vertex+24.
+  float px[4] = {0, 0, 0, 0};
+  float py[4] = {0, 0, 0, 0};
+  float tu[4] = {0, 0, 0, 0};
+  float tv[4] = {0, 0, 0, 0};
+  // Pen advance = vertex[c*4+1].x, signed (FUN_0044bdc0 last line, measure
+  // FUN_0044bfb0).
+  float advance = 0;
 };
 
 struct FontState {
@@ -370,6 +425,13 @@ struct FontState {
   std::string charset;
   std::vector<FontGlyph> glyphs;
   bool ready = false;
+  // PE 940 text flush FUN_0044cb60: the texture is entry 0x6000000 of the
+  // charset section's material, none when the material has no such entry.
+  // The INVO v3 builder FUN_0042ba10 files the map under 0x6000001 when the
+  // header flags & 0x101 == 0x100 (fade.SCX), and the material made for it
+  // (shader 3, CMaterial_ColorMixTex, factory FUN_004297e0) declares the
+  // texture entries 0x6000001 / 4 / 5 / 7 only.
+  bool no_texture = false;
 };
 std::unordered_map<void*, FontState> g_fonts;
 
@@ -382,8 +444,22 @@ struct TextState {
   std::string text;
   bool alive = false;
   bool visible = true;
+  // Tree text: created under a parent node (PE 940 Text.create FUN_004e5b30
+  // -> r_text render instance FUN_004e8f40). It is drawn only by the pass
+  // of a camera whose root is above it (rg_text_section) and never by the
+  // legacy draw_osd_texts.
+  bool tree = false;
+  // PE 940 payload+0x178 -> RI_text+0xd8: multiplies the pen advance only
+  // (FUN_0044bdc0 param_7); 1.0 for r_text.
+  float adv_scale = 1.f;
+  // Fork: Text.setScale(sx, sy), see java_render_Text_setScale.
+  float mesh_sx = 1.f;
+  float mesh_sy = 1.f;
+  // Fork: creation stamp (stable order inside a text section).
+  uint32_t seq = 0;
 };
 std::unordered_map<void*, TextState> g_texts;
+uint32_t g_text_seq = 0;
 
 struct OsdText {
   void* text_key = nullptr;
@@ -411,6 +487,25 @@ struct MeshSubmesh {
   void* texture_key = nullptr;  // entry in g_textures (owned via mesh)
   std::string texture_path;
   uint32_t diffuse = 0xFF808080u;
+  // Section material as the exe reads it (camera pass only; the legacy
+  // draw_meshes keeps using `diffuse`). INVO v4 material chunk (PE 940
+  // FUN_0042c340): +0x08 shader id, +0x0C create flags, +0x10 entry count,
+  // entries from +0x14; INVO v3 header through FUN_0042ba10.
+  // Create flags: 0x40000000 transparent (material+8 bit0 -> rg_transparent),
+  // 0x80000000 prelit (bit1, lighting off), 0x20000000 alpha test,
+  // 0x02000000 two-sided.
+  bool has_mat = false;
+  uint32_t mat_flags = 0;
+  // Colour id 0 (ARGB) as the material ends up with it: Diffuse = Ambient,
+  // alpha -> TEXTUREFACTOR. Opaque white for the Tex family whatever the
+  // file says (scx_shader_white_diffuse).
+  uint32_t mat_diffuse = 0xFFFFFFFFu;
+  uint32_t mat_emissive = 0xFF000000u;  // colour id 2: Emissive
+  uint32_t mat_alpha_ref = 0x38;        // entry 0x5000000 (FUN_004412c0)
+  // Shader id & 0xffffff as the factory FUN_0042bff0 takes it (0 =
+  // CMaterial_Tex): the v4 chunk's own, or the one the v3 builder
+  // FUN_0042ba10 picks. -1 without a parsed material.
+  int32_t mat_shader = -1;
 };
 
 struct MeshState {
@@ -419,8 +514,17 @@ struct MeshState {
   float bmin[3] = {0, 0, 0};
   float bmax[3] = {0, 0, 0};
   bool ready = false;
+  // Fork: creation stamp of the instance (stable order in the camera pass).
+  uint32_t seq = 0;
 };
 std::unordered_map<void*, MeshState> g_meshes;
+uint32_t g_mesh_seq = 0;
+// Fork: copy -> the mesh it shows (render_d3d9_mesh_set_geometry_source).
+std::unordered_map<void*, void*> g_mesh_geom_src;
+// PE 940 render type `flags` (typeof-14 rsd line -> payload+0x34 ->
+// template+0x18, FUN_00522d90 / FUN_0046e1a0), per render type and per
+// instance made from it (render_d3d9_mesh_set_type_flags). Absent = 0.
+std::unordered_map<void*, uint32_t> g_mesh_type_flags;
 std::vector<void*> g_mesh_queue;
 
 // W26B — soft PE AsyncLoad_Mesh_UploadVbFvf @ 0x503400 wrapper (malloc 0x68):
@@ -1084,8 +1188,10 @@ void apply_active_camera() {
     aspect = static_cast<float>(g_w) / static_cast<float>(g_h);
   }
 
-  // Java passes half AOV in degrees; perspective uses tan(half).
-  float half_rad = cam.half_aov_deg * 0.01745329252f;
+  // Fork: legacy single-camera path. It reads the stored angle as a HALF
+  // angle (host cameras pass 45); the exe's reading (full angle, PE 940
+  // FUN_00461dd0) is applied by the per-viewport camera pass only.
+  float half_rad = cam.aov_deg * 0.01745329252f;
   if (half_rad < 0.01f) half_rad = 0.01f;
   if (half_rad > 1.55f) half_rad = 1.55f;
   const float ys = 1.f / std::tan(half_rad);
@@ -1186,25 +1292,77 @@ void set_lookat_view(float eye_x, float eye_y, float eye_z, float at_x,
 #endif
 }
 
-// Fork: when set, draw_meshes uses the VIEW/PROJECTION already bound
-// instead of auto-framing the queued bounds (per-viewport camera passes).
-static bool g_draw_meshes_keep_camera = false;
-static constexpr float kScxCmToM = 0.01f;  // Fork: SCX cm -> script metres
+// Fork: SCX cm -> script metres (camera pass instances; texts are screen-space
+// glyph quads in pixels, see draw_camera_text_section).
+static constexpr float kScxCmToM = 0.01f;
 static int g_vp_pass_trace_budget = 40;  // SLRR_RENDER_TRACE=1 lines
+
+// One step up an instance's parent chain: bone-link parent, else creation
+// parent (RenderRef.create), else GameRef parent (Group / Dummy -> Osd).
+static void* chain_parent_of(void* cur) {
+  void* next = nullptr;
+  auto it = g_mesh_xforms.find(cur);
+  if (it != g_mesh_xforms.end()) {
+    next = it->second.parent;
+    if (!next) next = it->second.tree_parent;
+  }
+  if (!next) next = gameref_get_parent(static_cast<InvObject*>(cur));  // Group -> Osd
+  return next == cur ? nullptr : next;
+}
 
 // Root of a render instance's parent chain (g_mesh_xforms), cycle-guarded.
 static void* mesh_root_of(void* key) {
   void* cur = key;
   for (int guard = 0; cur && guard < 64; ++guard) {
-    void* next = nullptr;
-    auto it = g_mesh_xforms.find(cur);
-    if (it != g_mesh_xforms.end() && it->second.parent) next = it->second.parent;
-    if (!next && it != g_mesh_xforms.end()) next = it->second.tree_parent;
-    if (!next) next = gameref_get_parent(static_cast<InvObject*>(cur));  // Group -> Osd
-    if (!next || next == cur) break;
+    void* next = chain_parent_of(cur);
+    if (!next) break;
     cur = next;
   }
   return cur;
+}
+
+constexpr int32_t kGameRefWorldTreeRoot = 0x10;  // GameRef.WORLDTREEROOT
+constexpr int32_t kGameRefWorldTreeLeaf = 0x40;  // GameRef.WORLDTREELEAF
+
+// PE 940 world-tree root of a node (node+0xfc; FUN_0051f440 on create /
+// reparent, FUN_0051f7f0 from GameRef.setFlags): the nearest
+// ancestor-or-self whose flags carry WORLDTREEROOT, else the topmost node.
+// A camera walks the tree below the root of its own node (FUN_00461dd0
+// 0x462251, cam+0xacc).
+static void* camera_root_of(void* start) {
+  void* cur = start;
+  for (int guard = 0; cur && guard < 64; ++guard) {
+    if (gameref_get_flags(static_cast<InvObject*>(cur)) & kGameRefWorldTreeRoot)
+      return cur;
+    void* next = chain_parent_of(cur);
+    if (!next) break;
+    cur = next;
+  }
+  return cur;
+}
+
+// PE 940 camera walk FUN_0045eb10 (started on the camera root by
+// FUN_0045e910): a container whose node+0x84 has WORLDTREELEAF is not
+// descended (FUN_0045f030 only marks its subtree hidden), the root
+// included; every other child container is descended whatever its own
+// WORLDTREEROOT bit; a render instance is queued without testing its own
+// flag. Host: the same test walking UP from the instance.
+static bool camera_sees(void* root, void* key, bool* hidden = nullptr) {
+  if (hidden) *hidden = false;
+  if (!root || !key) return false;
+  if (key == root) return true;  // the root itself is an instance
+  bool leaf = false;
+  void* cur = chain_parent_of(key);
+  for (int guard = 0; cur && guard < 64; ++guard) {
+    if (gameref_get_flags(static_cast<InvObject*>(cur)) & kGameRefWorldTreeLeaf)
+      leaf = true;
+    if (cur == root) {
+      if (hidden) *hidden = leaf;  // below the root, but not descended into
+      return !leaf;
+    }
+    cur = chain_parent_of(cur);
+  }
+  return false;
 }
 
 // Rigid inverse of a world matrix (rotation transpose, translated).
@@ -1220,154 +1378,599 @@ static void invert_rigid(const D3DMATRIX& m, D3DMATRIX* out) {
   *out = r;
 }
 
+// General 4x4 inverse (PE 940 FUN_00567630: cofactors FUN_005677d0 times the
+// reciprocal determinant). False when the matrix is singular.
+static bool invert_general(const D3DMATRIX& src, D3DMATRIX* out) {
+  const float* m = &src.m[0][0];
+  float inv[16];
+  inv[0] = m[5] * m[10] * m[15] - m[5] * m[11] * m[14] - m[9] * m[6] * m[15] +
+           m[9] * m[7] * m[14] + m[13] * m[6] * m[11] - m[13] * m[7] * m[10];
+  inv[4] = -m[4] * m[10] * m[15] + m[4] * m[11] * m[14] + m[8] * m[6] * m[15] -
+           m[8] * m[7] * m[14] - m[12] * m[6] * m[11] + m[12] * m[7] * m[10];
+  inv[8] = m[4] * m[9] * m[15] - m[4] * m[11] * m[13] - m[8] * m[5] * m[15] +
+           m[8] * m[7] * m[13] + m[12] * m[5] * m[11] - m[12] * m[7] * m[9];
+  inv[12] = -m[4] * m[9] * m[14] + m[4] * m[10] * m[13] + m[8] * m[5] * m[14] -
+            m[8] * m[6] * m[13] - m[12] * m[5] * m[10] + m[12] * m[6] * m[9];
+  inv[1] = -m[1] * m[10] * m[15] + m[1] * m[11] * m[14] + m[9] * m[2] * m[15] -
+           m[9] * m[3] * m[14] - m[13] * m[2] * m[11] + m[13] * m[3] * m[10];
+  inv[5] = m[0] * m[10] * m[15] - m[0] * m[11] * m[14] - m[8] * m[2] * m[15] +
+           m[8] * m[3] * m[14] + m[12] * m[2] * m[11] - m[12] * m[3] * m[10];
+  inv[9] = -m[0] * m[9] * m[15] + m[0] * m[11] * m[13] + m[8] * m[1] * m[15] -
+           m[8] * m[3] * m[13] - m[12] * m[1] * m[11] + m[12] * m[3] * m[9];
+  inv[13] = m[0] * m[9] * m[14] - m[0] * m[10] * m[13] - m[8] * m[1] * m[14] +
+            m[8] * m[2] * m[13] + m[12] * m[1] * m[10] - m[12] * m[2] * m[9];
+  inv[2] = m[1] * m[6] * m[15] - m[1] * m[7] * m[14] - m[5] * m[2] * m[15] +
+           m[5] * m[3] * m[14] + m[13] * m[2] * m[7] - m[13] * m[3] * m[6];
+  inv[6] = -m[0] * m[6] * m[15] + m[0] * m[7] * m[14] + m[4] * m[2] * m[15] -
+           m[4] * m[3] * m[14] - m[12] * m[2] * m[7] + m[12] * m[3] * m[6];
+  inv[10] = m[0] * m[5] * m[15] - m[0] * m[7] * m[13] - m[4] * m[1] * m[15] +
+            m[4] * m[3] * m[13] + m[12] * m[1] * m[7] - m[12] * m[3] * m[5];
+  inv[14] = -m[0] * m[5] * m[14] + m[0] * m[6] * m[13] + m[4] * m[1] * m[14] -
+            m[4] * m[2] * m[13] - m[12] * m[1] * m[6] + m[12] * m[2] * m[5];
+  inv[3] = -m[1] * m[6] * m[11] + m[1] * m[7] * m[10] + m[5] * m[2] * m[11] -
+           m[5] * m[3] * m[10] - m[9] * m[2] * m[7] + m[9] * m[3] * m[6];
+  inv[7] = m[0] * m[6] * m[11] - m[0] * m[7] * m[10] - m[4] * m[2] * m[11] +
+           m[4] * m[3] * m[10] + m[8] * m[2] * m[7] - m[8] * m[3] * m[6];
+  inv[11] = -m[0] * m[5] * m[11] + m[0] * m[7] * m[9] + m[4] * m[1] * m[11] -
+            m[4] * m[3] * m[9] - m[8] * m[1] * m[7] + m[8] * m[3] * m[5];
+  inv[15] = m[0] * m[5] * m[10] - m[0] * m[6] * m[9] - m[4] * m[1] * m[10] +
+            m[4] * m[2] * m[9] + m[8] * m[1] * m[6] - m[8] * m[2] * m[5];
+  const float det = m[0] * inv[0] + m[1] * inv[4] + m[2] * inv[8] + m[3] * inv[12];
+  if (!(std::fabs(det) > 1e-20f)) return false;
+  const float rdet = 1.f / det;
+  float* o = &out->m[0][0];
+  for (int i = 0; i < 16; ++i) o[i] = inv[i] * rdet;
+  return true;
+}
+
+// PE 940 FUN_00461dd0 -> C3DLow vt+0x80 FUN_00422e80 =
+// D3DXMatrixPerspectiveFovRH(fovy, aspect, zn, zf): fovy = aov * pi/180
+// (DAT_00593a50; the Camera.create aov is the FULL vertical angle),
+// zn = dmin, zf = dmax * cot(aov/2)^(1/4) (0x461f3f-0x461f80, DAT_005993cc =
+// pi/360), aspect = the value stored at Camera.create unless it is 0
+// (0x461fe8). Host units are metres; the exe's planes are metres * 10.
+// The OLD exe is the same (camera update @ 0x005100B0, callers 0x005105C0 /
+// 0x0050E9E0): params+0x10 -> cam+0xA4; zf = dmax * sqrt(sqrt(cos / sin))
+// of aov * flt_5F2DB4 (pi/360); aspect params+0xC unless 0.0; then device
+// vt+0x80 (vtable 0x5F1550 -> 0x004BA4B0 -> static D3DX 0x0058EADB, which
+// writes m[2][3] = -1: PerspectiveFovRH) with fovy = aov * flt_5F13BC
+// (pi/180). Its scripts halve the Java aov as Build 940's do (Camera.<init>
+// tree 10: * 0.5) and Osd carries the same CAM_AOV 60 / CAM_OFFSET 5.48 /
+// SCALE_3D 1.469, so the old build's navigator minimap (Camera(.., 90 ->
+// native 45, ..)) is drawn with fovy 45, right-handed, by this pass as well.
+static void build_camera_projection(const CameraState& cam, float vp_aspect,
+                                    D3DMATRIX* out, float* out_xs,
+                                    float* out_ys) {
+  float aov = cam.aov_deg;
+  if (!(aov > 0.5f)) aov = 0.5f;  // Fork: keep the cotangent finite
+  if (aov > 179.f) aov = 179.f;
+  const float half = aov * 0.008726389f;  // DAT_005993cc
+  const float cot = std::cos(half) / std::sin(half);
+  float aspect = cam.aspect != 0.f ? cam.aspect : vp_aspect;
+  if (!(aspect > 1e-6f)) aspect = 1.f;
+  const float ys = 1.f / std::tan(aov * 0.017453292f * 0.5f);  // DAT_00593a50
+  const float xs = ys / aspect;
+  const float zn = cam.dmin > 1e-4f ? cam.dmin : 0.1f;  // Fork: guard
+  float zf = cam.dmax * std::sqrt(std::sqrt(cot));
+  if (!(zf > zn + 1e-3f)) zf = zn + 100.f;  // Fork: guard
+  D3DMATRIX p{};
+  p.m[0][0] = xs;
+  p.m[1][1] = ys;
+  p.m[2][2] = zf / (zn - zf);
+  p.m[2][3] = -1.f;
+  p.m[3][2] = zn * zf / (zn - zf);
+  *out = p;
+  if (out_xs) *out_xs = xs;
+  if (out_ys) *out_ys = ys;
+}
+
+// View and projection of a camera exactly as its pass builds them (PE 940
+// FUN_00461dd0): projection from the stored angle / aspect / planes, view =
+// general inverse of the camera's world matrix with its own bone00 pose
+// folded (bone00 world copied to cam+0x39c, FUN_00567630). The exe uses the
+// same matrices to draw and to project / unproject (C3DLow vt+0x94 / +0x9c),
+// so the host helpers share this function with draw_viewport_cameras.
+static void camera_pass_matrices(void* cam_key, const CameraState& cam,
+                                 D3DMATRIX* cam_world, D3DMATRIX* view,
+                                 D3DMATRIX* proj, float* xs, float* ys,
+                                 float* vp_aspect_out) {
+  float vp_aspect = 4.f / 3.f;
+  auto vit = g_viewports.find(cam.viewport);
+  if (vit != g_viewports.end()) {
+    const float px_w = vit->second.w * static_cast<float>(g_w > 0 ? g_w : 1);
+    const float px_h = vit->second.h * static_cast<float>(g_h > 0 ? g_h : 1);
+    if (px_h > 0.f) vp_aspect = px_w / px_h;
+  }
+  build_camera_projection(cam, vp_aspect, proj, xs, ys);
+  const bool saved_fold = g_fold_own_bone0;
+  g_fold_own_bone0 = true;
+  resolve_world(cam_key, cam_world, 0);
+  g_fold_own_bone0 = saved_fold;
+  if (!invert_general(*cam_world, view)) invert_rigid(*cam_world, view);
+  if (vp_aspect_out) *vp_aspect_out = vp_aspect;
+}
+
+// Fork: true when the camera pass drew with this camera in the last flushed
+// frame (see CameraState::pass_frame).
+static bool camera_drawn_by_pass(const CameraState& cam) {
+  return cam.pass_frame != 0 && cam.pass_frame == g_cam_pass_frame;
+}
+
 void draw_meshes();
 
-// Fork: texts drawn by the camera pass this frame; draw_osd_texts skips them.
-static std::unordered_set<void*> g_vp_drawn_texts;
-
-// Fork: PE r_text render instances are glyph geometry from the font SCX
-// under the text's bone00 (Text_createRenderInst @ 0x48C4B0), drawn by the
-// camera pass like any instance. Host: world-space glyph quads from the
-// font atlas, glyph pixels taken as centimetres (SCX units), placed at the
-// text's resolved world (parent Group + own bone00 (x, z, 0)).
-static void draw_camera_texts(void* root) {
-  struct Vtx {
-    float x, y, z;
-    DWORD color;
-    float u, v;
-  };
-  const DWORD fvf = D3DFVF_XYZ | D3DFVF_DIFFUSE | D3DFVF_TEX1;
-  bool state_set = false;
-  for (const auto& kv : g_texts) {
-    void* key = kv.first;
-    const TextState& t = kv.second;
-    if (!t.alive || !t.visible || !t.font || t.text.empty()) continue;
-    if (mesh_root_of(key) != root) continue;
-    auto fit = g_fonts.find(t.font);
-    if (fit == g_fonts.end() || !fit->second.ready) continue;
-    const FontState& font = fit->second;
-    IDirect3DTexture9* tex = nullptr;
-    if (font.atlas_key) {
-      auto tit = g_textures.find(font.atlas_key);
-      if (tit != g_textures.end()) tex = tit->second.tex;
-    }
-    if (!tex) continue;
-    g_vp_drawn_texts.insert(key);
-    if (!state_set) {
-      state_set = true;
-      g_dev->SetFVF(fvf);
-      g_dev->SetRenderState(D3DRS_ZENABLE, FALSE);
-      g_dev->SetRenderState(D3DRS_LIGHTING, FALSE);
-      g_dev->SetRenderState(D3DRS_CULLMODE, D3DCULL_NONE);
-      g_dev->SetRenderState(D3DRS_ALPHABLENDENABLE, TRUE);
-      g_dev->SetRenderState(D3DRS_SRCBLEND, D3DBLEND_SRCALPHA);
-      g_dev->SetRenderState(D3DRS_DESTBLEND, D3DBLEND_INVSRCALPHA);
-      g_dev->SetTextureStageState(0, D3DTSS_COLOROP, D3DTOP_MODULATE);
-      g_dev->SetTextureStageState(0, D3DTSS_COLORARG1, D3DTA_TEXTURE);
-      g_dev->SetTextureStageState(0, D3DTSS_COLORARG2, D3DTA_DIFFUSE);
-      g_dev->SetTextureStageState(0, D3DTSS_ALPHAOP, D3DTOP_MODULATE);
-      g_dev->SetTextureStageState(0, D3DTSS_ALPHAARG1, D3DTA_TEXTURE);
-      g_dev->SetTextureStageState(0, D3DTSS_ALPHAARG2, D3DTA_DIFFUSE);
-      g_dev->SetSamplerState(0, D3DSAMP_MINFILTER, D3DTEXF_LINEAR);
-      g_dev->SetSamplerState(0, D3DSAMP_MAGFILTER, D3DTEXF_LINEAR);
-    }
-    D3DMATRIX world{};
-    resolve_world(key, &world, 0);
-    g_dev->SetTransform(D3DTS_WORLD, &world);
-    g_dev->SetTexture(0, tex);
-
-    auto glyph_adv = [&](unsigned char ch) -> float {
-      if (ch == ' ') return static_cast<float>(font.px_height) * 0.35f;
-      const size_t gi = static_cast<size_t>(ch);
-      if (gi >= font.glyphs.size()) return 0.f;
-      return font.glyphs[gi].adv_px;
-    };
-    float width_cm = 0.f;
-    for (unsigned char ch : t.text) width_cm += glyph_adv(ch);
-    float pen = 0.f;
-    if (t.align == 1) pen -= width_cm * 0.5f;   // CENTER
-    else if (t.align == 0) pen -= width_cm;     // RIGHT
-    const DWORD col = t.color;
-    for (unsigned char ch : t.text) {
-      const float adv = glyph_adv(ch);
-      if (ch != ' ') {
-        const size_t gi = static_cast<size_t>(ch);
-        if (gi < font.glyphs.size()) {
-          const FontGlyph& g = font.glyphs[gi];
-          if (g.u1 > g.u0 + 1e-6f && g.v1 > g.v0 + 1e-6f) {
-            const float gw = (g.u1 - g.u0) * static_cast<float>(font.atlas_w);
-            const float gh = (g.v1 - g.v0) * static_cast<float>(font.atlas_h);
-            const float l = pen * kScxCmToM, r = (pen + gw) * kScxCmToM;
-            const float top = 0.f, bot = -gh * kScxCmToM;
-            Vtx v[4] = {
-                {l, top, 0.f, col, g.u0, g.v0},
-                {r, top, 0.f, col, g.u1, g.v0},
-                {l, bot, 0.f, col, g.u0, g.v1},
-                {r, bot, 0.f, col, g.u1, g.v1},
-            };
-            g_dev->DrawPrimitiveUP(D3DPT_TRIANGLESTRIP, 2, v, sizeof(Vtx));
-          }
-        }
-      }
-      pen += adv;
-    }
+// Host stand-in scene light (one directional light + ambient), shared by the
+// legacy queue draw and the lit groups of the camera pass.
+static void apply_scene_light() {
+  D3DLIGHT9 light{};
+  light.Type = D3DLIGHT_DIRECTIONAL;
+  float dr = 1.f, dg = 1.f, db = 1.f;
+  float ar = 40.f / 255.f, ag = 44.f / 255.f, ab = 52.f / 255.f;
+  float sr = 1.f, sg = 1.f, sb = 1.f;
+  if (g_light.enabled) {
+    rgb_bytes(g_light.diffuse, &dr, &dg, &db);
+    rgb_bytes(g_light.ambient, &ar, &ag, &ab);
+    rgb_bytes(g_light.specular, &sr, &sg, &sb);
   }
-  if (state_set) {
-    g_dev->SetTexture(0, nullptr);
-    g_dev->SetRenderState(D3DRS_ALPHABLENDENABLE, FALSE);
-    g_dev->SetRenderState(D3DRS_ZENABLE, TRUE);
-    g_dev->SetRenderState(D3DRS_LIGHTING, TRUE);
-  }
-  if (std::getenv("SLRR_RENDER_TRACE") && g_vp_pass_trace_budget > 0) {
-    size_t n = 0;
-    for (const auto& kv : g_texts) {
-      if (!g_vp_drawn_texts.count(kv.first)) continue;
-      ++n;
-      D3DMATRIX w{};
-      resolve_world(kv.first, &w, 0);
-      std::fprintf(stderr, "[render]   text %p '%s' world=(%g,%g,%g) align=%d color=%08X font_px=%d\n",
-                   kv.first, kv.second.text.c_str(), w.m[3][0], w.m[3][1], w.m[3][2],
-                   kv.second.align, kv.second.color, render_d3d9_font_px_height(kv.second.font));
-    }
-    std::fprintf(stderr, "[render]   texts under root %p: %zu\n", root, n);
+  light.Diffuse.r = dr;
+  light.Diffuse.g = dg;
+  light.Diffuse.b = db;
+  light.Specular.r = sr;
+  light.Specular.g = sg;
+  light.Specular.b = sb;
+  light.Direction.x = -0.4f;
+  light.Direction.y = -0.7f;
+  light.Direction.z = 0.5f;
+  g_dev->SetLight(0, &light);
+  g_dev->LightEnable(0, TRUE);
+  // Packed ambient bytes (setLight a5 dir=0; D3DRS_AMBIENT is host bind).
+  if (g_light.enabled) {
+    const int32_t amb = g_light.ambient;
+    g_dev->SetRenderState(
+        D3DRS_AMBIENT,
+        D3DCOLOR_XRGB((amb >> 16) & 0xff, (amb >> 8) & 0xff, amb & 0xff));
+  } else {
+    g_dev->SetRenderState(
+        D3DRS_AMBIENT,
+        D3DCOLOR_XRGB(static_cast<int>(ar * 255.f + 0.5f),
+                      static_cast<int>(ag * 255.f + 0.5f),
+                      static_cast<int>(ab * 255.f + 0.5f)));
   }
 }
 
-// Fork: PE per-viewport camera pass (GfxEngine_PresentFrame walks the bound
-// viewports, each hooked camera renders the render instances under its
-// parent tree). Host: every camera whose viewport is active draws the
-// ready meshes that share the camera parent's root, with the camera's own
-// world transform inverted as the view and its aov/dmin/dmax projection.
-// Meshes already in g_mesh_queue (legacy world path) are left to draw_meshes.
+// Camera-pass instance draw. PE 940 camera render FUN_00460ba0, the groups
+// an instance tree uses, in the exe's order: rg_object (cam+0x5b4, opaque,
+// lit), rg_objectprelit (cam+0x628, opaque, lighting off),
+// rg_prelittransparent (cam+0x80c), rg_transparent (cam+0x784). The group
+// of a section comes from its material create flags (RI_object ctor
+// FUN_00465e40: 0x40000000 -> material+8 bit0 transparent, 0x80000000 ->
+// bit1 prelit), NOT from the texture format.
+// rg_transparent (begin FUN_0045e8d0 = C3DLow vt+0x10c(1,0) lighting on +
+// vt+0x34(2,1) FUN_00422c60): ZWRITE off, Z test stays on (LESSEQUAL),
+// SRCALPHA / INVSRCALPHA, BLENDOP ADD, alpha test GREATER ref 4; its
+// entries are drawn back to front, key = dot(instance origin - eye, camera
+// world Z row) (RI+0xb8), in the order the exe's binary min-heap yields:
+// push FUN_0046b5e0 (sift up while the parent key is greater), draw the
+// root, pop FUN_0040abe0 (the last entry sinks while it is greater than the
+// smaller child). Equal keys therefore come out first-queued first and the
+// rest in reverse (FUN_00468490; rg_prelittransparent FUN_00468200 the
+// same).
+// Material (FUN_00434170 / FUN_00440b50): Diffuse = Ambient = the
+// material's colour id 0 entry, Emissive = colour id 2, D3DRS_TEXTUREFACTOR
+// alpha = that entry's alpha, stage 0 alpha = texture alpha * TFACTOR
+// (defaults FUN_00426d10). For the Tex family the colour id 0 entry is
+// opaque white whatever the file says; the other shaders keep the file
+// value (scx_shader_white_diffuse, render_d3d9_part3.inc).
+// The Rectangle mesh etalon_negyzet_alpha is transparent with white Diffuse
+// and white Emissive: lit, yet the texture shows unshaded.
+// Instance colour (RenderRef.setColor FUN_004e2830 -> payload+0x17c ->
+// RI_object+0xcc): consumed only when the render type's `flags` have 0x80
+// with 0x200 (mode 1) or 0x400 (mode 2) (RI_object ctor FUN_00465e40). For
+// the draw of that instance FUN_00440a60(0, r, g, b, a) (mode 1) replaces
+// the material's colour id 0 - also the white of the Tex family - and
+// FUN_00440a60(2, ...) (mode 2) its colour id 2; both are restored after
+// the draw (FUN_00468490 / FUN_00467c70). FUN_00440a60 does nothing for a
+// material whose create flags have 0x04000000. In frontend.rdb only
+// paintcan and finishObject (flags 640) qualify, Rectangles (etalon, flags
+// 4096) do not.
+// Fork: an instance whose colour was never set keeps the material colour
+// (the exe would use the payload's initial value, which was not read).
+// Prelit groups (rg_objectprelit, rg_prelittransparent begin FUN_0045e870):
+// lighting off (C3DLow vt+0x10c(0,0) FUN_00426190). A prelit vertex has two
+// colours: the first (D3DFVF_DIFFUSE) is 0xFFFFFFFF in every INVO v4 chunk
+// of the install (0xFF808080 from the v3 loader), the second
+// (D3DFVF_SPECULAR) carries the baked lighting, which material pass 3
+// combines per material (FUN_0043f3a0 mode 3, D3DTA_SPECULAR stage setups,
+// lightmap stages FUN_00436230 / FUN_0043c9a0 / FUN_00439350).
+// Fork: the host draws a prelit section as texture * material Diffuse
+// without the baked colour and without lightmaps (neither is loaded).
+// Fork: lit sections use the host stand-in light (the exe's scene lights are
+// not ported); the transparent queue is filled in creation order (the exe
+// fills the group's entry array in tree-walk order); a section without a
+// parsed material keeps the legacy rule (heuristic diffuse, blend only with
+// a DXT3/DXT5 texture); CULL_NONE for every section (the exe's default cull
+// mode was not read, 0x02000000 = two-sided is therefore not consulted).
+static void draw_camera_instances(const std::vector<void*>& members,
+                                  const D3DMATRIX& cam_world) {
+  if (members.empty()) return;
+  struct Sec {
+    void* key;
+    const MeshState* ms;
+    int sub;        // -1: uploaded VB/IB, the whole mesh with subs[0]'s material
+    float depth;
+    bool legacy_blend;
+  };
+  std::vector<Sec> opaque_lit, opaque_prelit, trans_prelit, trans_lit;
+  const float ex = cam_world.m[3][0], ey = cam_world.m[3][1], ez = cam_world.m[3][2];
+  const float zx = cam_world.m[2][0], zy = cam_world.m[2][1], zz = cam_world.m[2][2];
+  auto tex_fmt_of = [](const MeshSubmesh* sm) -> int32_t {
+    if (!sm || !sm->texture_key) return 3;
+    auto tit = g_textures.find(sm->texture_key);
+    return tit == g_textures.end() ? 3 : tit->second.engine_fmt;
+  };
+  for (void* key : members) {
+    auto it = g_meshes.find(key);
+    if (it == g_meshes.end() || !it->second.ready) continue;
+    const MeshState& ms = it->second;
+    D3DMATRIX w{};
+    resolve_world(key, &w, 0);
+    const float depth = (w.m[3][0] - ex) * zx + (w.m[3][1] - ey) * zy + (w.m[3][2] - ez) * zz;
+    bool uploaded = false;
+    {
+      auto vit = g_mesh_vbs.find(key);
+      auto iit = g_mesh_ibs.find(key);
+      uploaded = vit != g_mesh_vbs.end() && vit->second.ready && vit->second.vb &&
+                 iit != g_mesh_ibs.end() && iit->second.ready && iit->second.ib &&
+                 iit->second.index_count >= 3;
+    }
+    const int nsub = uploaded ? 1 : static_cast<int>(ms.subs.size());
+    for (int s = 0; s < nsub; ++s) {
+      const MeshSubmesh* sm = ms.subs.empty() ? nullptr : &ms.subs[static_cast<size_t>(s)];
+      if (!uploaded && (!sm || sm->verts.empty() || sm->indices.size() < 3)) continue;
+      Sec sec{key, &ms, uploaded ? -1 : s, depth, false};
+      if (sm && sm->has_mat) {
+        const bool transparent = (sm->mat_flags & 0x40000000u) != 0;
+        const bool prelit = (sm->mat_flags & 0x80000000u) != 0;
+        (transparent ? (prelit ? trans_prelit : trans_lit)
+                     : (prelit ? opaque_prelit : opaque_lit)).push_back(sec);
+      } else {
+        const int32_t fmt = tex_fmt_of(sm);
+        sec.legacy_blend = (fmt == 7 || fmt == 13);  // legacy: DXT5 / DXT3
+        (sec.legacy_blend ? trans_lit : opaque_lit).push_back(sec);
+      }
+    }
+  }
+  // PE 940 FUN_00468490 / FUN_00468200: every queued entry goes through the
+  // heap, then the root is drawn and popped until the heap is empty.
+  auto heap_order = [](std::vector<Sec>& v) {
+    std::vector<Sec> h;
+    h.reserve(v.size());
+    for (const Sec& s : v) {  // FUN_0046b5e0
+      size_t i = h.size();
+      h.push_back(s);
+      while (i != 0) {
+        const size_t p = (i - 1) / 2;
+        if (h[p].depth <= s.depth) break;
+        h[i] = h[p];
+        i = p;
+      }
+      h[i] = s;
+    }
+    std::vector<Sec> out;
+    out.reserve(h.size());
+    while (!h.empty()) {
+      out.push_back(h[0]);
+      const size_t n = h.size() - 1;  // FUN_0040abe0: h[n] is the last entry
+      if (n != 0) {
+        const Sec last = h[n];
+        size_t i = 0, l = 1;
+        while (l < n) {
+          const size_t r = i * 2 + 2;
+          size_t c = l;
+          if (r < n && !(h[l].depth <= h[r].depth)) c = r;
+          if (last.depth <= h[c].depth) break;
+          h[i] = h[c];
+          i = c;
+          l = i * 2 + 1;
+        }
+        h[i] = last;
+      }
+      h.pop_back();
+    }
+    v.swap(out);
+  };
+  heap_order(trans_prelit);
+  heap_order(trans_lit);
+
+  const DWORD fvf_default = D3DFVF_XYZ | D3DFVF_NORMAL | D3DFVF_TEX1;
+  g_dev->SetFVF(fvf_default);
+  g_dev->SetRenderState(D3DRS_ZENABLE, TRUE);
+  g_dev->SetRenderState(D3DRS_ZFUNC, D3DCMP_LESSEQUAL);
+  g_dev->SetRenderState(D3DRS_ZWRITEENABLE, TRUE);
+  g_dev->SetRenderState(D3DRS_NORMALIZENORMALS, TRUE);
+  g_dev->SetRenderState(D3DRS_CULLMODE, D3DCULL_NONE);
+  g_dev->SetRenderState(D3DRS_ALPHABLENDENABLE, FALSE);
+  g_dev->SetRenderState(D3DRS_ALPHATESTENABLE, FALSE);
+  g_dev->SetSamplerState(0, D3DSAMP_MINFILTER, D3DTEXF_LINEAR);
+  g_dev->SetSamplerState(0, D3DSAMP_MAGFILTER, D3DTEXF_LINEAR);
+  g_dev->SetSamplerState(0, D3DSAMP_MIPFILTER, D3DTEXF_LINEAR);
+  g_dev->SetSamplerState(1, D3DSAMP_MINFILTER, D3DTEXF_LINEAR);
+  g_dev->SetSamplerState(1, D3DSAMP_MAGFILTER, D3DTEXF_LINEAR);
+  apply_scene_light();
+
+  IDirect3DBaseTexture9* env_tex = nullptr;
+  if (g_envmap) {
+    auto eit = g_textures.find(g_envmap);
+    if (eit != g_textures.end()) env_tex = texture_d3d_base(eit->second);
+  }
+
+  auto draw_section = [&](const Sec& sec, bool transparent, bool prelit) {
+    const MeshState& ms = *sec.ms;
+    const MeshSubmesh* sm =
+        ms.subs.empty() ? nullptr : &ms.subs[static_cast<size_t>(sec.sub < 0 ? 0 : sec.sub)];
+    const bool has_mat = sm && sm->has_mat;
+    D3DMATRIX world{};
+    resolve_world(sec.key, &world, 0);
+    // Fork: SCX vertices are centimetres (see GameRef_core extent "cm");
+    // script poses / camera planes are metres.
+    for (int r = 0; r < 3; ++r)
+      for (int c = 0; c < 3; ++c) world.m[r][c] *= kScxCmToM;
+    g_dev->SetTransform(D3DTS_WORLD, &world);
+
+    IDirect3DBaseTexture9* tex = nullptr;
+    if (sm && sm->texture_key) {
+      auto tit = g_textures.find(sm->texture_key);
+      if (tit != g_textures.end()) tex = texture_d3d_base(tit->second);
+    }
+    g_dev->SetTexture(0, tex);
+
+    // Instance colour mode (RI_object ctor FUN_00465e40, from the render
+    // type flags); FUN_00440a60 leaves a 0x04000000 material alone.
+    int colour_mode = 0;
+    uint32_t inst_colour = 0xFFFFFFFFu;
+    if (has_mat && (sm->mat_flags & 0x04000000u) == 0) {
+      auto fit = g_mesh_type_flags.find(sec.key);
+      if (fit != g_mesh_type_flags.end() && (fit->second & 0x80u) != 0) {
+        if (fit->second & 0x200u) colour_mode = 1;
+        if (fit->second & 0x400u) colour_mode = 2;
+      }
+      if (colour_mode != 0) {
+        auto xit = g_mesh_xforms.find(sec.key);
+        if (xit != g_mesh_xforms.end() && xit->second.color_set)
+          inst_colour = static_cast<uint32_t>(xit->second.color);
+        else
+          colour_mode = 0;  // Fork: never set, the material colour stays
+      }
+    }
+
+    D3DMATERIAL9 mat{};
+    if (has_mat) {
+      // Mode 1: the instance ARGB is colour id 0 for this draw (Diffuse =
+      // Ambient, alpha -> TEXTUREFACTOR); mode 2: its RGB is colour id 2.
+      const uint32_t d = colour_mode == 1 ? inst_colour : sm->mat_diffuse;
+      const uint32_t e = colour_mode == 2 ? inst_colour : sm->mat_emissive;
+      mat.Diffuse.r = mat.Ambient.r = static_cast<float>((d >> 16) & 0xff) / 255.f;
+      mat.Diffuse.g = mat.Ambient.g = static_cast<float>((d >> 8) & 0xff) / 255.f;
+      mat.Diffuse.b = mat.Ambient.b = static_cast<float>(d & 0xff) / 255.f;
+      mat.Diffuse.a = mat.Ambient.a = static_cast<float>(d >> 24) / 255.f;
+      mat.Emissive.r = static_cast<float>((e >> 16) & 0xff) / 255.f;
+      mat.Emissive.g = static_cast<float>((e >> 8) & 0xff) / 255.f;
+      mat.Emissive.b = static_cast<float>(e & 0xff) / 255.f;
+      // FUN_00434170: SetRenderState(TEXTUREFACTOR, (fade * diffuse.a * 255) << 24)
+      g_dev->SetRenderState(D3DRS_TEXTUREFACTOR, (d & 0xFF000000u) | 0x00FFFFFFu);
+      if (tex) {
+        g_dev->SetTextureStageState(0, D3DTSS_COLOROP, D3DTOP_MODULATE);
+        g_dev->SetTextureStageState(0, D3DTSS_COLORARG1, D3DTA_TEXTURE);
+        g_dev->SetTextureStageState(0, D3DTSS_COLORARG2, D3DTA_DIFFUSE);
+        g_dev->SetTextureStageState(0, D3DTSS_ALPHAOP, D3DTOP_MODULATE);
+        g_dev->SetTextureStageState(0, D3DTSS_ALPHAARG1, D3DTA_TEXTURE);
+        g_dev->SetTextureStageState(0, D3DTSS_ALPHAARG2, D3DTA_TFACTOR);
+      } else {
+        g_dev->SetTextureStageState(0, D3DTSS_COLOROP, D3DTOP_SELECTARG1);
+        g_dev->SetTextureStageState(0, D3DTSS_COLORARG1, D3DTA_DIFFUSE);
+        g_dev->SetTextureStageState(0, D3DTSS_ALPHAOP, D3DTOP_SELECTARG1);
+        g_dev->SetTextureStageState(0, D3DTSS_ALPHAARG1, D3DTA_TFACTOR);
+      }
+    } else {
+      // Legacy rule (no parsed material).
+      const uint32_t d = sm ? sm->diffuse : 0xFF808080u;
+      const float r = static_cast<float>((d >> 16) & 0xff) / 255.f;
+      const float g = static_cast<float>((d >> 8) & 0xff) / 255.f;
+      const float b = static_cast<float>(d & 0xff) / 255.f;
+      mat.Diffuse.r = mat.Ambient.r = r > 0.05f ? r : 0.75f;
+      mat.Diffuse.g = mat.Ambient.g = g > 0.05f ? g : 0.78f;
+      mat.Diffuse.b = mat.Ambient.b = b > 0.05f ? b : 0.82f;
+      mat.Diffuse.a = mat.Ambient.a = 1.f;
+      if (tex) {
+        g_dev->SetTextureStageState(0, D3DTSS_COLOROP, D3DTOP_MODULATE);
+        g_dev->SetTextureStageState(0, D3DTSS_COLORARG1, D3DTA_TEXTURE);
+        g_dev->SetTextureStageState(0, D3DTSS_COLORARG2, D3DTA_DIFFUSE);
+        g_dev->SetTextureStageState(0, D3DTSS_ALPHAOP, D3DTOP_SELECTARG1);
+        g_dev->SetTextureStageState(0, D3DTSS_ALPHAARG1, D3DTA_TEXTURE);
+      } else {
+        g_dev->SetTextureStageState(0, D3DTSS_COLOROP, D3DTOP_SELECTARG1);
+        g_dev->SetTextureStageState(0, D3DTSS_COLORARG1, D3DTA_DIFFUSE);
+        g_dev->SetTextureStageState(0, D3DTSS_ALPHAOP, D3DTOP_DISABLE);
+      }
+    }
+    g_dev->SetMaterial(&mat);
+    g_dev->SetRenderState(D3DRS_LIGHTING, prelit ? FALSE : TRUE);
+
+    if (transparent && !sec.legacy_blend) {
+      // FUN_00422c60(2,1)
+      g_dev->SetRenderState(D3DRS_ZWRITEENABLE, FALSE);
+      g_dev->SetRenderState(D3DRS_ALPHABLENDENABLE, TRUE);
+      g_dev->SetRenderState(D3DRS_SRCBLEND, D3DBLEND_SRCALPHA);
+      g_dev->SetRenderState(D3DRS_DESTBLEND, D3DBLEND_INVSRCALPHA);
+      g_dev->SetRenderState(D3DRS_BLENDOP, D3DBLENDOP_ADD);
+      g_dev->SetRenderState(D3DRS_ALPHATESTENABLE, TRUE);
+      g_dev->SetRenderState(D3DRS_ALPHAFUNC, D3DCMP_GREATER);
+      g_dev->SetRenderState(D3DRS_ALPHAREF, 4);
+    } else if (sec.legacy_blend) {
+      g_dev->SetRenderState(D3DRS_ZWRITEENABLE, TRUE);
+      g_dev->SetRenderState(D3DRS_ALPHABLENDENABLE, TRUE);
+      g_dev->SetRenderState(D3DRS_SRCBLEND, D3DBLEND_SRCALPHA);
+      g_dev->SetRenderState(D3DRS_DESTBLEND, D3DBLEND_INVSRCALPHA);
+      g_dev->SetRenderState(D3DRS_ALPHATESTENABLE, FALSE);
+    } else {
+      g_dev->SetRenderState(D3DRS_ZWRITEENABLE, TRUE);
+      g_dev->SetRenderState(D3DRS_ALPHABLENDENABLE, FALSE);
+      // 0x20000000: alpha test, reference from material entry 0x5000000
+      // (v3 builder FUN_0042ba10 -> FUN_004412c0(0x5000000, 0x38)).
+      const bool atest = has_mat && (sm->mat_flags & 0x20000000u) != 0;
+      g_dev->SetRenderState(D3DRS_ALPHATESTENABLE, atest ? TRUE : FALSE);
+      if (atest) {
+        g_dev->SetRenderState(D3DRS_ALPHAFUNC, D3DCMP_GREATER);
+        g_dev->SetRenderState(D3DRS_ALPHAREF, sm->mat_alpha_ref & 0xffu);
+      }
+    }
+    // Fork: the global envmap stand-in (stage 1) stays for every section
+    // except shader ids 0 and 4 (CMaterial_Tex FUN_0042af10 and its specular
+    // twin FUN_0042b400 declare no reflection map entry 0x6000003 / 1).
+    const bool env =
+        env_tex && !(has_mat && (sm->mat_shader == 0 || sm->mat_shader == 4));
+    if (env) apply_envmap_stage1(env_tex);
+
+    if (sec.sub < 0) {
+      const MeshVbState& vb = g_mesh_vbs[sec.key];
+      const MeshIbState& ib = g_mesh_ibs[sec.key];
+      g_dev->SetFVF(vb.pe_fvf != 0 ? vb.pe_fvf : fvf_default);
+      g_dev->SetStreamSource(0, vb.vb, 0, static_cast<UINT>(vb.stride));
+      g_dev->SetIndices(ib.ib);
+      const UINT nvert = static_cast<UINT>(vb.vert_count);
+      const UINT ntri = static_cast<UINT>(ib.index_count / 3);
+      if (nvert > 0 && ntri > 0)
+        g_dev->DrawIndexedPrimitive(D3DPT_TRIANGLELIST, 0, 0, nvert, 0, ntri);
+      g_dev->SetStreamSource(0, nullptr, 0, 0);
+      g_dev->SetIndices(nullptr);
+      g_dev->SetFVF(fvf_default);
+    } else {
+      const UINT ntri = static_cast<UINT>(sm->indices.size() / 3);
+      g_dev->DrawIndexedPrimitiveUP(
+          D3DPT_TRIANGLELIST, 0, static_cast<UINT>(sm->verts.size()), ntri,
+          sm->indices.data(), D3DFMT_INDEX16, sm->verts.data(),
+          sizeof(MeshVertex));
+    }
+    if (env) apply_envmap_stage1(nullptr);
+  };
+
+  for (const Sec& s : opaque_lit) draw_section(s, false, false);
+  for (const Sec& s : opaque_prelit) draw_section(s, false, true);
+  for (const Sec& s : trans_prelit) draw_section(s, true, true);
+  for (const Sec& s : trans_lit) draw_section(s, true, false);
+
+  // Leave the state the other passes expect (FUN_00424a70 group end:
+  // blend off, alpha test off, ZWRITE on).
+  g_dev->SetTexture(0, nullptr);
+  apply_envmap_stage1(nullptr);
+  g_dev->LightEnable(0, FALSE);
+  g_dev->SetRenderState(D3DRS_LIGHTING, FALSE);
+  g_dev->SetRenderState(D3DRS_NORMALIZENORMALS, FALSE);
+  g_dev->SetRenderState(D3DRS_ALPHABLENDENABLE, FALSE);
+  g_dev->SetRenderState(D3DRS_ALPHATESTENABLE, FALSE);
+  g_dev->SetRenderState(D3DRS_ZWRITEENABLE, TRUE);
+  g_dev->SetRenderState(D3DRS_TEXTUREFACTOR, 0xFFFFFFFFu);
+  g_dev->SetTextureStageState(0, D3DTSS_ALPHAARG1, D3DTA_TEXTURE);
+  g_dev->SetTextureStageState(0, D3DTSS_ALPHAARG2, D3DTA_CURRENT);
+}
+
+// PE 940 text section of a camera pass (rg_text_section, cam+0x4b4): defined
+// in render_d3d9_part3.inc.
+static void draw_camera_text_section(const std::vector<void*>& keys);
+
+// PE 940 present walk (GfxEngine PresentFrame FUN_00421920): every BOUND
+// viewport in list order - FUN_00421e40 keeps the list ascending by
+// priority, so the lowest priority is drawn first (bottom) and the highest
+// last (top); among equals the most recently bound one comes first. Per
+// viewport FUN_004653c0 sets the D3D viewport from the normalised rect and
+// walks its cameras (FUN_00464f60: ascending camera priority, newest first
+// among equals). Per camera FUN_00461dd0 builds view = inverse(camera bone00
+// world) and the right-handed projection, FUN_0045e910 collects the
+// instances below the camera root and FUN_00460ba0 clears DEPTH ONLY
+// (cam+0x1a4 & vp+0x24 never carry the target bit; Z 0x3F7FFF58, inside the
+// viewport) and draws the render groups, the text section last.
+// Fork: instances already in g_mesh_queue (legacy world path) are left to
+// draw_meshes, and a camera that sees neither an instance nor a text is
+// skipped (its depth clear would have no effect).
+// The legacy --game path runs this pass too: the old build binds the
+// navigator viewport (priority 12) with a camera over the 64 map tiles. In
+// the --no-wait smoke run the finished frame does not show it: the legacy
+// OSD rectangles drawn afterwards (draw_osd_rects) cover that part of the
+// screen (SLRR_CAM_PASS_SHOT_STAGE=pass dumps the frame before them).
 void draw_viewport_cameras() {
 #ifdef _WIN32
-  g_vp_drawn_texts.clear();
-  if (!g_dev || g_cameras.empty()) return;
-  std::vector<std::pair<int32_t, void*>> cams;
+  g_cam_pass_stats = CamPassStats{};
+  g_cam_pass_log.clear();
+  if (!g_dev) return;
+  ++g_cam_pass_frame;
+  if (g_cam_pass_frame == 0) g_cam_pass_frame = 1;  // 0 = never drawn
+  for (const auto& kv : g_viewports)
+    if (kv.second.active) ++g_cam_pass_stats.bound_vps;
+  if (g_cameras.empty()) return;
+  static const bool trace_on = std::getenv("SLRR_RENDER_TRACE") != nullptr;
+  struct Pass {
+    uint32_t vp_pri, vp_seq, cam_pri, cam_seq;
+    void* cam;
+  };
+  std::vector<Pass> passes;
   for (const auto& kv : g_cameras) {
     if (!kv.second.viewport) continue;
     auto vit = g_viewports.find(kv.second.viewport);
     if (vit == g_viewports.end() || !vit->second.active) continue;
-    cams.emplace_back(vit->second.pri, kv.first);
+    passes.push_back({static_cast<uint32_t>(vit->second.pri), vit->second.bind_seq,
+                      static_cast<uint32_t>(kv.second.pri), kv.second.seq, kv.first});
   }
-  if (cams.empty()) return;
-  std::sort(cams.begin(), cams.end(),
-            [](const auto& a, const auto& b) { return a.first > b.first; });  // high pri first (background)
+  if (passes.empty()) return;
+  // Unsigned compares as in the exe (0x421ef6 CMP / JNC).
+  std::sort(passes.begin(), passes.end(), [](const Pass& a, const Pass& b) {
+    if (a.vp_pri != b.vp_pri) return a.vp_pri < b.vp_pri;
+    if (a.vp_seq != b.vp_seq) return a.vp_seq > b.vp_seq;
+    if (a.cam_pri != b.cam_pri) return a.cam_pri < b.cam_pri;
+    if (a.cam_seq != b.cam_seq) return a.cam_seq > b.cam_seq;
+    return a.cam < b.cam;
+  });
+  float kPeClearZ = 1.f;
+  {
+    const uint32_t zbits = 0x3F7FFF58u;  // PE 940 FUN_004231a0 Clear Z
+    std::memcpy(&kPeClearZ, &zbits, sizeof(kPeClearZ));
+  }
   const std::vector<void*> saved_queue = g_mesh_queue;
   void* const saved_vp = g_active_vp;
-  for (const auto& pc : cams) {
-    void* cam_key = pc.second;
+  for (const Pass& pc : passes) {
+    void* cam_key = pc.cam;
     const CameraState& cam = g_cameras[cam_key];
-    void* root = mesh_root_of(cam.parent ? cam.parent : cam_key);
+    void* const start = cam.parent ? cam.parent : cam_key;
+    void* root = camera_root_of(start);
+    // Instances below the camera root, in creation order (Fork: the exe
+    // queues them in tree-walk order).
     std::vector<void*> members;
     for (const auto& mk : g_meshes) {
       if (!mk.second.ready || mk.first == cam_key) continue;
       if (std::find(saved_queue.begin(), saved_queue.end(), mk.first) != saved_queue.end()) continue;
-      if (mesh_root_of(mk.first) != root) continue;
+      bool hidden = false;
+      if (!camera_sees(root, mk.first, &hidden)) {
+        if (hidden) ++g_cam_pass_stats.hidden_instances;
+        continue;
+      }
       members.push_back(mk.first);
     }
-    if (std::getenv("SLRR_RENDER_TRACE") && g_vp_pass_trace_budget > 0 && members.empty() &&
-        g_vp_pass_trace_budget == 40) {
+    std::sort(members.begin(), members.end(), [](void* a, void* b) {
+      const uint32_t sa = g_meshes[a].seq, sb = g_meshes[b].seq;
+      return sa != sb ? sa < sb : a < b;
+    });
+    // PE 940: an r_text instance is part of the same walk (rg_text_section).
+    std::vector<void*> texts;
+    for (const auto& tk : g_texts) {
+      const TextState& t = tk.second;
+      if (!t.tree || !t.alive || !t.visible || !t.font || t.text.empty()) continue;
+      bool hidden = false;
+      if (!camera_sees(root, tk.first, &hidden)) {
+        if (hidden) ++g_cam_pass_stats.hidden_texts;
+        continue;
+      }
+      texts.push_back(tk.first);
+    }
+    const bool trace = trace_on && g_vp_pass_trace_budget > 0;
+    if (trace && members.empty() && g_vp_pass_trace_budget == 40) {
       // One-time chain dump: how the ready meshes hang together.
       int shown = 0;
       for (const auto& mk : g_meshes) {
@@ -1393,14 +1996,84 @@ void draw_viewport_cameras() {
                    cam.parent && tree_host_class(static_cast<InvObject*>(cam.parent)) ? tree_host_class(static_cast<InvObject*>(cam.parent)) : "",
                    gameref_get_parent(static_cast<InvObject*>(cam.parent)));
     }
-    if (std::getenv("SLRR_RENDER_TRACE") && g_vp_pass_trace_budget > 0 && !members.empty()) {
+    if (members.empty() && texts.empty()) continue;  // Fork: nothing to draw
+    ++g_cam_pass_stats.passes;
+    {
+      auto cit = g_cameras.find(cam_key);
+      if (cit != g_cameras.end()) cit->second.pass_frame = g_cam_pass_frame;
+    }
+    g_cam_pass_stats.instances += static_cast<int32_t>(members.size());
+    // Viewport rect (FUN_00464d30 pixel rect + SetViewport).
+    g_active_vp = cam.viewport;
+    apply_active_viewport();
+    const ViewportState& vps = g_viewports[cam.viewport];
+    // Projection and view = inverse of the camera's world matrix, own
+    // bone00 pose folded (camera_pass_matrices). With the RH projection the
+    // camera looks down its -Z, +Y up, +X right.
+    float vp_aspect = 4.f / 3.f, xs = 1.f, ys = 1.f;
+    D3DMATRIX proj{}, cam_world{}, view{};
+    camera_pass_matrices(cam_key, cam, &cam_world, &view, &proj, &xs, &ys,
+                         &vp_aspect);
+    g_dev->SetTransform(D3DTS_PROJECTION, &proj);
+    g_dev->SetTransform(D3DTS_VIEW, &view);
+    g_fold_own_bone0 = true;  // instances and texts: own bone00 pose folded
+    g_dev->SetRenderState(D3DRS_FOGENABLE, FALSE);
+    // FUN_00460ba0 -> FUN_004231a0: depth only, never the target.
+    g_dev->Clear(0, nullptr, D3DCLEAR_ZBUFFER, 0, kPeClearZ, 0);
+    void* const top = mesh_root_of(start);
+    auto ndc_of = [&](void* key, float* vx, float* vy, float* vz, float* nx, float* ny) {
+      D3DMATRIX w{};
+      resolve_world(key, &w, 0);
+      const float wx = w.m[3][0], wy = w.m[3][1], wz = w.m[3][2];
+      *vx = wx * view.m[0][0] + wy * view.m[1][0] + wz * view.m[2][0] + view.m[3][0];
+      *vy = wx * view.m[0][1] + wy * view.m[1][1] + wz * view.m[2][1] + view.m[3][1];
+      *vz = wx * view.m[0][2] + wy * view.m[1][2] + wz * view.m[2][2] + view.m[3][2];
+      // RH clip w = -view z.
+      *nx = *vz != 0.f ? *vx * xs / -*vz : 0.f;
+      *ny = *vz != 0.f ? *vy * ys / -*vz : 0.f;
+    };
+    auto tex_label_of = [&](void* key) -> const char* {
+      const MeshState& ms = g_meshes[key];
+      if (!ms.subs.empty() && ms.subs[0].texture_key) {
+        auto tit = g_textures.find(ms.subs[0].texture_key);
+        if (tit != g_textures.end()) return tit->second.label.c_str();
+      }
+      return "";
+    };
+    if (trace_on) {
+      // Last-frame log for render_d3d9_debug_dump.
+      char b[512];
+      std::snprintf(b, sizeof b,
+                    "pass %d: vp=%p pri=%u seq=%u rect=(%g,%g,%g,%g) cam=%p cam_pri=%u aov=%g aspect=%g root=%p top=%p%s instances=%zu texts=%zu eye=(%g,%g,%g)",
+                    g_cam_pass_stats.passes - 1, cam.viewport, pc.vp_pri, pc.vp_seq, vps.x, vps.y, vps.w, vps.h,
+                    cam_key, pc.cam_pri, cam.aov_deg, cam.aspect != 0.f ? cam.aspect : vp_aspect, root, top,
+                    root != top ? " (root below the topmost node)" : "", members.size(), texts.size(),
+                    cam_world.m[3][0], cam_world.m[3][1], cam_world.m[3][2]);
+      g_cam_pass_log.emplace_back(b);
+      for (size_t i = 0; i < members.size() && i < 48; ++i) {
+        float vx, vy, vz, nx, ny;
+        ndc_of(members[i], &vx, &vy, &vz, &nx, &ny);
+        const MeshState& ms = g_meshes[members[i]];
+        // Half extents in NDC of the local AABB (cm) at the instance depth.
+        const float hw = vz != 0.f ? 0.5f * (ms.bmax[0] - ms.bmin[0]) * kScxCmToM * xs / -vz : 0.f;
+        const float hh = vz != 0.f ? 0.5f * (ms.bmax[1] - ms.bmin[1]) * kScxCmToM * ys / -vz : 0.f;
+        std::snprintf(b, sizeof b, "  inst %p ndc=(%.4f,%.4f) half=(%.4f,%.4f) view_z=%.4f matflags=%08X shader=%d diffuse=%08X typeflags=%u tex=%s",
+                      members[i], nx, ny, hw, hh, vz,
+                      ms.subs.empty() ? 0u : ms.subs[0].mat_flags,
+                      ms.subs.empty() ? -1 : ms.subs[0].mat_shader,
+                      ms.subs.empty() ? 0u : ms.subs[0].mat_diffuse,
+                      render_d3d9_mesh_type_flags(members[i]), tex_label_of(members[i]));
+        g_cam_pass_log.emplace_back(b);
+      }
+    }
+    if (trace) {
       --g_vp_pass_trace_budget;
-      D3DMATRIX cw{};
-      g_fold_own_bone0 = true;
-      resolve_world(cam_key, &cw, 0);
-      std::fprintf(stderr, "[render] vp-pass cam=%p vp=%p vp_pri=%d parent=%p root=%p members=%zu cam_pos=(%g,%g,%g)\n",
-                   cam_key, cam.viewport, pc.first, cam.parent, root, members.size(),
-                   cw.m[3][0], cw.m[3][1], cw.m[3][2]);
+      std::fprintf(stderr, "[render] vp-pass cam=%p vp=%p vp_pri=%u vp_seq=%u cam_pri=%u parent=%p root=%p top=%p members=%zu texts=%zu cam_pos=(%g,%g,%g) aov=%g aspect=%g\n",
+                   cam_key, cam.viewport, pc.vp_pri, pc.vp_seq, pc.cam_pri, cam.parent, root, top,
+                   members.size(), texts.size(), cam_world.m[3][0], cam_world.m[3][1], cam_world.m[3][2],
+                   cam.aov_deg, cam.aspect != 0.f ? cam.aspect : vp_aspect);
+      if (root != top)
+        std::fprintf(stderr, "[render]   camera root %p is below the topmost node %p\n", root, top);
       for (size_t i = 0; i < members.size() && i < 6; ++i) {
         D3DMATRIX w{}; resolve_world(members[i], &w, 0);
         const MeshState& ms = g_meshes[members[i]];
@@ -1414,71 +2087,18 @@ void draw_viewport_cameras() {
                        xit != g_mesh_xforms.end() ? xit->second.parent : nullptr, xit != g_mesh_xforms.end() ? xit->second.tree_parent : nullptr,
                        b0 ? "y" : "n", b0 ? b0->px : 0.f, b0 ? b0->py : 0.f, b0 ? b0->pz : 0.f, bit != g_mesh_bones.end() ? bit->second.size() : (size_t)0);
         }
-        const char* tex_label = "";
-        if (!ms.subs.empty() && ms.subs[0].texture_key) {
-          auto tit = g_textures.find(ms.subs[0].texture_key);
-          if (tit != g_textures.end()) tex_label = tit->second.label.c_str();
-        }
         std::fprintf(stderr, "[render]   member %p pos=(%g,%g,%g) bmin=(%g,%g,%g) bmax=(%g,%g,%g) subs=%zu tex=%s\n",
                      members[i], w.m[3][0], w.m[3][1], w.m[3][2], ms.bmin[0], ms.bmin[1], ms.bmin[2],
-                     ms.bmax[0], ms.bmax[1], ms.bmax[2], ms.subs.size(), tex_label);
+                     ms.bmax[0], ms.bmax[1], ms.bmax[2], ms.subs.size(), tex_label_of(members[i]));
       }
-      g_fold_own_bone0 = false;
-    }
-    if (members.empty()) continue;
-    // Viewport rect.
-    g_active_vp = cam.viewport;
-    apply_active_viewport();
-    // Projection from the camera (half aov deg, dmin, dmax, vp aspect).
-    float aspect = 4.f / 3.f;
-    {
-      auto vit = g_viewports.find(cam.viewport);
-      const float px_w = vit->second.w * static_cast<float>(g_w > 0 ? g_w : 1);
-      const float px_h = vit->second.h * static_cast<float>(g_h > 0 ? g_h : 1);
-      if (px_h > 0.f) aspect = px_w / px_h;
-    }
-    float half_rad = cam.half_aov_deg * 0.01745329252f;
-    if (half_rad < 0.01f) half_rad = 0.01f;
-    if (half_rad > 1.55f) half_rad = 1.55f;
-    const float ys = 1.f / std::tan(half_rad);
-    const float xs = ys / aspect;
-    const float zn = cam.dmin > 1e-4f ? cam.dmin : 0.1f;
-    const float zf = cam.dmax > zn + 1e-3f ? cam.dmax : zn + 100.f;
-    const float q = zf / (zf - zn);
-    D3DMATRIX proj{};
-    proj.m[0][0] = xs; proj.m[1][1] = ys; proj.m[2][2] = q; proj.m[2][3] = 1.f; proj.m[3][2] = -q * zn;
-    g_dev->SetTransform(D3DTS_PROJECTION, &proj);
-    // View: camera world (own bone00 pose folded) looking down its -Z.
-    g_fold_own_bone0 = true;
-    D3DMATRIX cam_world{};
-    resolve_world(cam_key, &cam_world, 0);
-    {
-      const float ex = cam_world.m[3][0], ey = cam_world.m[3][1], ez = cam_world.m[3][2];
-      const float fx = -cam_world.m[2][0], fy = -cam_world.m[2][1], fz = -cam_world.m[2][2];
-      set_lookat_view(ex, ey, ez, ex + fx, ey + fy, ez + fz);
-    }
-    g_dev->SetRenderState(D3DRS_FOGENABLE, FALSE);
-    g_dev->Clear(0, nullptr, D3DCLEAR_ZBUFFER, 0, 1.f, 0);
-    if (std::getenv("SLRR_RENDER_TRACE") && g_vp_pass_trace_budget > 0) {
-      D3DMATRIX view{};
-      g_dev->GetTransform(D3DTS_VIEW, &view);
       for (size_t i = 0; i < members.size() && i < 12; ++i) {
-        D3DMATRIX w{};
-        resolve_world(members[i], &w, 0);
-        const float wx = w.m[3][0], wy = w.m[3][1], wz = w.m[3][2];
-        const float vx = wx * view.m[0][0] + wy * view.m[1][0] + wz * view.m[2][0] + view.m[3][0];
-        const float vy = wx * view.m[0][1] + wy * view.m[1][1] + wz * view.m[2][1] + view.m[3][1];
-        const float vz = wx * view.m[0][2] + wy * view.m[1][2] + wz * view.m[2][2] + view.m[3][2];
-        const float nx = vz != 0.f ? vx * xs / vz : 0.f;
-        const float ny = vz != 0.f ? vy * ys / vz : 0.f;
+        float vx, vy, vz, nx, ny;
+        ndc_of(members[i], &vx, &vy, &vz, &nx, &ny);
         std::fprintf(stderr, "[render]   ndc %p view=(%g,%g,%g) ndc=(%g,%g)\n", members[i], vx, vy, vz, nx, ny);
       }
     }
-    g_mesh_queue = members;
-    g_draw_meshes_keep_camera = true;
-    draw_meshes();
-    g_draw_meshes_keep_camera = false;
-    draw_camera_texts(root);
+    draw_camera_instances(members, cam_world);
+    draw_camera_text_section(texts);  // rg_text_section: after every mesh group
     g_fold_own_bone0 = false;
   }
   g_mesh_queue = saved_queue;
@@ -1531,7 +2151,7 @@ void draw_meshes() {
           }
         }
   }
-  if (have_bounds && !g_draw_meshes_keep_camera) {
+  if (have_bounds) {
     const float cx = 0.5f * (bmin[0] + bmax[0]);
     const float cy = 0.5f * (bmin[1] + bmax[1]);
     const float cz = 0.5f * (bmin[2] + bmax[2]);
@@ -1560,40 +2180,7 @@ void draw_meshes() {
   g_dev->SetSamplerState(1, D3DSAMP_MINFILTER, D3DTEXF_LINEAR);
   g_dev->SetSamplerState(1, D3DSAMP_MAGFILTER, D3DTEXF_LINEAR);
 
-  D3DLIGHT9 light{};
-  light.Type = D3DLIGHT_DIRECTIONAL;
-  float dr = 1.f, dg = 1.f, db = 1.f;
-  float ar = 40.f / 255.f, ag = 44.f / 255.f, ab = 52.f / 255.f;
-  float sr = 1.f, sg = 1.f, sb = 1.f;
-  if (g_light.enabled) {
-    rgb_bytes(g_light.diffuse, &dr, &dg, &db);
-    rgb_bytes(g_light.ambient, &ar, &ag, &ab);
-    rgb_bytes(g_light.specular, &sr, &sg, &sb);
-  }
-  light.Diffuse.r = dr;
-  light.Diffuse.g = dg;
-  light.Diffuse.b = db;
-  light.Specular.r = sr;
-  light.Specular.g = sg;
-  light.Specular.b = sb;
-  light.Direction.x = -0.4f;
-  light.Direction.y = -0.7f;
-  light.Direction.z = 0.5f;
-  g_dev->SetLight(0, &light);
-  g_dev->LightEnable(0, TRUE);
-  // Packed ambient bytes (setLight a5 dir=0; D3DRS_AMBIENT is host bind).
-  if (g_light.enabled) {
-    const int32_t amb = g_light.ambient;
-    g_dev->SetRenderState(
-        D3DRS_AMBIENT,
-        D3DCOLOR_XRGB((amb >> 16) & 0xff, (amb >> 8) & 0xff, amb & 0xff));
-  } else {
-    g_dev->SetRenderState(
-        D3DRS_AMBIENT,
-        D3DCOLOR_XRGB(static_cast<int>(ar * 255.f + 0.5f),
-                      static_cast<int>(ag * 255.f + 0.5f),
-                      static_cast<int>(ab * 255.f + 0.5f)));
-  }
+  apply_scene_light();
 
   // Soft material: global envmap → stage1 (setGlobalEnvmap@47C220 store;
   // D3D bind via apply_envmap_stage1 — ADD + TCI reflection).
@@ -1608,13 +2195,6 @@ void draw_meshes() {
     if (it == g_meshes.end() || !it->second.ready) continue;
     D3DMATRIX world{};
     resolve_world(key, &world, 0);
-    if (g_draw_meshes_keep_camera) {
-      // Fork: SCX vertices are centimetres (see GameRef_core extent "cm");
-      // script poses / camera planes are metres. Scale geometry into the
-      // instance's metre-space world for the per-viewport camera pass.
-      for (int r = 0; r < 3; ++r)
-        for (int c = 0; c < 3; ++c) world.m[r][c] *= kScxCmToM;
-    }
     g_dev->SetTransform(D3DTS_WORLD, &world);
 
     const MeshXform* xf = nullptr;
@@ -1984,7 +2564,12 @@ void draw_osd_texts() {
 
   for (const auto& t : g_osd_text) {
     if (!t.visible || !t.font || t.text.empty()) continue;
-    if (g_vp_drawn_texts.count(t.text_key)) continue;  // Fork: camera pass drew it
+    {
+      // Fork: a tree text belongs to the camera pass of its Osd (PE 940
+      // rg_text_section) and is hidden with it.
+      auto kit = g_texts.find(t.text_key);
+      if (kit != g_texts.end() && kit->second.tree) continue;
+    }
     auto fit = g_fonts.find(t.font);
     if (fit == g_fonts.end() || !fit->second.ready) continue;
     const FontState& font = fit->second;
@@ -2066,6 +2651,39 @@ void draw_osd_texts() {
 #endif
 }
 
+// Fork: SLRR_CAM_PASS_SHOT=<file.bmp> writes the frame of the N-th flush in
+// which a script camera pass ran (N = SLRR_CAM_PASS_SHOT_N, default 8), once.
+// For runs that never reach the boot-loop dump (SLRR_PE_BOOT_SHOT), e.g. the
+// old build's navigator minimap on the legacy --game path.
+// SLRR_CAM_PASS_SHOT_STAGE=pass takes it right after the camera passes,
+// before the flare sprites and the legacy OSD rectangles / texts (the legacy
+// navigator shim covers the minimap in the finished frame); the default is
+// the finished frame.
+static void cam_pass_shot(bool pass_stage) {
+#ifdef _WIN32
+  if (g_cam_pass_stats.passes <= 0) return;
+  static const char* const shot = std::getenv("SLRR_CAM_PASS_SHOT");
+  if (!shot || !shot[0]) return;
+  static const bool want_pass_stage = [] {
+    const char* e = std::getenv("SLRR_CAM_PASS_SHOT_STAGE");
+    return e && std::strcmp(e, "pass") == 0;
+  }();
+  if (pass_stage != want_pass_stage) return;
+  static const int shot_at = [] {
+    const char* e = std::getenv("SLRR_CAM_PASS_SHOT_N");
+    const int n = e ? std::atoi(e) : 0;
+    return n > 0 ? n : 8;
+  }();
+  static int pass_frames = 0;
+  if (++pass_frames == shot_at)
+    std::printf("[render] camera pass frame %d (%s) -> %s (%d)\n", pass_frames,
+                pass_stage ? "after the passes" : "finished frame", shot,
+                render_d3d9_print_screen(shot) ? 1 : 0);
+#else
+  (void)pass_stage;
+#endif
+}
+
 void render_d3d9_flush() {
 #ifdef _WIN32
   if (g_dev) {
@@ -2114,9 +2732,25 @@ void render_d3d9_flush() {
         it->second.pending_clear = 0;
       }
     }
-    if (!have_world_clear)
+    // Fork: frames with script camera passes (draw_viewport_cameras drew at
+    // least one in the previous frame). The exe drops the Java renderflags
+    // (PE 940 Viewport.activate FUN_004e6ab0 -> ViewportBind(handle, -1, -1))
+    // and a camera pass never clears the target (FUN_00460ba0): its scenes
+    // fill the screen. The host has no world scene behind the Osd layers
+    // yet, so its stand-in frame clear has to cover the whole target instead
+    // of the D3D viewport of whichever viewport was activated last, and the
+    // one-shot pending clear is dropped. Without camera passes the legacy
+    // logic above and below is unchanged.
+    const bool script_passes = g_cam_pass_stats.passes > 0;
+    if (script_passes && have_world_clear) {
+      have_world_clear = false;
+      world_clear_flags = 0;
+    }
+    if (!have_world_clear) {
+      if (script_passes) set_fullscreen_viewport();
       g_dev->Clear(0, nullptr, D3DCLEAR_TARGET | D3DCLEAR_ZBUFFER, kClear,
                    kPeClearZ, 0);
+    }
     if (SUCCEEDED(g_dev->BeginScene())) {
       // FMV + OSD use XYZRHW in full RT space — don't clip to a 3D viewport.
       set_fullscreen_viewport();
@@ -2129,12 +2763,14 @@ void render_d3d9_flush() {
       }
       draw_meshes();
       draw_viewport_cameras();  // Fork: script Osd / world cameras
+      cam_pass_shot(true);
       queue_flare_sprites();
       set_fullscreen_viewport();
       draw_osd_rects();
       draw_osd_texts();
       g_dev->EndScene();
     }
+    cam_pass_shot(false);
     // Soft PE GfxDevice_Present @ 0x004BB410: Present(0,0,0,0) + ++count.
     // Host after EndScene; PE PresentFrame calls it before BeginFrame.
     g_dev->Present(nullptr, nullptr, nullptr, nullptr);
@@ -2273,7 +2909,8 @@ void render_d3d9_viewport_create(void* key, int32_t pri, float x, float y,
   vp.w = w;
   vp.h = h;
   vp.pending_clear = 0;
-  vp.active = false;
+  vp.active = false;  // PE 940 FUN_00420970: a new ViewPortNode starts unbound
+  vp.bind_seq = 0;
 }
 
 void render_d3d9_viewport_destroy(void* key) {
@@ -2289,6 +2926,11 @@ void render_d3d9_viewport_activate(void* key, int32_t renderflags) {
   // Clear (stand-in for DrawScene→ClearTargetZ@4BA980). apply_active_viewport
   // is soft ApplyViewport@516660 / SetViewportRect@4BD500 (PE binds list only
   // here; pixel SetViewport runs at camera-pass draw).
+  // PE 940: Viewport.activate FUN_004e6ab0 -> ViewportBind FUN_004200d0 ->
+  // FUN_00421e40 moves the ViewPortNode from the unbound list to the bound
+  // list (vp+0x24 |= 1, FUN_00464d20). Any number of viewports stay bound;
+  // the previously activated one is NOT unbound, and a viewport that is
+  // already bound keeps its place in the list.
   if (!key) return;
   auto it = g_viewports.find(key);
   if (it == g_viewports.end()) {
@@ -2296,12 +2938,11 @@ void render_d3d9_viewport_activate(void* key, int32_t renderflags) {
     render_d3d9_viewport_create(key, 0, 0.f, 0.f, 1.f, 1.f);
     it = g_viewports.find(key);
   }
-  if (g_active_vp && g_active_vp != key) {
-    auto prev = g_viewports.find(g_active_vp);
-    if (prev != g_viewports.end()) prev->second.active = false;
-  }
   g_active_vp = key;
-  it->second.active = true;
+  if (!it->second.active) {
+    it->second.active = true;
+    it->second.bind_seq = ++g_vp_bind_seq;
+  }
   it->second.pending_clear = renderflags & kViewportClearMask;
   apply_active_viewport();
 }
@@ -2372,7 +3013,7 @@ float render_d3d9_viewport_get_left(void* key) {
 void* render_d3d9_viewport_active() { return g_active_vp; }
 
 void render_d3d9_camera_create(void* key, void* parent, void* viewport,
-                               int32_t pri, float half_aov_deg, float dmin,
+                               int32_t pri, float aov_deg, float dmin,
                                float dmax, float lod_bias, float lod_amp,
                                int32_t oc, int32_t pt) {
   if (!key) return;
@@ -2380,7 +3021,20 @@ void render_d3d9_camera_create(void* key, void* parent, void* viewport,
   cam.parent = parent;
   cam.viewport = viewport;
   cam.pri = pri;
-  cam.half_aov_deg = half_aov_deg;
+  cam.aov_deg = aov_deg;  // PE 940 params+0x10, unchanged (FUN_00524dc0)
+  // PE 940 Camera.create FUN_004d8de0: params+0xc = 1/(1/(vp+0xec / vp+0xf0))
+  // = the viewport's pixel width / height at creation; FUN_00461dd0 uses the
+  // per-frame viewport aspect only when this is exactly 0.
+  cam.aspect = 0.f;
+  if (viewport && g_w > 0 && g_h > 0) {
+    auto vit = g_viewports.find(viewport);
+    if (vit != g_viewports.end() && vit->second.w > 0.f && vit->second.h > 0.f)
+      cam.aspect = (vit->second.w * static_cast<float>(g_w)) /
+                   (vit->second.h * static_cast<float>(g_h));
+  }
+  // Registered on its viewport's camera list here (FUN_00420080 ->
+  // FUN_00464f60).
+  cam.seq = ++g_cam_seq;
   cam.dmin = dmin;
   cam.dmax = dmax;
   cam.lod_bias = lod_bias;
@@ -2407,6 +3061,7 @@ void render_d3d9_camera_activate(void* key, void* viewport, int32_t pri) {
   }
   if (viewport) it->second.viewport = viewport;
   it->second.pri = pri;
+  it->second.seq = ++g_cam_seq;  // re-registered (FUN_00464f60)
   if (g_active_cam && g_active_cam != key) {
     auto prev = g_cameras.find(g_active_cam);
     if (prev != g_cameras.end()) prev->second.active = false;
@@ -2429,8 +3084,10 @@ void render_d3d9_camera_deactivate(void* key, void* /*viewport*/) {
 void* render_d3d9_camera_active() { return g_active_cam; }
 
 float render_d3d9_camera_half_aov(void* key) {
+  // The stored Camera.create aov, unchanged (legacy callers compare it with
+  // the 45 they passed).
   auto it = g_cameras.find(key);
-  return it == g_cameras.end() ? 0.f : it->second.half_aov_deg;
+  return it == g_cameras.end() ? 0.f : it->second.aov_deg;
 }
 
 float render_d3d9_camera_dmin(void* key) {

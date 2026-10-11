@@ -1641,6 +1641,10 @@ void java_util_resource_ResourceRef_duplicate(InvObject* self, InvObject* src) {
   int32_t cloned = 0;
   if (render_d3d9_mesh_ready(src)) {
     cloned = render_d3d9_mesh_clone(self, src) ? 1 : 0;
+    // The copy of a render type keeps the type's flags (PE 940 FUN_004e32e0
+    // -> FUN_004e9470 -> FUN_0051ee30 copies the payload through a virtual
+    // call that was not opened; inferred).
+    render_d3d9_mesh_set_type_flags(self, render_d3d9_mesh_type_flags(src));
   } else if (clone_pe) {
     java_util_resource_ResourceRef_load(self);
     cloned = 1;
@@ -1684,8 +1688,14 @@ void java_util_resource_RenderRef_create(InvObject* self, InvObject* parent,
     if (alias_s) r.alias = alias_s;
     r.loaded = true;
   }
-  if (type && render_d3d9_mesh_ready(type))
+  if (type && render_d3d9_mesh_ready(type)) {
     render_d3d9_mesh_clone(self, type);
+    // Fork: the instance shows its render type's mesh (later scaleMesh).
+    render_d3d9_mesh_set_geometry_source(self, type);
+    // PE 940 RI_object ctor FUN_00465e40: the instance colour mode comes
+    // from the render type's flags (template+0x18).
+    render_d3d9_mesh_set_type_flags(self, render_d3d9_mesh_type_flags(type));
+  }
   render_d3d9_mesh_set_tree_parent(self, parent);
   render_d3d9_mesh_set_parent(self, parent);
   if (parent) {

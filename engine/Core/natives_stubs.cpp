@@ -247,6 +247,7 @@ const NativeEntry kNativeTable[] = {
   {"java.render.Text", "getPos", "Vector3 getPos()", false, reinterpret_cast<void*>(&java_render_Text_getPos)},
   {"java.render.Text", "update", "void update()", false, reinterpret_cast<void*>(&java_render_Text_update)},
   {"java.render.Text", "getWidthPixels", "float getWidthPixels(String str, ResourceRef font)", true, reinterpret_cast<void*>(&java_render_Text_getWidthPixels)},
+  {"java.render.Text", "setScale", "void setScale(float x, float y)", false, reinterpret_cast<void*>(&java_render_Text_setScale)},
   {"java.render.Viewport", "create", "void create(int pri, float x, float y, float w, float h)", false, reinterpret_cast<void*>(&java_render_Viewport_create)},
   {"java.render.Viewport", "destroy", "void destroy()", false, reinterpret_cast<void*>(&java_render_Viewport_destroy)},
   {"java.render.Viewport", "activate", "void activate(int renderflags)", false, reinterpret_cast<void*>(&java_render_Viewport_activate)},
@@ -383,6 +384,13 @@ const NativeEntry kNativeTable[] = {
   {"java.util.resource.ResourceRef", "duplicate", "void duplicate(ResourceRef src)", false, reinterpret_cast<void*>(&java_util_resource_ResourceRef_duplicate)},
   {"java.util.resource.SfxRef", "nplay", "int nplay(Vector3 pos, float radius, float pitch, float volume, int flags, int instance)", false, reinterpret_cast<void*>(&java_util_resource_SfxRef_nplay)},
   {"java.util.resource.SfxRef", "stop", "void stop(int instance)", false, reinterpret_cast<void*>(&java_util_resource_SfxRef_stop)},
+  {"java.game.parts.bodypart.Chassis", "getMaxSteer", "float getMaxSteer()", false, reinterpret_cast<void*>(&java_game_parts_bodypart_Chassis_getMaxSteer)},
+  {"java.game.parts.bodypart.Chassis", "setMaxSteer", "void setMaxSteer(float val)", false, reinterpret_cast<void*>(&java_game_parts_bodypart_Chassis_setMaxSteer)},
+  {"java.util.Steam", "initAPI", "int initAPI()", true, reinterpret_cast<void*>(&java_util_Steam_initAPI)},
+  {"java.util.Steam", "neutralize", "void neutralize()", true, reinterpret_cast<void*>(&java_util_Steam_neutralize)},
+  {"java.util.Steam", "getPackage", "String getPackage(int id)", true, reinterpret_cast<void*>(&java_util_Steam_getPackage)},
+  {"java.util.Steam", "setAchievement", "void setAchievement(String name)", true, reinterpret_cast<void*>(&java_util_Steam_setAchievement)},
+  {"java.util.Steam", "resetAchievements", "void resetAchievements()", true, reinterpret_cast<void*>(&java_util_Steam_resetAchievements)},
 };
 
 const size_t kNativeTableCount = sizeof(kNativeTable) / sizeof(kNativeTable[0]);

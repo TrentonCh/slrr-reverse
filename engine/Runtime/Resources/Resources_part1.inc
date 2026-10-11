@@ -85,9 +85,10 @@ bool parse_u32_token(const char* s, uint32_t* out) {
 std::string resolve_city_visual_scx(const std::string& src_in);
 
 bool parse_mesh_recipe(const std::vector<uint8_t>& blob, uint32_t* mesh_local,
-                       uint32_t* tex_local) {
+                       uint32_t* tex_local, uint32_t* type_flags = nullptr) {
   if (mesh_local) *mesh_local = 0;
   if (tex_local) *tex_local = 0;
+  if (type_flags) *type_flags = 0;
   if (blob.size() < 6) return false;
   if (std::memcmp(blob.data(), "mesh ", 5) != 0) return false;
   size_t i = 0;
@@ -105,6 +106,12 @@ bool parse_mesh_recipe(const std::vector<uint8_t>& blob, uint32_t* mesh_local,
                std::strncmp(line.c_str(), "texture ", 8) == 0) {
       uint32_t v = 0;
       if (parse_u32_token(line.c_str() + 8, &v) && tex_local) *tex_local = v;
+    } else if (line.size() >= 6 &&
+               std::strncmp(line.c_str(), "flags ", 6) == 0) {
+      // PE 940 FUN_00522d90: sscanf(line, "%s %d") into payload+0x34, so
+      // "flags 640.000" reads 640.
+      uint32_t v = 0;
+      if (parse_u32_token(line.c_str() + 6, &v) && type_flags) *type_flags = v;
     }
     i = line_end;
     while (i < blob.size() && (blob[i] == '\n' || blob[i] == '\r')) ++i;
@@ -187,11 +194,15 @@ bool resource_ref_bind_payload(InvObject* self, int32_t id, int32_t type,
   }
   if (!blob.empty() && blob.size() >= 5 &&
       std::memcmp(blob.data(), "mesh ", 5) == 0) {
-    uint32_t mesh_local = 0, tex_local = 0;
-    if (parse_mesh_recipe(blob, &mesh_local, &tex_local) && mesh_local) {
+    uint32_t mesh_local = 0, tex_local = 0, type_flags = 0;
+    if (parse_mesh_recipe(blob, &mesh_local, &tex_local, &type_flags) &&
+        mesh_local) {
       const int32_t mid =
           rpak_make_id(rpak_id_pack(id), static_cast<uint16_t>(mesh_local));
       if (!load_mesh_from_res_id(self, mid)) return false;
+      // Render type flags (RT_object template+0x18, FUN_0046e1a0): the
+      // instance colour mode of everything made from this type.
+      render_d3d9_mesh_set_type_flags(self, type_flags);
       if (tex_local) {
         const int32_t tid =
             rpak_make_id(rpak_id_pack(id), static_cast<uint16_t>(tex_local));

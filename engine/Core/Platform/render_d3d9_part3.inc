@@ -210,6 +210,76 @@ void render_d3d9_debug_dump(FILE* out) {
   std::fprintf(out, "[render-dbg] meshes=%zu ready=%zu queue=%zu queued_ready=%zu textures=%zu viewports=%zu active_vp=%p cameras=%zu active_cam=%p osd_rects=%zu osd_texts=%zu\n",
                g_meshes.size(), ready, g_mesh_queue.size(), queued_ready, g_textures.size(),
                g_viewports.size(), g_active_vp, g_cameras.size(), g_active_cam, g_osd.size(), g_osd_text.size());
+  // Fork: camera passes of the last flushed frame (draw_viewport_cameras).
+  std::fprintf(out, "[render-dbg] bound_vps=%d cam_passes=%d cam_instances=%d cam_texts=%d leaf_hidden_instances=%d leaf_hidden_texts=%d\n",
+               g_cam_pass_stats.bound_vps, g_cam_pass_stats.passes,
+               g_cam_pass_stats.instances, g_cam_pass_stats.texts,
+               g_cam_pass_stats.hidden_instances, g_cam_pass_stats.hidden_texts);
+  {
+    // Bound viewports in the exe's draw order (FUN_00421e40: ascending
+    // priority, the most recently bound first among equals).
+    struct Row { uint32_t pri, seq; void* key; };
+    std::vector<Row> rows;
+    for (const auto& kv : g_viewports)
+      if (kv.second.active)
+        rows.push_back({static_cast<uint32_t>(kv.second.pri), kv.second.bind_seq, kv.first});
+    std::sort(rows.begin(), rows.end(), [](const Row& a, const Row& b) {
+      return a.pri != b.pri ? a.pri < b.pri : a.seq > b.seq;
+    });
+    for (const Row& r : rows) {
+      const ViewportState& vp = g_viewports[r.key];
+      int cams = 0;
+      for (const auto& ck : g_cameras)
+        if (ck.second.viewport == r.key) ++cams;
+      std::fprintf(out, "[render-dbg] bound vp=%p pri=%u seq=%u rect=(%g,%g,%g,%g) cameras=%d\n",
+                   r.key, r.pri, r.seq, vp.x, vp.y, vp.w, vp.h, cams);
+    }
+  }
+  for (const std::string& line : g_cam_pass_log)  // only under SLRR_RENDER_TRACE
+    std::fprintf(out, "[render-dbg] %s\n", line.c_str());
+  {
+    // Fork: render type flags known to the renderer (types and instances),
+    // by value; 640 = 0x280 is the only colour-mode value in frontend.rdb.
+    std::vector<std::pair<uint32_t, int>> by_value;
+    for (const auto& kv : g_mesh_type_flags) {
+      auto it = std::find_if(by_value.begin(), by_value.end(),
+                             [&](const std::pair<uint32_t, int>& e) { return e.first == kv.second; });
+      if (it == by_value.end())
+        by_value.emplace_back(kv.second, 1);
+      else
+        ++it->second;
+    }
+    std::sort(by_value.begin(), by_value.end());
+    std::string s;
+    for (const auto& kv : by_value) {
+      char b[48];
+      std::snprintf(b, sizeof b, " %u:%d", kv.first, kv.second);
+      s += b;
+    }
+    std::fprintf(out, "[render-dbg] render_type_flags keys=%zu by value (flags:count):%s\n",
+                 g_mesh_type_flags.size(), s.c_str());
+  }
+  {
+    // Fork: texts by kind; fonts with their glyph source.
+    int tree = 0, tree_shown = 0;
+    for (const auto& tk : g_texts) {
+      if (!tk.second.tree) continue;
+      ++tree;
+      if (tk.second.alive && tk.second.visible && !tk.second.text.empty()) ++tree_shown;
+    }
+    std::fprintf(out, "[render-dbg] texts=%zu tree_texts=%d tree_texts_with_string=%d fonts=%zu\n",
+                 g_texts.size(), tree, tree_shown, g_fonts.size());
+    if (std::getenv("SLRR_RENDER_TRACE")) {
+      for (const auto& fk : g_fonts) {
+        const FontState& f = fk.second;
+        const FontGlyph* a = f.glyphs.size() > 'A' ? &f.glyphs['A'] : nullptr;
+        std::fprintf(out, "[render-dbg] font %p '%s' glyphs=%zu atlas=%dx%d no_texture=%d 'A' adv=%.1f box=(%.1f,%.1f)-(%.1f,%.1f)\n",
+                     fk.first, f.name.c_str(), f.glyphs.size(), f.atlas_w, f.atlas_h,
+                     f.no_texture ? 1 : 0, a ? a->advance : 0.f, a ? a->px[0] : 0.f,
+                     a ? a->py[0] : 0.f, a ? a->px[3] : 0.f, a ? a->py[3] : 0.f);
+      }
+    }
+  }
 }
 
 int32_t render_d3d9_osd_count() {
@@ -265,8 +335,12 @@ bool load_file_bytes(const std::string& path, std::vector<uint8_t>* out) {
 // SLII*.png are LA: white fill + black outline with coverage alpha — preserve
 // BGRA. Greyscale coverage atlases (no dark-with-alpha outline) still use
 // white RGB + luma→alpha so Text.changeColor can tint.
+// straight: upload the decoded BGRA as it is. PE 940 uses the charset
+// texture like any other (text flush FUN_0044cb60: colour = texture x
+// diffuse, alpha = texture alpha x diffuse alpha); every font PNG of the
+// install carries its coverage in the alpha channel.
 bool upload_wic_font_atlas(void* key, const uint8_t* data, size_t size,
-                           const char* label) {
+                           const char* label, bool straight = false) {
 #ifdef _WIN32
   if (!g_dev || !key || !data || size < 8) return false;
 
@@ -344,8 +418,8 @@ bool upload_wic_font_atlas(void* key, const uint8_t* data, size_t size,
   if (FAILED(hr)) return false;
 
   // Detect baked outline (black RGB + non-zero alpha), e.g. SLII LA PNGs.
-  bool outline_atlas = false;
-  for (UINT i = 0; i < w * h; ++i) {
+  bool outline_atlas = straight;
+  for (UINT i = 0; i < w * h && !outline_atlas; ++i) {
     const uint8_t* p = pixels.data() + i * 4;
     const int luma =
         (static_cast<int>(p[0]) + static_cast<int>(p[1]) + static_cast<int>(p[2])) /
@@ -404,6 +478,7 @@ bool upload_wic_font_atlas(void* key, const uint8_t* data, size_t size,
   (void)data;
   (void)size;
   (void)label;
+  (void)straight;
   return false;
 #endif
 }
@@ -499,35 +574,70 @@ bool upload_tga_font_atlas(void* key, const uint8_t* data, size_t size,
 #endif
 }
 
-// Invictus font SCX (INVO v3, hdr=0x38): vcount@0x40, verts@0x44, stride 44,
-// uv at +24. Glyphs are indexed by ASCII code (z ≈ -100*ascii), 4 verts each.
+// Charset mesh -> glyph table. PE 940 INVO version < 4 loader (FUN_00451b00,
+// header rule FUN_004583f0): H = dword at file+8 (header size); vertex stride
+// = dword at file+8+0x3c when H > 0x3c, else 44; vertex count at file+8+H,
+// the vertices right after it; position at +0, multiplied by 0.1
+// (DAT_005935d4) while the vertex is staged (0x4522f7-0x452319), uv at +24.
+// On disk the font SCX files have H = 0x38 (stride 44, 1024 vertices) and
+// fade.SCX H = 0x88 (stride 64, 1056 vertices). Glyph c = vertices c*4 ..
+// c*4+3 in file order, advance = vertex[c*4+1].x (FUN_0044bdc0); nothing in
+// the mesh marks a font (RT_text FUN_0046e920 only tests the generic "mesh
+// data ready" bit), so any INVO v3 mesh is a charset.
+// *uv_glyphs = glyphs with a real UV span (validity test of the by-name
+// loader), *hdr_flags = header +0x28 (material flags, FUN_0042ba10).
 bool parse_font_glyphs(const uint8_t* scx, size_t scx_size,
-                       std::vector<FontGlyph>* out) {
-  if (!scx || !out || scx_size < 0x80) return false;
+                       std::vector<FontGlyph>* out, int* uv_glyphs = nullptr,
+                       uint32_t* hdr_flags = nullptr) {
+  if (uv_glyphs) *uv_glyphs = 0;
+  if (hdr_flags) *hdr_flags = 0;
+  if (!scx || !out || scx_size < 0x48) return false;
   out->clear();
   if (std::memcmp(scx, "INVO", 4) != 0) return false;
-  uint32_t ver = 0, vcount = 0;
+  uint32_t ver = 0, hdr = 0, vcount = 0;
   std::memcpy(&ver, scx + 4, 4);
-  std::memcpy(&vcount, scx + 0x40, 4);
-  if (ver != 3 || vcount < 4 || (vcount % 4) != 0 || vcount > 4096) return false;
-  constexpr size_t kStride = 44;
-  constexpr size_t kVStart = 0x44;
-  const uint64_t need =
-      static_cast<uint64_t>(kVStart) +
-      static_cast<uint64_t>(vcount) * static_cast<uint64_t>(kStride);
+  std::memcpy(&hdr, scx + 8, 4);
+  constexpr size_t kBase = 8;
+  if (ver != 3 || hdr < 0x2c || hdr > 0x1000) return false;
+  if (kBase + static_cast<size_t>(hdr) + 4 > scx_size) return false;
+  size_t stride = 44;
+  if (hdr > 0x3c) {
+    uint32_t s = 0;
+    std::memcpy(&s, scx + kBase + 0x3c, 4);
+    stride = s;
+  }
+  if (stride < 32 || stride > 256) return false;
+  std::memcpy(&vcount, scx + kBase + hdr, 4);
+  if (vcount < 4 || vcount > 65536) return false;
+  const size_t vstart = kBase + hdr + 4;
+  const uint64_t need = static_cast<uint64_t>(vstart) +
+                        static_cast<uint64_t>(vcount) * static_cast<uint64_t>(stride);
   if (need > scx_size) return false;
+  if (hdr_flags) std::memcpy(hdr_flags, scx + kBase + 0x28, 4);
 
   const size_t nglyphs = static_cast<size_t>(vcount / 4);
   out->reserve(nglyphs);
   int ok = 0;
+  auto finite = [](float f) { return f == f && f > -1e9f && f < 1e9f; };
   for (size_t g = 0; g < nglyphs; ++g) {
-    float umin = 2.f, umax = -1.f, vmin = 2.f, vmax = -1.f;
+    FontGlyph glyph;
     for (int i = 0; i < 4; ++i) {
-      const size_t off =
-          kVStart + (g * 4 + static_cast<size_t>(i)) * kStride;
-      float u = 0, v = 0;
+      const size_t off = vstart + (g * 4 + static_cast<size_t>(i)) * stride;
+      float x = 0, y = 0, u = 0, v = 0;
+      std::memcpy(&x, scx + off, 4);
+      std::memcpy(&y, scx + off + 4, 4);
       std::memcpy(&u, scx + off + 24, 4);
       std::memcpy(&v, scx + off + 28, 4);
+      glyph.px[i] = finite(x) ? x * 0.1f : 0.f;  // DAT_005935d4
+      glyph.py[i] = finite(y) ? y * 0.1f : 0.f;
+      glyph.tu[i] = finite(u) ? u : 0.f;
+      glyph.tv[i] = finite(v) ? v : 0.f;
+    }
+    glyph.advance = glyph.px[1];
+    // Legacy UV box (draw_osd_texts).
+    float umin = 2.f, umax = -1.f, vmin = 2.f, vmax = -1.f;
+    for (int i = 0; i < 4; ++i) {
+      const float u = glyph.tu[i], v = glyph.tv[i];
       if (!(u >= 0.f && u <= 1.01f && v >= 0.f && v <= 1.01f)) {
         umin = umax = vmin = vmax = 0.f;
         break;
@@ -537,7 +647,6 @@ bool parse_font_glyphs(const uint8_t* scx, size_t scx_size,
       if (v < vmin) vmin = v;
       if (v > vmax) vmax = v;
     }
-    FontGlyph glyph;
     glyph.u0 = umin;
     glyph.v0 = vmin;
     glyph.u1 = umax;
@@ -545,7 +654,59 @@ bool parse_font_glyphs(const uint8_t* scx, size_t scx_size,
     out->push_back(glyph);
     if ((umax - umin) > 0.002f && (vmax - vmin) > 0.015f) ++ok;
   }
-  return ok >= 32;
+  if (uv_glyphs) *uv_glyphs = ok;
+  return !out->empty();
+}
+
+// PE 940 measure, C3DLow vt+0x214 FUN_0044bfb0: sum of vertex[c*4+1].x *
+// scale; ESC (0x1b) 'C' skips 10 bytes, ESC + any other byte skips 2.
+// Fork: a code beyond the charset's vertex count adds nothing (the exe reads
+// past the vertex buffer) and an escape never runs past the terminator.
+float font_measure_run(const FontState& font, const char* text, float scale) {
+  float w = 0.f;
+  if (!text) return w;
+  const unsigned char* p = reinterpret_cast<const unsigned char*>(text);
+  while (*p) {
+    if (*p == 0x1b) {
+      const int skip = p[1] == 'C' ? 10 : 2;
+      for (int i = 0; i < skip && *p; ++i) ++p;
+      continue;
+    }
+    const size_t gi = *p++;
+    if (gi < font.glyphs.size()) w += font.glyphs[gi].advance * scale;
+  }
+  return w;
+}
+
+// "mesh 0x0000004A" / "texture 0x00000026" lines of a render type (typeof 14)
+// payload; frontend.rpk writes them in either order.
+bool render_type_ids(const std::vector<uint8_t>& blob, uint32_t* mesh,
+                     uint32_t* tex) {
+  *mesh = 0;
+  *tex = 0;
+  const char* p = reinterpret_cast<const char*>(blob.data());
+  const char* const end = p + blob.size();
+  while (p < end) {
+    const char* le = p;
+    while (le < end && *le != '\n' && *le != '\r') ++le;
+    const std::string line(p, static_cast<size_t>(le - p));
+    auto value_of = [&line](const char* kw, uint32_t* out) {
+      const size_t n = std::strlen(kw);
+      size_t i = 0;
+      while (i < line.size() && (line[i] == ' ' || line[i] == '\t')) ++i;
+      if (line.compare(i, n, kw) != 0) return;
+      i += n;
+      if (i >= line.size() || (line[i] != ' ' && line[i] != '\t' && line[i] != '=')) return;
+      while (i < line.size() && (line[i] == ' ' || line[i] == '\t' || line[i] == '=')) ++i;
+      if (i < line.size())
+        *out = static_cast<uint32_t>(std::strtoul(line.c_str() + i, nullptr, 0));
+    };
+    value_of("mesh", mesh);
+    value_of("texture", tex);
+    p = le;
+    while (p < end && (*p == '\n' || *p == '\r')) ++p;
+  }
+  return *mesh != 0;
 }
 
 }  // namespace
@@ -652,7 +813,10 @@ bool render_d3d9_font_load(void* key, const char* name) {
   st.px_height = font_px_height_from_name(n);
   st.charset.assign(reinterpret_cast<const char*>(cs_bytes.data()),
                     cs_bytes.size());
-  if (!parse_font_glyphs(scx_bytes.data(), scx_bytes.size(), &st.glyphs)) {
+  int uv_glyphs = 0;
+  if (!parse_font_glyphs(scx_bytes.data(), scx_bytes.size(), &st.glyphs,
+                         &uv_glyphs) ||
+      uv_glyphs < 32) {
     render_d3d9_texture_destroy(atlas_key);
     return false;
   }
@@ -676,6 +840,106 @@ bool render_d3d9_font_load_from_rid(void* key, int32_t res_id) {
   const RpakEntry* ent = rpak_find_entry(res_id);
   if (!ent || ent->name.empty()) return false;
   return render_d3d9_font_load(key, ent->name.c_str());
+}
+
+// PE 940: a Text charset is a typeof-14 render object; its payload names the
+// mesh and the texture ("mesh 0x4A / texture 0x26"; fade_render 0x1A25 ->
+// mesh 0x1A4A fade.SCX, texture 0xA8). RT_text takes the glyph vertices from
+// that mesh and the texture from its section material (FUN_0046dc10), so the
+// font is whatever the pack says, not a file found by name.
+// Fork: the atlas is decoded here from the texture's sourcefile; a texture
+// that cannot be decoded leaves the font without one and the glyphs are
+// drawn with the plain diffuse colour.
+bool render_d3d9_font_load_charset(void* key, int32_t res_id) {
+  if (!key || res_id == 0) return false;
+  std::string name;
+  std::vector<uint8_t> blob;
+  {
+    const RpakEntry* ent = rpak_find_entry(res_id);
+    if (!ent) return false;
+    name = ent->name;
+  }
+  if (!rpak_read_entry(res_id, &blob)) return false;
+  uint32_t mesh_local = 0, tex_local = 0;
+  if (!render_type_ids(blob, &mesh_local, &tex_local)) return false;
+  const int32_t pack = rpak_id_pack(res_id);
+  const int32_t mesh_id = static_cast<int32_t>(rpak_remap_local_id(pack, mesh_local));
+  const int32_t tex_id =
+      tex_local ? static_cast<int32_t>(rpak_remap_local_id(pack, tex_local)) : 0;
+
+  std::vector<uint8_t> scx;
+  std::string scx_path;
+  {
+    const RpakEntry* me = mesh_id ? rpak_find_entry(mesh_id) : nullptr;
+    if (!me) return false;
+    scx_path = me->path;
+  }
+  {
+    std::vector<uint8_t> mblob;
+    if (rpak_read_entry(mesh_id, &mblob) && mblob.size() >= 4 &&
+        std::memcmp(mblob.data(), "INVO", 4) == 0)
+      scx = std::move(mblob);
+    else if (!load_file_bytes(scx_path, &scx))
+      return false;
+  }
+
+  FontState st;
+  uint32_t hdr_flags = 0;
+  if (!parse_font_glyphs(scx.data(), scx.size(), &st.glyphs, nullptr, &hdr_flags))
+    return false;
+  st.name = name;
+  st.px_height = font_px_height_from_name(name);
+  {
+    std::vector<uint8_t> cs;
+    if (load_file_bytes("frontend/font.dat", &cs))
+      st.charset.assign(reinterpret_cast<const char*>(cs.data()), cs.size());
+  }
+  // FUN_0042ba10: header flags & 0x101 == 0x100 files the diffuse map under
+  // entry 0x6000001 of a shader-3 material (CMaterial_ColorMixTex, factory
+  // FUN_004297e0: texture entries 0x6000001 / 4 / 5 / 7, no 0x6000000). The
+  // text flush asks for 0x6000000 and binds no texture when that lookup
+  // returns 0 (FUN_0044cb60, FUN_0043ee70): the fade curtain is the plain
+  // text colour.
+  st.no_texture = (hdr_flags & 0x101u) == 0x100u;
+  void* const atlas_key =
+      reinterpret_cast<void*>(reinterpret_cast<uintptr_t>(key) + 0x20000u);
+  std::string atlas_path;
+  if (!st.no_texture && tex_id) {
+    if (const RpakEntry* te = rpak_find_entry(tex_id)) atlas_path = te->path;
+  }
+  bool uploaded = false;
+  if (!atlas_path.empty()) {
+    std::vector<uint8_t> ab;
+    if (load_file_bytes(atlas_path, &ab) && !ab.empty()) {
+      uploaded = path_ends_with_ci(atlas_path, ".tga")
+                     ? upload_tga_font_atlas(atlas_key, ab.data(), ab.size(),
+                                             atlas_path.c_str())
+                     : upload_wic_font_atlas(atlas_key, ab.data(), ab.size(),
+                                             atlas_path.c_str(), true);
+    }
+    if (!uploaded) render_d3d9_texture_destroy(atlas_key);
+  }
+  if (uploaded) {
+    st.atlas_key = atlas_key;
+    st.atlas_w = render_d3d9_texture_width(atlas_key);
+    st.atlas_h = render_d3d9_texture_height(atlas_key);
+  }
+  for (FontGlyph& g : st.glyphs) {  // legacy screen pass advance
+    g.adv_px = (g.u1 - g.u0) * static_cast<float>(st.atlas_w);
+    if (g.adv_px < 1.f) g.adv_px = static_cast<float>(st.px_height) * 0.35f;
+  }
+  st.ready = true;
+  std::printf("[font] %s atlas=%s (charset mesh %s, %zu glyphs)\n", name.c_str(),
+              uploaded ? atlas_path.c_str() : "none", scx_path.c_str(),
+              st.glyphs.size());
+  {
+    auto it = g_fonts.find(key);
+    if (it != g_fonts.end() && it->second.atlas_key &&
+        it->second.atlas_key != st.atlas_key)
+      render_d3d9_texture_destroy(it->second.atlas_key);
+  }
+  g_fonts[key] = std::move(st);
+  return true;
 }
 
 bool render_d3d9_font_ready(void* key) {
@@ -704,19 +968,9 @@ int32_t render_d3d9_font_px_height(void* key) {
 float render_d3d9_font_measure_px(void* key, const char* text) {
   auto it = g_fonts.find(key);
   if (it == g_fonts.end() || !it->second.ready || !text) return 0.f;
-  const FontState& font = it->second;
-  float w = 0.f;
-  for (const char* p = text; *p; ++p) {
-    const unsigned char ch = static_cast<unsigned char>(*p);
-    if (ch == ' ') {
-      w += static_cast<float>(font.px_height) * 0.35f;
-      continue;
-    }
-    const size_t gi = static_cast<size_t>(ch);
-    if (gi >= font.glyphs.size()) continue;
-    w += font.glyphs[gi].adv_px;
-  }
-  return w;
+  // PE 940 Text.getWidthPixels FUN_004e5ae0 -> FUN_00421100(charset, cstr,
+  // 1.0, 0) -> C3DLow vt+0x214: the charset mesh advances, space included.
+  return font_measure_run(it->second, text, 1.f);
 }
 
 void render_d3d9_font_destroy(void* key) {
@@ -736,6 +990,27 @@ void render_d3d9_text_create(void* key, void* font, float x, float y) {
   t.align = 2;
   t.text.clear();
   t.alive = true;
+  t.tree = false;
+  t.adv_scale = 1.f;
+  t.mesh_sx = t.mesh_sy = 1.f;
+  t.seq = ++g_text_seq;
+}
+
+void render_d3d9_text_set_tree(void* key, int32_t tree) {
+  auto it = g_texts.find(key);
+  if (it != g_texts.end()) it->second.tree = tree != 0;
+}
+
+void render_d3d9_text_set_advance_scale(void* key, float scale) {
+  auto it = g_texts.find(key);
+  if (it != g_texts.end()) it->second.adv_scale = scale;
+}
+
+void render_d3d9_text_set_scale(void* key, float sx, float sy) {
+  auto it = g_texts.find(key);
+  if (it == g_texts.end()) return;
+  it->second.mesh_sx = sx;
+  it->second.mesh_sy = sy;
 }
 
 void render_d3d9_text_destroy(void* key) {
@@ -817,6 +1092,239 @@ void render_d3d9_text_update(void* key) {
   g_osd_text.push_back(std::move(ot));
 }
 
+// PE 940 text section of a camera pass: rg_text_section (cam+0x4b4), the
+// last render group of FUN_00460ba0, after every mesh group.
+// An r_text instance is not 3D geometry. RI_text sync (FUN_0046a110 /
+// FUN_0051db70) takes only the bone00 WORLD translation; (m41, m42) in
+// script units are the NDC anchor with y DOWN, and C3DLow vt+0x200
+// (FUN_0044c400) maps it into the pixel rect of the current viewport:
+//   px = vp_w * (ndc_x + 1) * 0.5 + vp_left
+//   py = vp_h * (ndc_y + 1) * 0.5 + vp_top
+// FUN_0044c4a0 (font mode): pen.x -= width for align 0 (RIGHT), width / 2
+// for align 1 (CENTER), nothing for align 2 (LEFT), width = FUN_0044bfb0.
+// Per glyph FUN_0044bdc0 writes the four charset vertices c*4 .. c*4+3 as
+// XYZRHW|DIFFUSE|TEX1: x = pen.x + v.x - 0.25, y = py + v.y - 0.25, z = 0,
+// rhw = 100, diffuse = run colour, uv copied; then pen.x += vertex[1].x *
+// scale (the advance keeps its sign: fade.SCX 'a' moves the pen by -4341.8
+// px and is one large triangle that covers the viewport only that way).
+// Two triangles per glyph, (0,1,2) and (2,1,3). ESC (0x1b) 'C' + 8 hex
+// digits = run colour, ESC 'c' = back to the call colour, ESC + any other
+// byte is skipped.
+// State: section begin FUN_0045e8b0 = C3DLow vt+0x34(2,1) (FUN_00422c60):
+// ZWRITE off, SRCALPHA / INVSRCALPHA, BLENDOP ADD, alpha test GREATER ref 4,
+// Z test left on (z = 0 always passes). Flush FUN_0044cb60: CULL NONE, POINT
+// min / mag, no mip, fog off, stage 0 ALPHAARG2 = CURRENT with the engine
+// defaults ALPHAOP MODULATE / ALPHAARG1 TEXTURE (FUN_00426d10), colour =
+// texture x diffuse (D3D default; the text path never sets the colour op),
+// FVF 0x144, texture = material entry 0x6000000 or none.
+// Order: the section keeps one rg_font group per charset; FUN_004633f0
+// appends a new group the first time a text of that charset is queued and
+// FUN_00462400 appends the text to its group, so texts are drawn font by
+// font (rg_font begin FUN_0045e5f0 = SetFont, loop FUN_0045f7f0).
+// Fork: the groups are rebuilt every frame from creation stamps (font order
+// = the oldest text of each font this camera sees, creation order inside a
+// font); the exe keeps them per camera from the first frame a text was seen
+// and swaps the last entry into a removed slot (FUN_00463ce0). Text.setScale
+// is applied per text (see java_render_Text_setScale). Without a texture the
+// stage selects the diffuse colour: Direct3D 9 documents an unbound
+// D3DTA_TEXTURE as white, and for the black curtain the result is the same
+// whatever the driver returns.
+static void draw_camera_text_section(const std::vector<void*>& keys) {
+  if (keys.empty() || !g_dev) return;
+  static const bool trace_on = std::getenv("SLRR_RENDER_TRACE") != nullptr;
+  D3DVIEWPORT9 dvp{};
+  if (FAILED(g_dev->GetViewport(&dvp))) return;
+  const float vp_left = static_cast<float>(dvp.X);
+  const float vp_top = static_cast<float>(dvp.Y);
+  const float vp_w = static_cast<float>(dvp.Width);
+  const float vp_h = static_cast<float>(dvp.Height);
+
+  struct Item {
+    void* key;
+    const TextState* t;
+    const FontState* font;
+  };
+  std::vector<Item> items;
+  items.reserve(keys.size());
+  for (void* key : keys) {
+    auto kit = g_texts.find(key);
+    if (kit == g_texts.end()) continue;
+    auto fit = g_fonts.find(kit->second.font);
+    if (fit == g_fonts.end() || !fit->second.ready) continue;
+    items.push_back({key, &kit->second, &fit->second});
+  }
+  if (items.empty()) return;
+  {
+    // Font groups in first-use order, texts in creation order inside one.
+    std::unordered_map<std::string, uint32_t> group_seq;
+    for (const Item& it : items) {
+      auto r = group_seq.emplace(it.font->name, it.t->seq);
+      if (!r.second && it.t->seq < r.first->second) r.first->second = it.t->seq;
+    }
+    std::sort(items.begin(), items.end(), [&group_seq](const Item& a, const Item& b) {
+      const uint32_t ga = group_seq[a.font->name], gb = group_seq[b.font->name];
+      if (ga != gb) return ga < gb;
+      return a.t->seq != b.t->seq ? a.t->seq < b.t->seq : a.key < b.key;
+    });
+  }
+
+  static const D3DRENDERSTATETYPE kRs[] = {
+      D3DRS_ZENABLE,          D3DRS_ZFUNC,     D3DRS_ZWRITEENABLE,
+      D3DRS_ALPHABLENDENABLE, D3DRS_SRCBLEND,  D3DRS_DESTBLEND,
+      D3DRS_BLENDOP,          D3DRS_ALPHATESTENABLE, D3DRS_ALPHAFUNC,
+      D3DRS_ALPHAREF,         D3DRS_CULLMODE,  D3DRS_FOGENABLE,
+      D3DRS_LIGHTING};
+  static const D3DSAMPLERSTATETYPE kSs[] = {D3DSAMP_MINFILTER, D3DSAMP_MAGFILTER,
+                                           D3DSAMP_MIPFILTER};
+  static const D3DTEXTURESTAGESTATETYPE kTs[] = {
+      D3DTSS_COLOROP, D3DTSS_COLORARG1, D3DTSS_COLORARG2,
+      D3DTSS_ALPHAOP, D3DTSS_ALPHAARG1, D3DTSS_ALPHAARG2};
+  DWORD rs_saved[sizeof(kRs) / sizeof(kRs[0])] = {};
+  DWORD ss_saved[sizeof(kSs) / sizeof(kSs[0])] = {};
+  DWORD ts_saved[sizeof(kTs) / sizeof(kTs[0])] = {};
+  for (size_t i = 0; i < sizeof(kRs) / sizeof(kRs[0]); ++i)
+    g_dev->GetRenderState(kRs[i], &rs_saved[i]);
+  for (size_t i = 0; i < sizeof(kSs) / sizeof(kSs[0]); ++i)
+    g_dev->GetSamplerState(0, kSs[i], &ss_saved[i]);
+  for (size_t i = 0; i < sizeof(kTs) / sizeof(kTs[0]); ++i)
+    g_dev->GetTextureStageState(0, kTs[i], &ts_saved[i]);
+
+  struct Vtx {
+    float x, y, z, rhw;
+    DWORD color;
+    float u, v;
+  };
+  g_dev->SetFVF(D3DFVF_XYZRHW | D3DFVF_DIFFUSE | D3DFVF_TEX1);  // 0x144
+  g_dev->SetRenderState(D3DRS_ZENABLE, TRUE);
+  g_dev->SetRenderState(D3DRS_ZFUNC, D3DCMP_LESSEQUAL);
+  g_dev->SetRenderState(D3DRS_ZWRITEENABLE, FALSE);
+  g_dev->SetRenderState(D3DRS_ALPHABLENDENABLE, TRUE);
+  g_dev->SetRenderState(D3DRS_SRCBLEND, D3DBLEND_SRCALPHA);
+  g_dev->SetRenderState(D3DRS_DESTBLEND, D3DBLEND_INVSRCALPHA);
+  g_dev->SetRenderState(D3DRS_BLENDOP, D3DBLENDOP_ADD);
+  g_dev->SetRenderState(D3DRS_ALPHATESTENABLE, TRUE);
+  g_dev->SetRenderState(D3DRS_ALPHAFUNC, D3DCMP_GREATER);
+  g_dev->SetRenderState(D3DRS_ALPHAREF, 4);
+  g_dev->SetRenderState(D3DRS_CULLMODE, D3DCULL_NONE);
+  g_dev->SetRenderState(D3DRS_FOGENABLE, FALSE);
+  g_dev->SetRenderState(D3DRS_LIGHTING, FALSE);
+  g_dev->SetSamplerState(0, D3DSAMP_MINFILTER, D3DTEXF_POINT);
+  g_dev->SetSamplerState(0, D3DSAMP_MAGFILTER, D3DTEXF_POINT);
+  g_dev->SetSamplerState(0, D3DSAMP_MIPFILTER, D3DTEXF_NONE);
+  g_dev->SetTextureStageState(0, D3DTSS_COLORARG1, D3DTA_TEXTURE);
+  g_dev->SetTextureStageState(0, D3DTSS_COLORARG2, D3DTA_CURRENT);
+  g_dev->SetTextureStageState(0, D3DTSS_ALPHAARG1, D3DTA_TEXTURE);
+  g_dev->SetTextureStageState(0, D3DTSS_ALPHAARG2, D3DTA_CURRENT);
+
+  std::vector<Vtx> verts;
+  std::vector<uint16_t> idx;
+  auto flush = [&]() {
+    if (!idx.empty())
+      g_dev->DrawIndexedPrimitiveUP(D3DPT_TRIANGLELIST, 0,
+                                    static_cast<UINT>(verts.size()),
+                                    static_cast<UINT>(idx.size() / 3), idx.data(),
+                                    D3DFMT_INDEX16, verts.data(), sizeof(Vtx));
+    verts.clear();
+    idx.clear();
+  };
+  int textured = -1;  // stage setup of the previous text
+  for (const Item& item : items) {
+    const TextState& t = *item.t;
+    const FontState& font = *item.font;
+    IDirect3DTexture9* tex = nullptr;
+    if (!font.no_texture && font.atlas_key) {
+      auto tit = g_textures.find(font.atlas_key);
+      if (tit != g_textures.end()) tex = tit->second.tex;
+    }
+    g_dev->SetTexture(0, tex);
+    if (textured != (tex ? 1 : 0)) {
+      textured = tex ? 1 : 0;
+      g_dev->SetTextureStageState(0, D3DTSS_COLOROP,
+                                  tex ? D3DTOP_MODULATE : D3DTOP_SELECTARG2);
+      g_dev->SetTextureStageState(0, D3DTSS_ALPHAOP,
+                                  tex ? D3DTOP_MODULATE : D3DTOP_SELECTARG2);
+    }
+    // Anchor: bone00 world translation = NDC, y down (g_fold_own_bone0 is
+    // set by the pass, so the text's own (x, z, 0) pose is in the world).
+    D3DMATRIX world{};
+    resolve_world(item.key, &world, 0);
+    const float ndc_x = world.m[3][0], ndc_y = world.m[3][1];
+    float pen = vp_w * (ndc_x + 1.f) * 0.5f + vp_left;
+    const float py = vp_h * (ndc_y + 1.f) * 0.5f + vp_top;
+    const float adv = t.adv_scale * t.mesh_sx;
+    float width = 0.f;
+    if (t.align != 2) width = font_measure_run(font, t.text.c_str(), adv);
+    if (t.align == 0)
+      pen -= width;
+    else if (t.align == 1)
+      pen -= width * 0.5f;
+    const float pen0 = pen;
+    DWORD colour = t.color;
+    int glyphs = 0;
+    const unsigned char* p = reinterpret_cast<const unsigned char*>(t.text.c_str());
+    while (*p) {
+      if (*p == 0x1b) {
+        const unsigned char e = p[1];
+        if (!e) break;  // Fork: a trailing ESC ends the run
+        p += 2;
+        if (e == 'C') {
+          DWORD c = 0;
+          int n = 0;
+          for (; n < 8 && *p; ++n, ++p) {
+            const unsigned char h = *p;
+            c <<= 4;
+            if (h >= '0' && h <= '9') c += static_cast<DWORD>(h - '0');
+            else if (h >= 'A' && h <= 'F') c += static_cast<DWORD>(h - 'A' + 10);
+            else if (h >= 'a' && h <= 'f') c += static_cast<DWORD>(h - 'a' + 10);
+          }
+          if (n < 8) break;  // the string ended inside the colour
+          colour = c;
+        } else if (e == 'c') {
+          colour = t.color;
+        }
+        continue;
+      }
+      const size_t gi = *p++;
+      if (gi >= font.glyphs.size()) continue;
+      const FontGlyph& g = font.glyphs[gi];
+      if (verts.size() + 4 > 0xFFF0u) flush();
+      const uint16_t base = static_cast<uint16_t>(verts.size());
+      for (int i = 0; i < 4; ++i)
+        verts.push_back({pen + g.px[i] * t.mesh_sx - 0.25f,
+                         py + g.py[i] * t.mesh_sy - 0.25f, 0.f, 100.f, colour,
+                         g.tu[i], g.tv[i]});
+      const uint16_t tri[6] = {base, static_cast<uint16_t>(base + 1),
+                               static_cast<uint16_t>(base + 2),
+                               static_cast<uint16_t>(base + 2),
+                               static_cast<uint16_t>(base + 1),
+                               static_cast<uint16_t>(base + 3)};
+      idx.insert(idx.end(), tri, tri + 6);
+      pen += g.advance * adv;
+      ++glyphs;
+    }
+    flush();
+    if (trace_on) {
+      char b[512];
+      std::snprintf(b, sizeof b,
+                    "  text %p '%.48s' font=%s align=%d color=%08X ndc=(%.4f,%.4f) px=(%.1f,%.1f) pen0=%.1f end=%.1f glyphs=%d tex=%d",
+                    item.key, t.text.c_str(), font.name.c_str(), t.align,
+                    static_cast<unsigned>(t.color), ndc_x, ndc_y,
+                    vp_w * (ndc_x + 1.f) * 0.5f + vp_left, py, pen0, pen, glyphs,
+                    tex ? 1 : 0);
+      g_cam_pass_log.emplace_back(b);
+    }
+  }
+  g_cam_pass_stats.texts += static_cast<int32_t>(items.size());
+
+  g_dev->SetTexture(0, nullptr);
+  for (size_t i = 0; i < sizeof(kRs) / sizeof(kRs[0]); ++i)
+    g_dev->SetRenderState(kRs[i], rs_saved[i]);
+  for (size_t i = 0; i < sizeof(kSs) / sizeof(kSs[0]); ++i)
+    g_dev->SetSamplerState(0, kSs[i], ss_saved[i]);
+  for (size_t i = 0; i < sizeof(kTs) / sizeof(kTs[0]); ++i)
+    g_dev->SetTextureStageState(0, kTs[i], ts_saved[i]);
+}
+
 namespace {
 
 bool read_u32(const uint8_t* data, size_t size, size_t off, uint32_t* out) {
@@ -857,6 +1365,171 @@ uint32_t scx_mat_diffuse(const uint8_t* data, size_t size, uint32_t off,
     if ((c >> 24) == 0xffu) return c;
   }
   return 0xFF808080u;
+}
+
+// PE 940 INVO v4 material chunk (reader FUN_0042c340): +0x08 shader id,
+// +0x0C create flags, +0x10 entry count, entries from +0x14. Entry = dword
+// (type in the top byte, id in the low 24 bits) + payload; entry sizes by
+// type: 0/1/5/7 = 8 bytes, 2 = 12, 3 = 16, 4 = 20, 6 = 32, 8 = 36.
+// Type 0 = colour (packed ARGB): id 0 diffuse, id 1 specular, id 2
+// illumination. Type 5 = integer parameter (id 0: alpha reference; on disk
+// only in alpha-test chunks, values 20 / 25). Disk census of the Build 940
+// install: the walk ends exactly on the chunk end for all 4196 material
+// chunks; 115 physics meshes (phys_*.scx) keep something else in their
+// type-1 chunk (count 0x2000x) and are left on the legacy material.
+// Fork: an alpha-test chunk without a type 5 entry uses 0x38, the value the
+// v3 builder sets (FUN_0042ba10); the exe's v4 default was not read.
+//
+// PE 940 material factory FUN_0042bff0 (switch on shader id & 0xffffff).
+// The Tex family - FUN_0042af10 (id 0 and every id the switch does not
+// know), FUN_0042b400 (4), FUN_0042b670 (8 / 0x10 / 0x20), FUN_0042b520
+// (0xc / 0x14 / 0x24) - writes its colour id 0 entry with FUN_00441270(0)
+// = opaque white AFTER merging the file entries (FUN_0043f2e0; 0x42aff2 ->
+// 0x42b002, 0x42b4f9 -> 0x42b506, 0x42b7aa -> 0x42b7ba, 0x42b647 ->
+// 0x42b654), so the file's diffuse never reaches Diffuse / Ambient or the
+// TEXTUREFACTOR alpha (FUN_00434170 reads that entry). Every other factory
+// declares colour 0 before the merge (the file value stays) or has no
+// colour 0 entry at all (0x1d, 0x37, 0xfffffb; left on the file value).
+bool scx_shader_white_diffuse(uint32_t shader) {
+  switch (shader & 0xffffffu) {
+    case 0x00: case 0x04: case 0x08: case 0x10: case 0x20:
+    case 0x0c: case 0x14: case 0x24:
+      return true;
+    case 0x01: case 0x19:                                    // FUN_0042a380
+    case 0x02: case 0x06: case 0x0a: case 0x0e: case 0x12:   // FUN_0042ac10
+    case 0x16: case 0x1a: case 0x1e: case 0x22: case 0x26:
+    case 0x03: case 0x1b:                                    // FUN_004297e0
+    case 0x05:                                               // FUN_0042a660
+    case 0x07: case 0x1f:                                    // FUN_00429920
+    case 0x09: case 0x11: case 0x21:                         // FUN_0042aab0
+    case 0x0b: case 0x13: case 0x23:                         // FUN_00429bc0
+    case 0x0d: case 0x25:                                    // FUN_0042a7d0
+    case 0x0f: case 0x17: case 0x27:                         // FUN_00429a40
+    case 0x15: case 0x18: case 0x1c: case 0x1d:
+    case 0x30: case 0x31: case 0x32: case 0x33: case 0x34: case 0x35:
+    case 0x37:
+    case 0xfffffb: case 0xfffffc: case 0xfffffd: case 0xfffffe:
+    case 0xffffff:
+      return false;
+    default:
+      return true;  // FUN_0042bff0 default: FUN_0042af10
+  }
+}
+
+void scx_v4_material(const uint8_t* data, size_t size, uint32_t off,
+                     uint32_t end, MeshSubmesh* sm) {
+  if (!sm || end > size || off + 0x14 > end) return;
+  uint32_t shader = 0, flags = 0, count = 0;
+  if (!read_u32(data, size, off + 0x08, &shader) ||
+      !read_u32(data, size, off + 0x0C, &flags) ||
+      !read_u32(data, size, off + 0x10, &count) || count > 64)
+    return;
+  uint32_t diffuse = 0xFFFFFFFFu, emissive = 0xFF000000u, alpha_ref = 0x38;
+  uint32_t p = off + 0x14;
+  for (uint32_t i = 0; i < count; ++i) {
+    uint32_t head = 0;
+    if (p + 4 > end || !read_u32(data, size, p, &head)) return;
+    const uint32_t type = head >> 24, id = head & 0x00FFFFFFu;
+    uint32_t len = 0;
+    switch (type) {
+      case 0: case 1: case 5: case 7: len = 8; break;
+      case 2: len = 12; break;
+      case 3: len = 16; break;
+      case 4: len = 20; break;
+      case 6: len = 32; break;
+      case 8: len = 36; break;
+      default: return;  // unknown entry: leave the legacy material
+    }
+    if (p + len > end) return;
+    uint32_t v = 0;
+    read_u32(data, size, p + 4, &v);
+    if (type == 0 && id == 0) diffuse = v;
+    else if (type == 0 && id == 2) emissive = v;
+    else if (type == 5 && id == 0) alpha_ref = v;
+    p += len;
+  }
+  sm->has_mat = true;
+  sm->mat_shader = static_cast<int32_t>(shader & 0xffffffu);
+  sm->mat_flags = flags;
+  sm->mat_diffuse = scx_shader_white_diffuse(shader) ? 0xFFFFFFFFu : diffuse;
+  sm->mat_emissive = emissive;
+  sm->mat_alpha_ref = alpha_ref;
+}
+
+// PE 940 INVO v3 material header -> material (FUN_0042ba10), header at the
+// block start: +0x04..+0x10 diffuse RGBA floats (colour id 0, alpha =
+// opacity), +0x14..+0x1C specular RGB, +0x20 specular level, +0x24
+// shininess, +0x28 flags, +0x2C / +0x30 / +0x32 / +0x34 / +0x38 map indices
+// (int16, -1 = none), +0x5C..+0x64 illumination RGB (colour id 2).
+// Create flags: prelit (0x80000000) when flags & 2 or the +0x38 map exists;
+// transparent when flags & 1 or opacity < 0.99 (DAT_005947ac): 0x40000000,
+// or 0x20000000 (alpha test, reference 0x38) when flags & 0x800.
+// Shader id handed to the factory FUN_0042bff0:
+//   textured = the +0x2C or the +0x34 map exists; without the +0x34 map the
+//   flags lose 0x1000 and 0x40 first (& 0xffffefbf);
+//   specular = no +0x30 map, level * specular > 0.1 (DAT_005935d4) on a
+//   channel, and shininess > 8 (DAT_005947b0);
+//   untextured: 0x30, +1 when specular, +2 when the +0x32 map exists;
+//   textured: k = 1 (flags & 0x40), else 2 (flags & 0x1000), else 3
+//   (flags & 0x101 == 0x100, which also drops the transparent / alpha-test
+//   bits, & 0x9fffffff), else 0; id = k, +4 when specular, +8 when the
+//   +0x32 map exists.
+// So a plain textured v3 material is shader 0 / 4 / 8 / 0xc = the Tex family
+// (opaque white Diffuse, see scx_shader_white_diffuse); fade.SCX (flags
+// 0x100) is shader 3, CMaterial_ColorMixTex.
+void scx_v3_material(const uint8_t* data, size_t size, size_t base,
+                     uint32_t hsz, MeshSubmesh* sm) {
+  if (!sm || hsz < 0x68u || base + 0x68 > size) return;
+  float d[4] = {1, 1, 1, 1}, sp[3] = {0, 0, 0}, e[3] = {0, 0, 0};
+  float spec_level = 0.f, shininess = 0.f;
+  uint32_t f28 = 0;
+  int16_t map2c = -1, map30 = -1, map32 = -1, map34 = -1, map38 = -1;
+  std::memcpy(d, data + base + 0x04, 16);
+  std::memcpy(sp, data + base + 0x14, 12);
+  std::memcpy(&spec_level, data + base + 0x20, 4);
+  std::memcpy(&shininess, data + base + 0x24, 4);
+  std::memcpy(&f28, data + base + 0x28, 4);
+  std::memcpy(&map2c, data + base + 0x2C, 2);
+  std::memcpy(&map30, data + base + 0x30, 2);
+  std::memcpy(&map32, data + base + 0x32, 2);
+  std::memcpy(&map34, data + base + 0x34, 2);
+  std::memcpy(&map38, data + base + 0x38, 2);
+  std::memcpy(e, data + base + 0x5C, 12);
+  auto chan = [](float c) -> uint32_t {
+    if (!(c == c)) c = 0.f;
+    if (c < 0.f) c = 0.f;
+    if (c > 1.f) c = 1.f;
+    return static_cast<uint32_t>(c * 255.f + 0.5f);
+  };
+  const bool textured = map2c != -1 || map34 != -1;
+  if (map34 == -1) f28 &= 0xffffefbfu;
+  uint32_t mf = 0;
+  if ((f28 & 2u) != 0 || map38 != -1) mf |= 0x80000000u;
+  if ((f28 & 1u) != 0 || d[3] < 0.99f)
+    mf |= (f28 & 0x800u) ? 0x20000000u : 0x40000000u;
+  const bool specular =
+      map30 == -1 && shininess > 8.f &&
+      (spec_level * sp[0] > 0.1f || spec_level * sp[1] > 0.1f ||
+       spec_level * sp[2] > 0.1f);
+  uint32_t shader = 0;
+  if (!textured) {
+    shader = 0x30u + (specular ? 1u : 0u) + (map32 != -1 ? 2u : 0u);
+  } else {
+    const uint32_t k = (f28 & 0x40u) ? 1u
+                       : (f28 & 0x1000u) ? 2u
+                       : ((f28 & 0x101u) == 0x100u) ? 3u : 0u;
+    if (k == 3u) mf &= 0x9fffffffu;
+    shader = k + (specular ? 4u : 0u) + (map32 != -1 ? 8u : 0u);
+  }
+  sm->has_mat = true;
+  sm->mat_shader = static_cast<int32_t>(shader);
+  sm->mat_flags = mf;
+  sm->mat_diffuse =
+      scx_shader_white_diffuse(shader)
+          ? 0xFFFFFFFFu
+          : (chan(d[3]) << 24) | (chan(d[0]) << 16) | (chan(d[1]) << 8) | chan(d[2]);
+  sm->mat_emissive = 0xFF000000u | (chan(e[0]) << 16) | (chan(e[1]) << 8) | chan(e[2]);
+  sm->mat_alpha_ref = 0x38;
 }
 
 std::string ascii_lower(std::string s) {
@@ -1051,16 +1724,62 @@ bool parse_scx_v4(const uint8_t* data, size_t size, MeshState& out) {
         !read_u32(data, size, voff + 12, &vflags))
       continue;
     (void)vtag;
-    (void)vflags;
     if (vcount == 0 || vcount > 500000) continue;
     // Phase 2.44: stride from chunk payload — 0x0241→32 (pos+n+uv),
     // 0x0041→24 (pos+n, glass). Fall back to 32.
     uint32_t stride = 32;
+    uint32_t file_stride = 0;  // (chunk size - 16) / count, FUN_00454940
     if (vsize >= 16) {
       const uint32_t payload = vsize - 16;
       if (payload % vcount == 0) {
         const uint32_t s = payload / vcount;
+        file_stride = s;
         if (s == 24 || s == 32 || s == 36 || s == 40) stride = s;
+      }
+    }
+    // PE 940 vertex chunk reader FUN_00454940: the components follow each
+    // other in this order, each present when its flag bit is set:
+    //   0x001 position (3 floats); blend weights 0x004 (1 float), else
+    //   0x008 (2), else 0x010 (3); 0x020 blend indices (dword); 0x040
+    //   normal (3 floats); 0x080 first colour (dword, D3DFVF_DIFFUSE
+    //   through FUN_00455210, alpha forced to 0xFF); 0x100 second colour
+    //   (dword, D3DFVF_SPECULAR); then one uv pair per bit 0x200 .. 0x8000.
+    // Census of the Build 940 install: the sum of these sizes equals the
+    // chunk stride for all 4365 vertex chunks (19 flag combinations).
+    // The host keeps position, normal and the first uv set. Before this the
+    // uv was read at +24 whatever the flags (the colour pair for 0x3c1 /
+    // 0x7c1, the prelit world meshes) and strides 44 / 48 / 56 were read
+    // with stride 32.
+    // Fork: the colours are not loaded. The first one is 0xFFFFFFFF in
+    // every chunk of the install that has it; the second carries the baked
+    // lighting of prelit sections and reaches the exe's stage setup as
+    // D3DTA_SPECULAR per material pass (not ported).
+    // Fork: a layout without normals (physics hulls, flags 0x001, stride
+    // 12) stays unloaded as before.
+    int pos_off = 0;
+    int nrm_off = stride >= 24 ? 12 : -1;  // legacy layout guess
+    int uv_off = stride >= 32 ? 24 : -1;
+    {
+      uint32_t o = 0;
+      int f_pos = -1, f_nrm = -1, f_uv = -1;
+      if (vflags & 0x001u) { f_pos = static_cast<int>(o); o += 12; }
+      if (vflags & 0x004u) o += 4;
+      else if (vflags & 0x008u) o += 8;
+      else if (vflags & 0x010u) o += 12;
+      if (vflags & 0x020u) o += 4;
+      if (vflags & 0x040u) { f_nrm = static_cast<int>(o); o += 12; }
+      if (vflags & 0x080u) o += 4;
+      if (vflags & 0x100u) o += 4;
+      for (uint32_t bit = 0x200u; bit <= 0x8000u; bit <<= 1) {
+        if (!(vflags & bit)) continue;
+        if (f_uv < 0) f_uv = static_cast<int>(o);
+        o += 8;
+      }
+      if (f_pos == 0 && f_nrm > 0 && file_stride != 0 && o == file_stride) {
+        stride = file_stride;
+        pos_off = f_pos;
+        nrm_off = f_nrm;
+        uv_off = f_uv;
       }
     }
     const uint64_t need =
@@ -1084,18 +1803,19 @@ bool parse_scx_v4(const uint8_t* data, size_t size, MeshState& out) {
     MeshSubmesh sm;
     sm.name = scx_mat_name(data, size, chunks[i].off, chunk_end(i));
     sm.diffuse = scx_mat_diffuse(data, size, chunks[i].off, chunk_end(i));
+    scx_v4_material(data, size, chunks[i].off, chunk_end(i), &sm);
     sm.verts.resize(vcount);
     const uint8_t* vsrc = data + voff + 16;
     for (uint32_t vi = 0; vi < vcount; ++vi) {
       MeshVertex& v = sm.verts[vi];
       const uint8_t* p = vsrc + static_cast<size_t>(vi) * stride;
-      std::memcpy(&v.x, p, 12);
-      if (stride >= 24)
-        std::memcpy(&v.nx, p + 12, 12);
+      std::memcpy(&v.x, p + pos_off, 12);
+      if (nrm_off >= 0)
+        std::memcpy(&v.nx, p + nrm_off, 12);
       else
         v.nx = v.ny = v.nz = 0.f;
-      if (stride >= 32)
-        std::memcpy(&v.u, p + 24, 8);
+      if (uv_off >= 0)
+        std::memcpy(&v.u, p + uv_off, 8);
       else
         v.u = v.v = 0.f;
       // Drop insane/NaN positions (rare bad verts in light meshes).
@@ -1216,6 +1936,7 @@ bool parse_scx_v3(const uint8_t* data, size_t size, MeshState& out) {
       std::memcpy(&b, data + mat_base + 0x0C, 4);
       sm.diffuse = 0xFF000000u | (chan(r) << 16) | (chan(g) << 8) | chan(b);
     }
+    scx_v3_material(data, size, mat_base, hsz, &sm);
 
     sm.verts.resize(vcount);
     for (uint32_t vi = 0; vi < vcount; ++vi) {
@@ -1282,6 +2003,7 @@ bool render_d3d9_mesh_create_from_memory(void* key, const uint8_t* data,
     auto it = g_meshes.find(key);
     if (it != g_meshes.end()) release_mesh_textures(key, it->second);
   }
+  g_mesh_geom_src.erase(key);  // Fork: own geometry from now on
   MeshState st;
   st.label = label ? label : "";
   if (!parse_scx_v4(data, size, st) && !parse_scx_v3(data, size, st)) {
@@ -1289,6 +2011,10 @@ bool render_d3d9_mesh_create_from_memory(void* key, const uint8_t* data,
     return false;
   }
   bind_mesh_textures(key, st);
+  {
+    auto old = g_meshes.find(key);
+    st.seq = (old != g_meshes.end() && old->second.seq) ? old->second.seq : ++g_mesh_seq;
+  }
   g_meshes[key] = std::move(st);
   return true;
 }
@@ -1328,6 +2054,7 @@ bool render_d3d9_mesh_create_skydome(void* key, float radius) {
     auto it = g_meshes.find(key);
     if (it != g_meshes.end()) release_mesh_textures(key, it->second);
   }
+  g_mesh_geom_src.erase(key);  // Fork: own geometry from now on
   constexpr int kStacks = 16;
   constexpr int kSlices = 32;
   constexpr float kPi = 3.14159265f;
@@ -1384,11 +2111,60 @@ bool render_d3d9_mesh_create_skydome(void* key, float radius) {
   return true;
 }
 
+void render_d3d9_mesh_set_geometry_source(void* dst, void* src) {
+  if (!dst) return;
+  if (!src || src == dst)
+    g_mesh_geom_src.erase(dst);
+  else
+    g_mesh_geom_src[dst] = src;
+}
+
+void render_d3d9_mesh_set_type_flags(void* key, uint32_t flags) {
+  if (!key) return;
+  if (flags)
+    g_mesh_type_flags[key] = flags;
+  else
+    g_mesh_type_flags.erase(key);
+}
+
+uint32_t render_d3d9_mesh_type_flags(void* key) {
+  auto it = g_mesh_type_flags.find(key);
+  return it == g_mesh_type_flags.end() ? 0u : it->second;
+}
+
+namespace {
+void scale_mesh_state(MeshState& st, float sx, float sy, float sz);
+}  // namespace
+
 bool render_d3d9_mesh_scale_vertices(void* key, float sx, float sy, float sz) {
   if (!key) return false;
   auto it = g_meshes.find(key);
   if (it == g_meshes.end() || !it->second.ready) return false;
-  MeshState& st = it->second;
+  scale_mesh_state(it->second, sx, sy, sz);
+  // Fork: the exe scales the mesh sections in place (PE 940 FUN_004d8710:
+  // section vt+0x4c per section) and every instance of every render type
+  // using that mesh shows it. Host: scale the copies that lead back to it.
+  for (const auto& kv : g_mesh_geom_src) {
+    bool hit = false;
+    void* cur = kv.second;
+    for (int guard = 0; cur && guard < 8; ++guard) {
+      if (cur == key) {
+        hit = true;
+        break;
+      }
+      auto up = g_mesh_geom_src.find(cur);
+      cur = up == g_mesh_geom_src.end() ? nullptr : up->second;
+    }
+    if (!hit) continue;
+    auto mit = g_meshes.find(kv.first);
+    if (mit != g_meshes.end() && mit->second.ready)
+      scale_mesh_state(mit->second, sx, sy, sz);
+  }
+  return true;
+}
+
+namespace {
+void scale_mesh_state(MeshState& st, float sx, float sy, float sz) {
   bool any = false;
   float bmin[3] = {1e30f, 1e30f, 1e30f};
   float bmax[3] = {-1e30f, -1e30f, -1e30f};
@@ -1412,8 +2188,8 @@ bool render_d3d9_mesh_scale_vertices(void* key, float sx, float sy, float sz) {
       st.bmax[i] = bmax[i];
     }
   }
-  return true;
 }
+}  // namespace
 
 bool render_d3d9_mesh_clone(void* dst, void* src) {
   if (!dst || !src || dst == src) return false;
@@ -1423,12 +2199,20 @@ bool render_d3d9_mesh_clone(void* dst, void* src) {
     auto dit = g_meshes.find(dst);
     if (dit != g_meshes.end()) release_mesh_textures(dst, dit->second);
   }
+  // Fork: an independent copy unless the caller links it again
+  // (render_d3d9_mesh_set_geometry_source).
+  g_mesh_geom_src.erase(dst);
   MeshState st = it->second;
   for (size_t i = 0; i < st.subs.size(); ++i) {
     if (st.subs[i].texture_key == mesh_sub_tex_key(src, i))
       st.subs[i].texture_key = nullptr;
   }
   bind_mesh_textures(dst, st);
+  {
+    // The instance keeps its stamp across changeResource re-clones.
+    auto old = g_meshes.find(dst);
+    st.seq = (old != g_meshes.end() && old->second.seq) ? old->second.seq : ++g_mesh_seq;
+  }
   g_meshes[dst] = std::move(st);
   return true;
 }
@@ -1467,6 +2251,15 @@ void render_d3d9_mesh_destroy(void* key) {
   if (it != g_meshes.end()) {
     release_mesh_textures(key, it->second);
     g_meshes.erase(it);
+  }
+  g_mesh_type_flags.erase(key);
+  // Fork: geometry links from and to this key.
+  g_mesh_geom_src.erase(key);
+  for (auto git = g_mesh_geom_src.begin(); git != g_mesh_geom_src.end();) {
+    if (git->second == key)
+      git = g_mesh_geom_src.erase(git);
+    else
+      ++git;
   }
   g_mesh_xforms.erase(key);
   g_mesh_bones.erase(key);

@@ -267,7 +267,13 @@ void java_util_resource_RenderRef_changeResource(InvObject* self,
       oldtexture && render_d3d9_mesh_ready(oldtexture);
 
   if (new_is_mesh || old_is_mesh) {
-    if (new_is_mesh) render_d3d9_mesh_clone(self, newtexture);
+    if (new_is_mesh) {
+      render_d3d9_mesh_clone(self, newtexture);
+      // Fork: the render type now references this mesh resource
+      // (RectangleTemplate: dub.changeResource(defMesh, newMsh); a later
+      // newMsh.scaleMesh from Rectangle.setScale must reach its instances).
+      render_d3d9_mesh_set_geometry_source(self, newtexture);
+    }
     InvObject* keep = nullptr;
     {
       std::lock_guard<std::mutex> lock(g_mu);

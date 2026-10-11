@@ -70,6 +70,11 @@ bool render_d3d9_change_video_mode(int32_t width, int32_t height, int32_t depth)
 // ClearTargetZ(flags&~1 /*target*/, flags&1 /*z*/, color=0xFF0000FF);
 // D3D: (z?ZBUFFER=2:0)|(target?TARGET=1:0) — Java bits swapped vs D3D.
 // Soft flush: pending_clear → Clear just before draw_meshes (after ApplyViewport).
+// Build 940 (camera pass, draw_viewport_cameras): every camera of every bound
+// viewport clears DEPTH ONLY inside its viewport (FUN_00460ba0: cam+0x1a4 &
+// vp+0x24 never carry the target bit; Z 0x3F7FFF58) and the Java renderflags
+// are dropped (FUN_004e6ab0). Once such passes run, the host's frame clear
+// covers the whole target and pending_clear is ignored.
 constexpr int32_t kViewportClearDepth = 0x1;
 constexpr int32_t kViewportClearTarget = 0x2;
 constexpr int32_t kViewportClearMask = kViewportClearDepth | kViewportClearTarget;
@@ -77,6 +82,10 @@ constexpr int32_t kViewportClearMask = kViewportClearDepth | kViewportClearTarge
 void render_d3d9_viewport_create(void* key, int32_t pri, float x, float y,
                                  float w, float h);
 void render_d3d9_viewport_destroy(void* key);
+// PE 940 FUN_00421e40: activate binds the viewport; any number stay bound and
+// every bound viewport is drawn each frame in ascending priority (the most
+// recently bound first among equals). render_d3d9_viewport_active() returns
+// the most recently activated one that is still bound (legacy readers).
 void render_d3d9_viewport_activate(void* key, int32_t renderflags);
 // PE deactivate @ 0x004816C0: handle 0 silent; thiscall unbind off_6187B0.
 void render_d3d9_viewport_deactivate(void* key);
@@ -91,16 +100,22 @@ float render_d3d9_viewport_get_top(void* key);
 float render_d3d9_viewport_get_left(void* key);
 void* render_d3d9_viewport_active();
 
-// Camera registry (java.render.Camera). `aov` is half-angle degrees as passed
-// by Java (`create(..., aov*0.5, ...)`). Stock impl VA create=0x004861E0.
+// Camera registry (java.render.Camera). `aov_deg` is the native Camera.create
+// argument, stored unchanged (PE 940 camera params+0x10, FUN_00524dc0). The
+// script constructor halves its own aov first (Osd: 60 -> 30) and the exe
+// uses the stored value as the FULL vertical angle: fovy = aov * pi/180
+// (FUN_00461dd0). The per-viewport camera pass does the same.
+// Fork: the legacy host cameras (apply_active_camera, project / unproject and
+// the Runtime callers that pass 45) still read it as a half angle.
 void render_d3d9_camera_create(void* key, void* parent, void* viewport,
-                               int32_t pri, float half_aov_deg, float dmin,
+                               int32_t pri, float aov_deg, float dmin,
                                float dmax, float lod_bias, float lod_amp,
                                int32_t oc, int32_t pt);
 void render_d3d9_camera_destroy(void* key);
 void render_d3d9_camera_activate(void* key, void* viewport, int32_t pri);
 void render_d3d9_camera_deactivate(void* key, void* viewport);
 void* render_d3d9_camera_active();
+// Returns the stored aov_deg as-is (name kept for the legacy callers).
 float render_d3d9_camera_half_aov(void* key);
 float render_d3d9_camera_dmin(void* key);
 float render_d3d9_camera_dmax(void* key);
@@ -329,20 +344,38 @@ void render_d3d9_osd_remove_rect(void* key);
 void render_d3d9_osd_set_rect_visible(void* key, int32_t visible);
 int32_t render_d3d9_osd_count();
 
-// OSD bitmap fonts (INVO v3 glyph mesh + greyscale TGA atlas + font.dat).
+// OSD bitmap fonts (INVO v3 glyph mesh + atlas + font.dat).
 // Key = typically charset ResourceRef*. Align: 0=right 1=center 2=left (Text.java).
+// The glyph table is the charset mesh itself: glyph c = vertices c*4..c*4+3
+// (positions * 0.1 = pixels, uv), advance = vertex[c*4+1].x * 0.1.
 bool render_d3d9_font_load(void* key, const char* name);
 // Resolve frontend:0xNN charset RID → RPAK entry name (simple20, slii24, …).
 bool render_d3d9_font_load_from_rid(void* key, int32_t res_id);
+// PE 940: the charset is a typeof-14 render object; load the glyph table
+// from the mesh its payload names and the atlas from its texture (works for
+// any INVO v3 mesh, e.g. fade.SCX). False when the pack lookup fails.
+bool render_d3d9_font_load_charset(void* key, int32_t res_id);
 bool render_d3d9_font_ready(void* key);
 const char* render_d3d9_font_name(void* key);
 int32_t render_d3d9_font_glyph_count(void* key);
 int32_t render_d3d9_font_px_height(void* key);
+// Sum of the charset mesh advances in pixels at scale 1 (PE 940
+// Text.getWidthPixels FUN_004e5ae0); ESC sequences are skipped.
 float render_d3d9_font_measure_px(void* key, const char* text);
 void render_d3d9_font_destroy(void* key);
 
 // Text instances (java.render.Text). update() rebuilds an OSD text entry.
+// A tree text (set_tree: created under a parent node) is drawn only inside
+// the pass of a camera whose root is above it, as screen-space glyph quads
+// at the NDC anchor of its bone00 world translation (y down), and is hidden
+// with its Osd or Group. Every other text goes through the legacy screen
+// pass (draw_osd_texts) as before.
 void render_d3d9_text_create(void* key, void* font, float x, float y);
+void render_d3d9_text_set_tree(void* key, int32_t tree);
+// PE 940 payload+0x178 (r_text2 scale): multiplies the pen advance only.
+void render_d3d9_text_set_advance_scale(void* key, float scale);
+// Fork: Text.setScale(sx, sy) kept per text (glyph vertices and advance).
+void render_d3d9_text_set_scale(void* key, float sx, float sy);
 void render_d3d9_text_destroy(void* key);
 void render_d3d9_text_set_color(void* key, uint32_t argb);
 void render_d3d9_text_set_align(void* key, int32_t align);
@@ -405,6 +438,23 @@ bool render_d3d9_mesh_clone(void* dst, void* src);
 // bake vertex positions (and AABB). Clone copies verts so RectangleTemplate
 // changeResource keeps the scale. Does not write instance MeshXform.sx.
 bool render_d3d9_mesh_scale_vertices(void* key, float sx, float sy, float sz);
+// Fork: `dst` shows the geometry of `src` (the exe's render instance
+// references its render type, and the type its mesh resource; the host
+// holds copies). render_d3d9_mesh_scale_vertices on a source also scales
+// every copy that leads back to it. src == nullptr drops the link.
+// RenderRef.create (instance <- type) and RenderRef.changeResource
+// (type <- mesh) set it; ResourceRef.duplicate does not (independent copy).
+void render_d3d9_mesh_set_geometry_source(void* dst, void* src);
+// PE 940 render type `flags` (typeof-14 rsd: "flags 640.000", read with
+// "%s %d" by FUN_00522d90 into payload+0x34, template+0x18 in
+// FUN_0046e1a0). The RI_object ctor FUN_00465e40 derives the instance colour
+// mode from it: 0x80 with 0x200 -> 1 (RenderRef.setColor replaces material
+// colour id 0: Diffuse = Ambient, alpha -> TEXTUREFACTOR), 0x80 with 0x400
+// -> 2 (replaces colour id 2: Emissive), otherwise the instance colour is
+// ignored. Set on a render type when its recipe is bound and copied to the
+// instances made from it.
+void render_d3d9_mesh_set_type_flags(void* key, uint32_t flags);
+uint32_t render_d3d9_mesh_type_flags(void* key);
 // Bind an already-loaded texture to a submesh (0 = default / skydome).
 void render_d3d9_mesh_set_texture_at(void* mesh_key, int32_t submesh,
                                      void* texture_key);

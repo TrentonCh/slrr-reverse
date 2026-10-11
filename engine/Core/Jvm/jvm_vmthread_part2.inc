@@ -1559,8 +1559,31 @@ VmCallFrame* vmthread_build_tree_frame(VmThread* thr, const JvmClass* cls,
   fr->locals.clear();
   fr->locals.reserve(args.size() + 1);
   if (!is_static) fr->locals.push_back(JvmValue::make_obj(self));
+  // PE 940 Thread::callMethod FUN_00561830: each argument is assigned
+  // (Value_assign FUN_0055e020) to a new Variable typed from the signature
+  // (FUN_005608b0), and the assignment conversion (FUN_005552e0 ->
+  // FUN_0055d1b0) turns an int or a float into a String when the parameter
+  // class is java.lang.String (Class::isInheritedFrom FUN_00549d80): formats
+  // "%d" and "%.3f", then JVM_String_from_cstr. GameLogic.run relies on it:
+  // dayTxt.changeText(day) passes GameLogic.day:I to changeText(String).
+  // Fork: only this conversion is applied here; the I <-> F ones stay with
+  // vmthread_assign_coerce at the stores.
+  const std::vector<std::string> ptypes = pe_split_args(m->signature);
+  const bool typed = ptypes.size() == args.size();
   // PE @ 0x420333: pops run from the operand-stack top down.
-  for (auto it = args.rbegin(); it != args.rend(); ++it) fr->locals.push_back(*it);
+  for (size_t ri = args.size(); ri-- > 0;) {
+    JvmValue v = args[ri];
+    if (typed && ptypes[ri] == "Ljava.lang.String;" &&
+        (v.tag == JvmTag::Int || v.tag == JvmTag::Float)) {
+      char buf[64];
+      if (v.tag == JvmTag::Int)
+        std::snprintf(buf, sizeof buf, "%d", v.v.i);
+      else
+        std::snprintf(buf, sizeof buf, "%.3f", static_cast<double>(v.v.f));
+      v = JvmValue::make_obj(string_new(buf));
+    }
+    fr->locals.push_back(v);
+  }
   fr->pe.local_count = static_cast<uint32_t>(fr->locals.size());
   fr->pe.local_cap = fr->pe.local_count;
   fr->operand.clear();

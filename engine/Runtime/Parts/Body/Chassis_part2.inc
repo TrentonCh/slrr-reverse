@@ -1165,6 +1165,29 @@ void java_game_parts_bodypart_Chassis_setNitroSFX(InvObject* self, InvObject* sf
 // sub_5447D0 — TREE "mileage" (setMileage twin). dword_62E008 /
 // sub_5447D0 not renamed (shared / 310+ xrefs).
 
+// PE 940 @ 0x004B3110 Chassis.getMaxSteer ()F and @ 0x004B5030
+// Chassis.setMaxSteer (F)V (Build 900+ natives, registration FUN_004ac310;
+// the old exe has neither). Both walk Native.ptr -> 0xA0000000 payload ->
+// nested 0x20000000 payload and read / write the float at
+// [*(obj+0x4C)+0x2050]+0xA20: the first value of the chassis CFG line
+// "maxsteer %f %f" (parser FUN_0048daf0). The Chassis constructor runs
+// setMaxSteering(getMaxSteer()) when System.nextGen() (buildNumber > 606),
+// and setMaxSteering(v) = setMaxSteer(v); max_steer = v.
+// Fork: the host does not load the chassis CFG. Until a value is set the
+// getter returns 0.7, the initialiser of the script field Chassis.max_steer,
+// so that field keeps the value it had before these natives were bound.
+float java_game_parts_bodypart_Chassis_getMaxSteer(InvObject* self) {
+  if (!self) return 0.f;
+  if (!tree_field_get_int(self, "phys_maxsteer_set")) return 0.7f;
+  return tree_field_get_float(self, "phys_maxsteer");
+}
+
+void java_game_parts_bodypart_Chassis_setMaxSteer(InvObject* self, float val) {
+  if (!self) return;
+  tree_field_set_float(self, "phys_maxsteer", val);
+  tree_field_set_int(self, "phys_maxsteer_set", 1);
+}
+
 float java_game_parts_bodypart_Chassis_getMileage(InvObject* self) {
   // PE @ 0x0043DFF0 size 0x84. Phys → [*(obj+0x4C)+0x20FC]; host TREE.
   // race125 deepen_partial SKIP — primary TREE twin of setMileage already

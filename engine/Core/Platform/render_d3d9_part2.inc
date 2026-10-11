@@ -4,7 +4,43 @@
 
     auto it = g_cameras.find(ckey);
     if (it != g_cameras.end()) {
-      half_aov = it->second.half_aov_deg;
+#ifdef _WIN32
+      if (camera_drawn_by_pass(it->second)) {
+        // A camera the pass drew in the last frame: the ray through the NDC
+        // point with the pass's own matrices (the exe unprojects with the
+        // camera it draws with; old exe Camera_unprojectNdc @ 0x513840, PE
+        // 940 C3DLow vt+0x94 / +0x9c). Full vertical angle, stored aspect,
+        // right-handed: the camera looks down its -Z.
+        const CameraState& pc = it->second;
+        D3DMATRIX cw{}, view{}, proj{};
+        float xs = 1.f, ys = 1.f;
+        camera_pass_matrices(ckey, pc, &cw, &view, &proj, &xs, &ys, nullptr);
+        const float rvx = vx / xs, rvy = vy / ys, rvz = -1.f;
+        float rdx = rvx * cw.m[0][0] + rvy * cw.m[1][0] + rvz * cw.m[2][0];
+        float rdy = rvx * cw.m[0][1] + rvy * cw.m[1][1] + rvz * cw.m[2][1];
+        float rdz = rvx * cw.m[0][2] + rvy * cw.m[1][2] + rvz * cw.m[2][2];
+        const float rlen2 = std::sqrt(rdx * rdx + rdy * rdy + rdz * rdz);
+        if (rlen2 > 1e-6f) {
+          rdx /= rlen2;
+          rdy /= rlen2;
+          rdz /= rlen2;
+        }
+        const float ex = cw.m[3][0], ey = cw.m[3][1], ez = cw.m[3][2];
+        // Fork: as in the legacy model below, the ray is cut at the height
+        // of the look-at target (0 without one); the exe keeps the depth
+        // its project call returned.
+        const float py = pc.lookat ? pc.at_y : 0.f;
+        float rt = 10.f;
+        if (std::fabs(rdy) > 1e-5f) rt = (py - ey) / rdy;
+        if (rt < 0.1f) rt = 0.1f;
+        if (rt > 5000.f) rt = 5000.f;
+        *out_x = ex + rdx * rt;
+        *out_y = ey + rdy * rt;
+        *out_z = ez + rdz * rt;
+        return true;
+      }
+#endif
+      half_aov = it->second.aov_deg;  // Fork: legacy look-at camera, half angle
       if (it->second.lookat) {
         eye_x = it->second.eye_x;
         eye_y = it->second.eye_y;
@@ -271,7 +307,31 @@ bool render_d3d9_project(float wx, float wy, float wz, float* ndc_x,
   if (ckey) {
     auto it = g_cameras.find(ckey);
     if (it != g_cameras.end()) {
-      half_aov = it->second.half_aov_deg;
+#ifdef _WIN32
+      if (camera_drawn_by_pass(it->second)) {
+        // A camera the pass drew in the last frame: project with the pass's
+        // own view and projection (camera_pass_matrices), as the exe does
+        // (old exe Camera_projectWorld @ 0x513720 uses the camera's own
+        // matrices; Navigator_MapProjectPos clamps the result to the
+        // minimap edge). Right-handed: clip w = -view z.
+        D3DMATRIX cw{}, view{}, proj{};
+        float xs = 1.f, ys = 1.f;
+        camera_pass_matrices(ckey, it->second, &cw, &view, &proj, &xs, &ys,
+                             nullptr);
+        const float pvx = wx * view.m[0][0] + wy * view.m[1][0] +
+                          wz * view.m[2][0] + view.m[3][0];
+        const float pvy = wx * view.m[0][1] + wy * view.m[1][1] +
+                          wz * view.m[2][1] + view.m[3][1];
+        const float pvz = wx * view.m[0][2] + wy * view.m[1][2] +
+                          wz * view.m[2][2] + view.m[3][2];
+        const float pw = -pvz;
+        if (pw < 0.05f) return false;
+        *ndc_x = pvx * xs / pw;
+        *ndc_y = pvy * ys / pw;
+        return true;
+      }
+#endif
+      half_aov = it->second.aov_deg;  // Fork: legacy look-at camera, half angle
       if (it->second.lookat) {
         eye_x = it->second.eye_x;
         eye_y = it->second.eye_y;
@@ -1216,7 +1276,19 @@ bool render_d3d9_texture_create_from_memory(void* key, const uint8_t* data,
                                             size_t size, const char* label) {
   // Convenience path: full DDS mip chain (Resources / RPAK). Type0 PE uses
   // create_from_mem(…, fmt, a5=0) → single mip via D3DX@5924FF.
-  return render_d3d9_texture_create_from_mem(key, data, size, 3, 1, label);
+  // PE 940 texture classes (factory FUN_00455e80): CompatibleTexture_DDS
+  // keeps the file's mip chain (FUN_00457e90, levels = the DDS mip count);
+  // CompatibleTexture_DX - every other image file (PNG / JPG / TGA / BMP) -
+  // loads with D3DXCreateTextureFromFileInMemoryEx and MipLevels = 1
+  // (FUN_00458050 passes 0 as the mip flag to C3DLow vt+0xf0 FUN_0044db00,
+  // MipLevels = (flag == 0)). A minified Osd texture is therefore sampled
+  // from its only level with the linear min filter (C3DLow defaults
+  // FUN_004223a0: MIN = MAG = MIP = LINEAR); a host-made mip chain made the
+  // camera-pass rectangles softer than the stock frames.
+  const bool dds = data && size >= 4 && data[0] == 'D' && data[1] == 'D' &&
+                   data[2] == 'S' && data[3] == ' ';
+  return render_d3d9_texture_create_from_mem(key, data, size, 3, dds ? 1 : 0,
+                                             label);
 }
 
 bool render_d3d9_texture_create_from_mem(void* key, const uint8_t* data,

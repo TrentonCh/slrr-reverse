@@ -132,6 +132,18 @@ bool string_is(InvObject* obj) {
   return g_string_objects.count(obj) != 0;
 }
 
+void string_register(InvObject* obj) {
+  if (!obj) return;
+  std::lock_guard<std::mutex> lock(g_mu);
+  g_string_objects.insert(obj);
+}
+
+void string_unregister(InvObject* obj) {
+  if (!obj) return;
+  std::lock_guard<std::mutex> lock(g_mu);
+  g_string_objects.erase(obj);
+}
+
 const char* string_cstr(InvObject* obj) {
   if (!obj) {
     return "<null>";

@@ -24,4 +24,9 @@ int game_interactive_run(Jvm& jvm, const char* game_root,
                          const char* player_name, bool auto_new,
                          int32_t max_frames);
 
+// Fork: back buffer size for --game. Script boot path (SLRR_PE_BOOT_INIT=1):
+// the size stored in <game>/save/game/options, or SLRR_WINDOW_SIZE=WxH;
+// 1024x768 otherwise (legacy path, missing or malformed file).
+void game_boot_display_size(const char* game_root, int32_t* w, int32_t* h);
+
 }  // namespace inv

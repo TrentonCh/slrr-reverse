@@ -626,6 +626,66 @@ int game_boot_run(Jvm& jvm, const char* game_root, const char* player_name,
   return 0;
 }
 
+// Fork: display size of the script boot path. The exe applies Config before
+// it opens the display (Engine_InitState LoadGameInit "Config" ->
+// ApplyConfigGfx, then GfxEngine_InitDisplay; see the order in
+// game_interactive_run), so its window has the size stored in
+// <game>/save/game/options: SDAT container, magic 0xFEDCBA98 at +8, version
+// at +12, then u32 windowed, video_x, video_y, depth at +16 / +20 / +24 /
+// +28. The scripts lay out from the same file through Config.video_x /
+// video_y, so the back buffer has to match it.
+// SLRR_WINDOW_SIZE=WxH overrides the size for tests (the scripts still lay
+// out from their own Config). Without SLRR_PE_BOOT_INIT=1 (legacy host
+// path) the size stays 1024x768.
+void game_boot_display_size(const char* game_root, int32_t* w, int32_t* h) {
+  *w = 1024;
+  *h = 768;
+  const char* pe_boot = std::getenv("SLRR_PE_BOOT_INIT");
+  if (!pe_boot || pe_boot[0] != '1') return;
+  auto sane = [](long x, long y) {
+    return x >= 320 && x <= 7680 && y >= 240 && y <= 4320;
+  };
+  if (const char* e = std::getenv("SLRR_WINDOW_SIZE"); e && e[0]) {
+    char* end = nullptr;
+    const long x = std::strtol(e, &end, 10);
+    const long y = (end && (*end == 'x' || *end == 'X')) ? std::strtol(end + 1, nullptr, 10) : 0;
+    if (sane(x, y)) {
+      *w = static_cast<int32_t>(x);
+      *h = static_cast<int32_t>(y);
+      std::printf("[pe-boot] display %dx%d (SLRR_WINDOW_SIZE)\n", *w, *h);
+      return;
+    }
+    std::printf("[pe-boot] SLRR_WINDOW_SIZE='%s' ignored\n", e);
+  }
+  std::string path = (game_root && game_root[0]) ? game_root : ".";
+  path += "/save/game/options";
+  uint8_t hdr[32] = {};
+  size_t got = 0;
+  if (FILE* f = std::fopen(path.c_str(), "rb")) {
+    got = std::fread(hdr, 1, sizeof(hdr), f);
+    std::fclose(f);
+  } else {
+    std::printf("[pe-boot] display %dx%d (no %s)\n", *w, *h, path.c_str());
+    return;
+  }
+  uint32_t magic = 0, version = 0, windowed = 0, vx = 0, vy = 0, depth = 0;
+  std::memcpy(&magic, hdr + 8, 4);
+  std::memcpy(&version, hdr + 12, 4);
+  std::memcpy(&windowed, hdr + 16, 4);
+  std::memcpy(&vx, hdr + 20, 4);
+  std::memcpy(&vy, hdr + 24, 4);
+  std::memcpy(&depth, hdr + 28, 4);
+  if (got != sizeof(hdr) || std::memcmp(hdr, "SDAT", 4) != 0 ||
+      magic != 0xFEDCBA98u || !sane(static_cast<long>(vx), static_cast<long>(vy))) {
+    std::printf("[pe-boot] display %dx%d (%s malformed)\n", *w, *h, path.c_str());
+    return;
+  }
+  *w = static_cast<int32_t>(vx);
+  *h = static_cast<int32_t>(vy);
+  std::printf("[pe-boot] display %dx%d (save/game/options: version=%u windowed=%u depth=%u)\n",
+              *w, *h, version, windowed, depth);
+}
+
 int game_interactive_run(Jvm& jvm, const char* game_root,
                          const char* player_name, bool auto_new,
                          int32_t max_frames) {
@@ -639,7 +699,9 @@ int game_interactive_run(Jvm& jvm, const char* game_root,
   if (!game_boot_warmup(jvm, game_root)) return 3;
 
   if (!render_d3d9_ready()) {
-    if (!render_d3d9_open(1024, 768, "SLRR — MainMenu")) {
+    int32_t dw = 1024, dh = 768;
+    game_boot_display_size(game_root, &dw, &dh);
+    if (!render_d3d9_open(dw, dh, "SLRR — MainMenu")) {
       std::printf("FAIL --game render open\n");
       return 6;
     }
@@ -714,6 +776,22 @@ int game_interactive_run(Jvm& jvm, const char* game_root,
   if (const char* pe_boot = std::getenv("SLRR_PE_BOOT_INIT");
       pe_boot && pe_boot[0] == '1') {
     std::printf("[pe-boot] java.game.Init.<init>(I) on the VM\n");
+    // Fork: Config.video_x / video_y. The exe's Engine_InitState runs
+    // LoadGameInit("Config") = new Config(id), whose constructor calls
+    // loadConfig("save/game/options") before the display opens
+    // (system/scripts/util/Config.class <init>(I)). The host does not run
+    // that constructor yet, so the statics keep their 800x600 initialisers
+    // while the Osd / Text scripts lay out from them; seed the two from the
+    // back buffer (game_boot_display_size read the same file).
+    if (!jvm.find_class("java.util.Config")) jvm.load_class("java.util.Config");
+    if (const JvmClass* cfg = jvm.find_class("java.util.Config")) {
+      if (render_d3d9_width() > 0 && render_d3d9_height() > 0) {
+        if (JvmValue* s = tree_static_slot(cfg, "video_x", false))
+          *s = JvmValue::make_int(render_d3d9_width());
+        if (JvmValue* s = tree_static_slot(cfg, "video_y", false))
+          *s = JvmValue::make_int(render_d3d9_height());
+      }
+    }
     if (!jvm.find_class("java.game.Init")) jvm.load_class("java.game.Init");
     InvObject* init_obj = tree_host_new("java.game.Init");
     jvm.invoke("java.game.Init", "<init>", "(I)V",
@@ -732,6 +810,15 @@ int game_interactive_run(Jvm& jvm, const char* game_root,
                   game_logic_actual_state() && tree_host_class(game_logic_actual_state())
                       ? tree_host_class(game_logic_actual_state()) : "null",
                   render_d3d9_osd_count(), render_d3d9_osd_text_count());
+      // Fork: the scripts lay out from Config.video_x / video_y; they have
+      // to agree with the back buffer (game_boot_display_size).
+      const JvmClass* cfg = jvm.find_class("java.util.Config");
+      JvmValue* cvx = cfg ? tree_static_slot(cfg, "video_x", false) : nullptr;
+      JvmValue* cvy = cfg ? tree_static_slot(cfg, "video_y", false) : nullptr;
+      std::printf("[pe-boot] display %dx%d Config.video=%dx%d\n",
+                  render_d3d9_width(), render_d3d9_height(),
+                  (cvx && cvx->tag == JvmTag::Int) ? cvx->v.i : -1,
+                  (cvy && cvy->tag == JvmTag::Int) ? cvy->v.i : -1);
     };
     report("Init done", 0);
     input_live_enable(true);

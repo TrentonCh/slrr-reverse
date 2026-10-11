@@ -1284,6 +1284,16 @@ InvObject* gameref_get_parent(InvObject* o) {
   return gametype_get_parent(o);  // Dummy/Group: createNativeInstance(parent, ...)
 }
 
+// Fork: flag word of a GameRef stand-in for the renderer's camera walk
+// (PE 940 FUN_0045eb10 reads node+0x84, the word GameRef.setFlags
+// FUN_004db900 ORs). Never creates an entry.
+int32_t gameref_get_flags(InvObject* o) {
+  if (!o) return 0;
+  std::lock_guard<std::mutex> lock(g_gr_mu);
+  auto it = g_refs.find(o);
+  return it == g_refs.end() ? 0 : it->second.flags;
+}
+
 InvObject* gameref_new() {
   // Fork: carry the class tag so script calls on the stand-in resolve as
   // java.util.resource.GameRef (id/set natives) instead of the caller class.

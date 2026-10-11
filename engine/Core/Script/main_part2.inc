@@ -522,7 +522,9 @@
     }
     // Interactive requires a window; open early if not already (--window smoke).
     if (!want_window && !render_d3d9_ready()) {
-      if (!render_d3d9_open(1024, 768, "SLRR - MainMenu")) {
+      int32_t dw = 1024, dh = 768;
+      game_boot_display_size(game_root, &dw, &dh);
+      if (!render_d3d9_open(dw, dh, "SLRR - MainMenu")) {
         std::printf("FAIL --game render open\n");
         return 6;
       }

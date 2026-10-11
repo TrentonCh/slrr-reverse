@@ -245,6 +245,7 @@ void java_render_Text_setPos(InvObject* self, float x, float z);
 InvObject* java_render_Text_getPos(InvObject* self);
 void java_render_Text_update(InvObject* self);
 float java_render_Text_getWidthPixels(InvObject* str, InvObject* font);
+void java_render_Text_setScale(InvObject* self, float x, float y);
 void java_render_Viewport_create(InvObject* self, int32_t pri, float x, float y, float w, float h);
 void java_render_Viewport_destroy(InvObject* self);
 void java_render_Viewport_activate(InvObject* self, int32_t renderflags);
@@ -381,3 +382,10 @@ void java_util_resource_ResourceRef_scaleMesh(InvObject* self, float x, float y,
 void java_util_resource_ResourceRef_duplicate(InvObject* self, InvObject* src);
 int32_t java_util_resource_SfxRef_nplay(InvObject* self, InvObject* pos, float radius, float pitch, float volume, int32_t flags, int32_t instance);
 void java_util_resource_SfxRef_stop(InvObject* self, int32_t instance);
+float java_game_parts_bodypart_Chassis_getMaxSteer(InvObject* self);
+void java_game_parts_bodypart_Chassis_setMaxSteer(InvObject* self, float val);
+int32_t java_util_Steam_initAPI();
+void java_util_Steam_neutralize();
+InvObject* java_util_Steam_getPackage(int32_t id);
+void java_util_Steam_setAchievement(InvObject* name);
+void java_util_Steam_resetAchievements();

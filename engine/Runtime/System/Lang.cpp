@@ -105,6 +105,7 @@ InvObject* lang_string_from_cstr(const char* cstr) {
     ++node->refcount;
     auto* shell = new InvString{node->data.get()};
     node->instance = reinterpret_cast<InvObject*>(shell);
+    string_register(node->instance);  // Fork: a String for string_is()
     return node->instance;
   }
   auto node = std::make_unique<StringBufferNode>();
@@ -114,6 +115,7 @@ InvObject* lang_string_from_cstr(const char* cstr) {
   node->refcount = 1;
   auto* shell = new InvString{node->data.get()};
   node->instance = reinterpret_cast<InvObject*>(shell);
+  string_register(node->instance);  // Fork: a String for string_is()
   g_string_buffer.emplace(std::string(cstr), std::move(node));
   return reinterpret_cast<InvObject*>(shell);
 }
@@ -142,6 +144,11 @@ void java_lang_String_finalize(InvObject* self) {
     return;
   }
   std::lock_guard<std::mutex> lock(g_string_buffer_mu);
+  // Fork: the shell of this entry leaves the string registry before its
+  // text can be freed below (string_is must not see a dangling utf8).
+  if (StringBufferNode* node = string_buffer_find(cstr);
+      node && node->instance == self)
+    string_unregister(self);
   string_buffer_set_instance(cstr, nullptr);
   string_buffer_remove(cstr);
 }

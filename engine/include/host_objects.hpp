@@ -271,6 +271,9 @@ int32_t frontend_loading_screen_visible();
 InvObject* frontend_gfx_engine();
 // Fork: GameRef parent link (nullptr when unbound).
 InvObject* gameref_get_parent(InvObject* o);
+// Fork: GameRef flag word (PE 940 node+0x84, GameRef.setFlags FUN_004db900:
+// WORLDTREEROOT 0x10, WORLDTREELEAF 0x40); 0 for an object that is no GameRef.
+int32_t gameref_get_flags(InvObject* o);
 InvObject* gametype_get_parent(InvObject* o);  // GameType.createNativeInstance parent
 void frontend_gfx_engine_frame_notify();
 // Phase 2.119: stock LoadingScreen.run pacing loop (host).
