@@ -119,6 +119,24 @@ bool parse_mesh_recipe(const std::vector<uint8_t>& blob, uint32_t* mesh_local,
   return mesh_local && *mesh_local != 0;
 }
 
+// PE 940 FUN_00525670, the payload of a mesh type (typeof 5): the number of
+// its `flags` line; bit 8 (passed to the mesh constructor FUN_00455e80 as
+// mesh+0x3C bit 0) says that the mesh has a `.bon` file.
+static uint32_t mesh_type_flags(const std::vector<uint8_t>& blob) {
+  const std::string text(blob.begin(), blob.end());
+  for (size_t pos = 0; pos < text.size();) {
+    size_t eol = text.find('\n', pos);
+    if (eol == std::string::npos) eol = text.size();
+    const std::string line = text.substr(pos, eol - pos);
+    pos = eol + 1;
+    if (line.compare(0, 5, "flags") != 0 || line.size() < 7 ||
+        (line[5] != ' ' && line[5] != '\t'))
+      continue;
+    return static_cast<uint32_t>(std::atof(line.c_str() + 6));
+  }
+  return 0;
+}
+
 bool load_mesh_from_res_id(InvObject* self, int32_t mesh_id) {
   if (!self || !mesh_id) return false;
   std::vector<uint8_t> mblob;
@@ -134,7 +152,22 @@ bool load_mesh_from_res_id(InvObject* self, int32_t mesh_id) {
     std::string resolved = resolve_city_visual_scx(src);
     if (resolved.empty()) resolved = rpak_resolve_path(src.c_str());
     if (resolved.empty()) resolved = src;
-    if (render_d3d9_mesh_create_from_file(self, resolved.c_str())) return true;
+    if (render_d3d9_mesh_create_from_file(self, resolved.c_str())) {
+      // PE 940 FUN_004515e0: the skeleton is read before the mesh file
+      // when the type record says so. Script boot only.
+      if (native_script_boot() && (mesh_type_flags(mblob) & 8u) != 0) {
+        const int32_t bones = render_d3d9_mesh_load_bones(self);
+        if (native_type_log()) {
+          const RpakEntry* e = rpak_find_entry(mesh_id);
+          std::fprintf(stderr,
+                       "[native-type] mesh 0x%08X '%s' flags 8: %d bone(s) "
+                       "from the .bon file of '%s'\n",
+                       static_cast<unsigned>(mesh_id),
+                       e ? e->name.c_str() : "", bones, resolved.c_str());
+        }
+      }
+      return true;
+    }
   }
   return false;
 }

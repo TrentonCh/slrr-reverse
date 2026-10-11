@@ -385,6 +385,11 @@ InvObject* system_config_host() {
     tree_field_set_float(g_config_host, "camera_int_clipplane", 0.1f);
     tree_field_set_int(g_config_host, "camera_render", 0);
     tree_field_set_int(g_config_host, "camera_nocollision", 1);
+    // PE 940: the ground type gives the world its gravity vector from this
+    // field (PTR_DAT_005dadf0+0x1C4); the car type reads its length for the
+    // spring rate and the static suspension length (FUN_004992e0,
+    // FUN_004a99b0). Config.class initialiser 9.81.
+    tree_field_set_float(g_config_host, "gravity", 9.81f);
     tree_field_set_float(g_config_host, "trafficDensity", 1.f);
     tree_field_set_float(g_config_host, "pedestrianDensity", 0.f);
     tree_field_set_float(g_config_host, "mouseSensitivity", 1.f);

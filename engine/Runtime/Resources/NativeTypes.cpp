@@ -20,6 +20,19 @@
 //   part                 NativeTypes_part4.inc: FUN_004f6240 (cfg lines),
 //                        FUN_004c1f90 (create), FUN_004c2b10 (render
 //                        instances), FUN_004c6370 (setMatrix)
+//   car                  NativeTypes_part6.inc: FUN_0049ab20 (init, the car
+//                        words of the cfg), FUN_004992e0 (create),
+//                        FUN_004a99b0 (setMatrix), FUN_004aa830 (steer
+//                        angles), FUN_004aaaf0 (wheel bodies), FUN_004a2e60
+//                        (commands), FUN_004a15c0 (getinfo)
+//   script natives       NativeTypes_part7.inc: the Part, Chassis and
+//                        WheelRef natives that answer from a part or car
+//                        object (Part.setSlotPos 0x4CDDC0, partOnSlot
+//                        0x4CD600, setRenderType 0x4CD9E0, ...)
+//   level of detail,     NativeTypes_part8.inc: FUN_00461980 (the detail a
+//   linked renders       camera gives a node), FUN_0051a5f0 (level change),
+//                        the tails of FUN_004c2b10 / FUN_004ca390 and
+//                        FUN_004afbf0 (`linked` render entries)
 //   light types          NativeTypes_part4.inc: FUN_005219c0 (typeof-13
 //                        payload), FUN_004ebef0 (RenderRef.setLight)
 
@@ -308,6 +321,7 @@ namespace {
 std::shared_ptr<NativeObject> ground_create(const NativeCreate& c);
 std::shared_ptr<NativeObject> camera_create(const NativeCreate& c);
 std::shared_ptr<NativeObject> part_create(const NativeCreate& c);
+std::shared_ptr<NativeObject> car_create(const NativeCreate& c);
 
 using NativeFactory = std::shared_ptr<NativeObject> (*)(const NativeCreate&);
 struct NativeTypeRow {
@@ -323,7 +337,7 @@ const NativeTypeRow kNativeTypes[kNativeTypeCount] = {
     {"ground", &ground_create},
     {"camera", &camera_create},
     {"object", nullptr},
-    {"car", nullptr},
+    {"car", &car_create},
     {"part", &part_create},
     {"trigger", nullptr},
     {"player", nullptr},
@@ -1293,5 +1307,15 @@ std::shared_ptr<NativeObject> ground_create(const NativeCreate& c) {
 
 // The part type's slots and its `install` command.
 #include "NativeTypes_part5.inc"
+
+// The `car` type: a part object with wheels, posed without physics.
+#include "NativeTypes_part6.inc"
+
+// What the Part, Chassis and WheelRef natives ask of a part or car object.
+#include "NativeTypes_part7.inc"
+
+// What is drawn of a part or car: the detail the cameras give, the levels,
+// the linked render entries (FUN_00461980, FUN_004afbf0).
+#include "NativeTypes_part8.inc"
 
 }  // namespace inv

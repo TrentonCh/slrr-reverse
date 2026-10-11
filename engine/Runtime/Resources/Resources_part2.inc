@@ -1775,6 +1775,7 @@ int32_t renderref_materialise_pending(InvObject* instance, int32_t type_id) {
   uint32_t flags = 0;
   bool object_class = true;
   bool ground_class = false;
+  bool no_geometry = false;
   if (restype == 13) {
     // A light type (`light = new RenderRef(map, lighttype, "neon")`): its
     // instance becomes a scene light (FUN_00462970), not a mesh: the type's
@@ -1801,6 +1802,12 @@ int32_t renderref_materialise_pending(InvObject* instance, int32_t type_id) {
     } else if (cls != kRenderTemplateObject) {
       object_class = false;
       made = 0;
+    } else if (desc->mesh_id == 0) {
+      // A render object without a `mesh` line (payload+0x0C unbound;
+      // cars\racers.rpk:0x1C behind the `steering` line of the racer cfgs):
+      // an instance without geometry, not a type that failed to load.
+      no_geometry = true;
+      made = 0;
     }
   }
   if (made != 0 && !ground_class) {
@@ -1825,8 +1832,9 @@ int32_t renderref_materialise_pending(InvObject* instance, int32_t type_id) {
                  static_cast<void*>(instance), static_cast<unsigned>(type_id),
                  name.c_str(), restype, flags,
                  made > 0 ? (ground_class ? "ground mesh" : "mesh")
-                          : made == 0 ? (object_class ? "light type, no mesh"
-                                                      : "not an object template, no mesh")
+                          : made == 0 ? (no_geometry ? "no mesh line, no geometry"
+                                         : object_class ? "light type, no mesh"
+                                                        : "not an object template, no mesh")
                                       : "NOT LOADED");
   return made;
 }

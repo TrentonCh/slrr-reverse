@@ -360,6 +360,16 @@ float java_lang_Math_sqrt(float a) {
   return std::sqrt(a);
 }
 
+// PE 940 @ 0x004DEE10 Math.pow (FF)F, registered at 0x4D67C8 (a Build 900+
+// native; the old exe has none). Static: the receiver slot of the unbox is
+// skipped, the two floats go to XMM0 / XMM1 and into the CRT's single
+// precision pow (CALL 0x00571143); the result is stored as a float.
+// Chassis.calcTimeET (the predicted quarter mile time of a car with an
+// engine) is its caller on the way to the garage.
+float java_lang_Math_pow(float a, float b) {
+  return std::pow(a, b);
+}
+
 void java_lang_Math_randomize() {
   // PE @ 0x0047C7D0 size 0x12 (int_convert 18). Static ()V; no
   // UnboxArg; no this/args. Engine_GetTimeMs @ 0x005516C0 → QPC

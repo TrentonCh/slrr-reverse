@@ -145,7 +145,9 @@ class NativeObject {
   // host's generic command chain runs.
   virtual bool event(int32_t /*type*/, const char* /*text*/) { return false; }
   // vt+0x3C. Queries used so far: 1 physics instance, 2 position,
-  // 3 velocity, 0x17 the ground's render instance, 0x22 the camera's.
+  // 3 velocity, 7 the kind of object (9 a part, 5 a car), 0x17 the first
+  // render instance (the ground's, a part's), 0x22 the camera's, 0x27 the
+  // free slots and 0x2B the car of a part or car.
   // GameRef.getPos is query 2 of the type (FUN_004e3890 -> FUN_004ea7a0 ->
   // FUN_0047c640(handle, 2, out)).
   virtual bool getinfo(int32_t /*query*/, NativeInfo* /*out*/) { return false; }

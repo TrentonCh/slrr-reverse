@@ -12,8 +12,15 @@
 // Mirrors: FUN_004f6240 (cfg lines), FUN_004bf8e0 render, FUN_004bf4d0
 // body, FUN_004bf230 click, FUN_004bfc10 slot, FUN_004bfe90 attach,
 // FUN_004c0740 flags, FUN_004c07f0 lod, FUN_004c0930 colors, FUN_004bfb30
-// bone, FUN_004c2950 -> FUN_004c1f90 create, FUN_004c2b10 render instances,
-// FUN_004c6370 setMatrix, FUN_004c3da0 getinfo, FUN_004c3a50 destroy.
+// bone, FUN_004c0880 lods, FUN_004c0fc0 linked, FUN_004c2950 -> FUN_004c1f90
+// create, FUN_004c2b10 render instances, FUN_004c6370 setMatrix,
+// FUN_004c3da0 getinfo, FUN_004c3a50 destroy.
+//
+// Level of detail. Every `render` entry carries a range `lod first last`
+// and the type a list `lods n t0 t1 ..`; an instance of the type has the
+// render instances of the entries whose range holds its level, and the
+// level follows the detail the cameras give the node (the rule and the
+// camera side are in NativeTypes_part8.inc).
 //
 // Where the mesh hangs (M2 spec Q9, read in Ghidra for step 4). The
 // position of a part is the position of its body, and a body's origin is
@@ -37,6 +44,12 @@
 // 1) -> mesh at (11.119, 1.568, 1.001), the offset the stock frame shows.
 // Units: metres and radians (cfg offsets and the create string are script
 // units; a shape's mesh file is centimetres, x 0.01 at load, DAT_005935d0).
+//
+// The `car` type (row 3, `_type_car` 0x59DCD8) is this type plus wheels:
+// its init FUN_0049ab20 runs the same line parser with a keyword table
+// (0x5DA528) that holds every part word, and its create FUN_004992e0 calls
+// FUN_004c1f90. The cfg reader below therefore serves both; the words only
+// a car has are in NativeTypes_part6.inc (car_cfg_word).
 //
 // The fragment also holds the payload of a light type (typeof 13, FUN_005219c0
 // over the defaults of FUN_005213c0) and RenderRef.setLight on one
@@ -87,9 +100,13 @@ inline float part_rdf(const uint8_t* p) {
 // {count, format, data} (the position is read when format bit 0 is set),
 // type 5 = u16 triangle indices relative to the vertex chunk before them.
 // Positions are multiplied by 0.01 (DAT_005935d0).
-// Fork: bounded by the file size (the exe trusts the file); the exe's
-// run-time switch DAT_007a75e4 that reads versions 5 / 6 as 3 / 4 is not
-// ported (no shipped shape file has those versions).
+// The exe steps from chunk to chunk by the chunk's size and reads nothing of
+// a chunk that is neither type 4 nor 5 (a section chunk, type 1, is 12 bytes
+// long).
+// Fork: bounded by the file size (the exe trusts the file): a chunk needs
+// its 8-byte header, a vertex chunk 16 bytes and an index chunk 12; the
+// exe's run-time switch DAT_007a75e4 that reads versions 5 / 6 as 3 / 4 is
+// not ported (no shipped shape file has those versions).
 bool part_shape_mesh_read(const std::vector<uint8_t>& d, PartShapeMesh* out) {
   out->xyz.clear();
   out->tri.clear();
@@ -144,11 +161,12 @@ bool part_shape_mesh_read(const std::vector<uint8_t>& d, PartShapeMesh* out) {
     p += 4 + static_cast<size_t>(n) * 8;
     uint32_t first_vertex = 0;
     for (uint32_t i = 0; i < n; ++i) {
-      if (p + 16 > size) return false;
+      if (p + 8 > size) return false;
       const uint32_t type = rd32(base + p);
       const uint32_t csize = rd32(base + p + 4);
-      if (csize < 16 || static_cast<uint64_t>(p) + csize > size) return false;
+      if (csize < 8 || static_cast<uint64_t>(p) + csize > size) return false;
       if (type == 4) {
+        if (csize < 16) return false;
         const uint32_t count = rd32(base + p + 8);
         const uint32_t format = rd32(base + p + 12);
         if (count == 0) return false;  // the exe divides by the count
@@ -166,6 +184,7 @@ bool part_shape_mesh_read(const std::vector<uint8_t>& d, PartShapeMesh* out) {
           q += stride;
         }
       } else if (type == 5) {
+        if (csize < 12) return false;
         const uint32_t count = rd32(base + p + 8);
         if (12 + static_cast<uint64_t>(count / 3) * 6 > csize) return false;
         size_t q = p + 12;
@@ -259,8 +278,18 @@ struct PartEntry {
   float ypr[3] = {0.f, 0.f, 0.f};
   CamM3 rot = cam_identity();  // +0x0C, FUN_005666d0 of the three angles
   // +0x58: `flags` | 0x1ff, `lod` in bits 16..19 (first) and 20..23 (last),
-  // 0x100 nocollision, 0x200 noclick, 0x400 bone.
+  // 0x100 nocollision, 0x200 noclick, 0x400 bone, 0x4000 `linked`. In a car
+  // cfg (FUN_0048d560): 0x1000 a wheel render with the wheel index in bits
+  // 24..31, 0x8000 a render of the `steering` body with that entry's index
+  // in bits 24..31.
   uint32_t flags = 0;
+  // +0x6C / +0x70: one record per `linked a [b [c]]` line behind the entry
+  // (FUN_004c0fc0, "%d %d %d"): the slots the render instance hangs on
+  // instead of the part's own body (NativeTypes_part8.inc).
+  struct Linked {
+    int32_t a = 0, b = 0, c = 0;
+  };
+  std::vector<Linked> linked;
   // kind 3
   int32_t res_id = 0;          // +0x44: a render object or a light type
   bool is_light = false;       // the record is typeof 13
@@ -269,6 +298,11 @@ struct PartEntry {
   float mass = 0.f;            // shape+0x2C is 1 / mass, 0 for mass 0
   int shape_kind = 0;          // shape+8: 1 ball, 5 box, 2 3 4 rods, 6 mesh
   std::string shape_path;
+  float dims[3] = {0.f, 0.f, 0.f};  // the numbers behind the shape word
+  // Fork: (M3 spec Q4) how far the shape reaches from its centre: the
+  // radius of a ball, half the diagonal of a box or rod, the farthest
+  // vertex of a mesh. The bounds of the node in the detail rule.
+  float reach = 0.f;
   CamV3 com;                   // shape+0x40
   double volume = 0.0;         // shape+0x4C (mesh shapes with a mass)
 };
@@ -282,6 +316,13 @@ struct PartSlot {
   float ypr[3] = {0.f, 0.f, 0.f};
   CamM3 rot = cam_identity();
   int32_t id = 0;  // +0x60
+  // +0x64: the number of a `slottype` or `slotflags` line behind the slot
+  // (FUN_004c0190, one handler, "%d" into the whole dword). The low word
+  // names the body of a car the slot hangs on (FUN_004992e0): 0 the
+  // reference body, 11 `steer`, 101.. `wheelbone`, 201.. `hub`, 301..
+  // `a_arm` of wheel n.
+  int32_t type_word = 0;
+  int32_t slottype() const { return type_word & 0xffff; }
   // +0x6C: one per `bolt` line behind the slot (FUN_004bfd00). An install
   // whose two slots have no bolts is finished at once (FUN_004cb1d0).
   int bolts = 0;
@@ -291,6 +332,51 @@ struct PartSlot {
   };
   std::vector<Attach> attach;      // +0xC4: `attach <type> <slot>`
   std::vector<Attach> compatible;  // +0x110: `compatible <type> <slot>`
+};
+
+// One 200-byte wheel record of a car type (type+0x1FB8 + n * 200; count
+// type+0x1FB4, at most 16), as the handlers FUN_0048fb30 `type`,
+// FUN_0048fcb0 `spring`, FUN_0048fee0 `wheel`, FUN_0048cfc0 `wheelbones`,
+// FUN_0048d0e0 `bonepos`, FUN_0048cc80 `arm`, FUN_0048cd70 `hub` fill it.
+struct CarWheelDesc {
+  CamV3 pos;                             // +0x00: the centre at full droop
+  float ypr[3] = {0.f, 0.f, 0.f};        // +0x0C
+  float steer_factor = 0.f;              // +0x18: 1 front, 0 rear
+  // +0x38 / +0x3C / +0x40. Fork: a wheel without a `spring` line has zeros
+  // here in the exe (no shipped cfg: all 96 car cfgs have one line per
+  // wheel); the host starts from the values the handler puts in place of a
+  // non-positive number.
+  float spring[3] = {0.1f, 0.2f, 0.05f};
+  float radius = 0.f;                    // +0x44: first number of the shape
+  int shape_kind = 0;                    // +0x48: 1 sphere, 5 box, 6 mesh
+  float shape_mass = 0.f;
+  bool bones = false;                    // +0x50: `wheelbones` (hub, a_arm)
+  CamV3 bonepos;                         // +0x58, `wheel` presets (0, 0.4, 0)
+  float arm_len = -1.f;                  // +0x68, -1 = none
+  CamV3 arm_axis;                        // +0x6C
+  CamV3 arm_pivot;                       // +0x78: wheel position + p
+  float hub_len = -1.f;                  // +0x88, -1 = none
+  CamV3 hub_p1;                          // +0x8C
+  CamV3 hub_p2;                          // +0x98
+  CamV3 hub_pc;                          // +0xA4: wheel position + pc
+};
+
+// What `_type_car` adds to the part type (FUN_0049ab20 and its keyword
+// table 0x5DA528), as far as a standing car needs it.
+struct CarTypePart {
+  std::vector<CarWheelDesc> wheels;      // type+0x1FB8
+  // type+0xFFC, the "current body" while the cfg is read: the index of the
+  // last `body` / `steering` entry, 0x10000000 + wheel index behind a
+  // `wheel` line; 0xFFFFFFFF before the first (FUN_004c3940).
+  uint32_t cur_body = 0xFFFFFFFFu;
+  int steer_index = -1;                  // type+0xFF4: the `steering` entry
+  float steer_ypr[3] = {0.f, 0.f, 0.f};  // type+0x1208: Ypr of its rotation
+  float max_steer = 0.7f;                // header+0xA20 (`maxsteer`, 1st)
+  float ackermann = 2.f;                 // header+0xA30 (`maxsteer`, 2nd)
+  CamV3 center;                          // type+0x1F1C (`center`)
+  // type+0x1F34: the `mass` word ("%f", FUN_0048d6b0); -1 from the init,
+  // and then the first create puts the mass of the chassis compound there.
+  float mass_word = -1.f;
 };
 
 struct PartTypeDesc {
@@ -304,7 +390,40 @@ struct PartTypeDesc {
   CamV3 click_off;                 // type+0x1000
   CamM3 click_rot = cam_identity();
   std::vector<PartSlot> slots;     // type+0x116C
-  std::vector<float> lods;         // type+0xFAC / +0xFB0
+  std::vector<float> lods;         // the numbers of the `lods` line
+  // type+0xFAC / +0xFB0 as the tail of the `lods` handler leaves them
+  // (FUN_004c0880): when the last number is below 1.0 a 1.0 is stored
+  // behind it and the count stays, else the count drops by one and the last
+  // number is the upper bound. `lods 3 0.001 1 2` gives the thresholds
+  // (0.001, 1), `lods 2 0.01 0.025` gives (0.01, 0.025): three levels
+  // either way. lod_t holds lod_count thresholds and the bound; a type
+  // without the line has level 0 only.
+  int lod_count = 0;
+  std::vector<float> lod_t;
+  // node+0xEC, copied from the type payload at the create (FUN_00523c80):
+  // the `lod_amp` line of the typeof-8 record, 1.0 without one. The detail
+  // a camera gives the node is multiplied by it.
+  float lod_amp = 1.f;
+  // Fork: (M3 spec Q4) the bounds of the node in the detail rule: a sphere
+  // of this radius around the reference body, reaching over every body
+  // shape of the cfg; below 0 for a type without a body (unbounded).
+  float bound_r = -1.f;
+  // type+0x10E8 / +0x10F8: the `texture` and `mesh` lines (FUN_004c0460,
+  // FUN_004c04c0: "%d", local to the cfg's pack): the texture a paint job
+  // replaces and the mesh Part.setMesh replaces. 0 = no line.
+  int32_t texture_id = 0;
+  int32_t mesh_id = 0;
+  // type+0x1108 / +0x1110: a handle on the render type of the first
+  // `render` / `light` / `deformable` line whose id names a record
+  // (FUN_004bf8e0 binds it while it is unbound): the type's main render
+  // type, the one Part.setRenderType, setMesh and setTexture replace in an
+  // instance. 0 = the cfg has no such line.
+  int32_t main_render = 0;
+  // type+0x115C: the `category` line (FUN_004c0520): 1 engine, 2 body, 3
+  // running gear; what the `filter` command compares with.
+  int32_t category = 0;
+  // Set for a `native car` type before the cfg is read.
+  std::unique_ptr<CarTypePart> car;
   // Derived: the mass centre of the bodies in the part's frame
   // (FUN_005032d0) and whether the compound is moved there.
   CamV3 com;
@@ -400,7 +519,14 @@ void part_body_shape(const char* shape, float mass, PartEntry* e,
     e->shape_path = shape;
   }
   // FUN_00505760: the centre of a ball, box or rod is (0, 0, 0).
-  if (e->shape_kind != 6) return;
+  if (e->shape_kind != 6) {
+    e->reach = e->shape_kind == 1
+                   ? std::fabs(e->dims[0])
+                   : 0.5f * std::sqrt(e->dims[0] * e->dims[0] +
+                                      e->dims[1] * e->dims[1] +
+                                      e->dims[2] * e->dims[2]);
+    return;
+  }
   std::vector<uint8_t> file;
   PartShapeMesh mesh;
   if (!part_read_file(e->shape_path, &file) ||
@@ -417,7 +543,18 @@ void part_body_shape(const char* shape, float mass, PartEntry* e,
   } else {
     e->com = part_shape_centroid(mesh, &e->volume);
   }
+  float far2 = 0.f;
+  for (size_t i = 0; i + 2 < mesh.xyz.size(); i += 3) {
+    const float dx = mesh.xyz[i] - e->com.x, dy = mesh.xyz[i + 1] - e->com.y;
+    const float dz = mesh.xyz[i + 2] - e->com.z;
+    const float d2 = dx * dx + dy * dy + dz * dz;
+    if (far2 < d2) far2 = d2;
+  }
+  e->reach = std::sqrt(far2);
 }
+
+// The words only the car's keyword table has (NativeTypes_part6.inc).
+void car_cfg_word(const PartCfgLine& l, PartTypeDesc* d);
 
 void parse_part_cfg(const std::string& text, int32_t pack, PartTypeDesc* d) {
   // FUN_00569b40 / FUN_00569b20 zero the locals the scans fill; a field the
@@ -428,6 +565,23 @@ void parse_part_cfg(const std::string& text, int32_t pack, PartTypeDesc* d) {
         word_is(l.word, "deformable")) {
       // FUN_004bf8e0, "%d %f %f %f %f %f %f".
       if (d->entries.size() > 31 || d->render_count > 31) return;
+      // A car's `render` and `light` are FUN_0048d560: this handler, then a
+      // flag by the body the line stands behind. `deformable` keeps the
+      // plain handler in both tables: the line IS the render entry of the
+      // body shell.
+      uint32_t car_flags = 0;
+      if (d->car && !word_is(l.word, "deformable")) {
+        const uint32_t cur = d->car->cur_body;
+        const int32_t hi = static_cast<int32_t>(cur) >> 24;
+        const uint32_t wheels = static_cast<uint32_t>(d->car->wheels.size());
+        if (hi == 0) {
+          if ((cur & 0xffu) == static_cast<uint32_t>(d->car->steer_index))
+            car_flags = (static_cast<uint32_t>(d->car->steer_index) << 24) |
+                        0x8000u;
+        } else if (hi == 0x10 && (cur & 0xffu) == wheels - 1u) {
+          car_flags = ((wheels - 1u) << 24) | 0x1000u;
+        }
+      }
       PartEntry e;
       e.kind = 3;
       int32_t local = 0;
@@ -449,11 +603,17 @@ void parse_part_cfg(const std::string& text, int32_t pack, PartTypeDesc* d) {
         e.res_id = id;
         e.is_light = true;
       }
+      // The tail of FUN_004bf8e0: `if (type+0x1110 == 0)` the handle
+      // type+0x1108 is bound to the node of this entry's handle.
+      if (!d->main_render && e.res_id) d->main_render = e.res_id;
+      e.flags |= car_flags;
       d->entries.push_back(e);
       ++d->render_count;
-    } else if (word_is(l.word, "body")) {
+    } else if (word_is(l.word, "body") ||
+               (d->car && word_is(l.word, "steering"))) {
       // FUN_004bf4d0, "%f %f %f %f %f %f %f %s %f %f %f": offset, angles,
-      // mass, shape, three sizes.
+      // mass, shape, three sizes. A car's `steering` is the same handler
+      // (FUN_0048d5f0) and then names the entry as the steering body.
       if (d->entries.size() > 31) return;
       if (d->bone_index < 0) d->bone_index = static_cast<int>(d->entries.size());
       PartEntry e;
@@ -466,8 +626,24 @@ void parse_part_cfg(const std::string& text, int32_t pack, PartTypeDesc* d) {
                     &e.off.y, &e.off.z, &e.ypr[0], &e.ypr[1], &e.ypr[2], &mass,
                     shape, &dims[0], &dims[1], &dims[2]);
       e.rot = cam_ypr_to_matrix(e.ypr[0], e.ypr[1], e.ypr[2]);
+      e.dims[0] = dims[0];
+      e.dims[1] = dims[1];
+      e.dims[2] = dims[2];
       part_body_shape(shape, mass, &e, d);
       d->entries.push_back(e);
+      if (d->car) {
+        // FUN_004bf4d0 tail: type+0xFFC = the entry. FUN_0048d5f0: type+0xFF4
+        // = the entry, type+0x1208 = the Ypr of its rotation (FUN_00569970).
+        // Fork: the exe drops an entry whose shape could not be made; the
+        // host keeps every body entry (part_body_shape).
+        const int index = static_cast<int>(d->entries.size()) - 1;
+        d->car->cur_body = static_cast<uint32_t>(index);
+        if (word_is(l.word, "steering")) {
+          d->car->steer_index = index;
+          cam_matrix_to_ypr(e.rot, &d->car->steer_ypr[0],
+                            &d->car->steer_ypr[1], &d->car->steer_ypr[2]);
+        }
+      }
     } else if (word_is(l.word, "click")) {
       // FUN_004bf230, "%s %f %f %f %f %f %f": a physics body record or a
       // mesh file (shape kind 7, no mass), its offset and angles.
@@ -518,6 +694,24 @@ void parse_part_cfg(const std::string& text, int32_t pack, PartTypeDesc* d) {
         if (used <= 0) break;
         p += used;
         d->lods.push_back(v);
+      }
+      // The tail of the handler (asm 0x4c08f6..0x4c092a).
+      d->lod_t = d->lods;
+      d->lod_count = static_cast<int>(d->lods.size());
+      if (d->lod_count > 0) {
+        if (d->lods.back() < 1.f)
+          d->lod_t.push_back(1.f);
+        else
+          --d->lod_count;
+      }
+    } else if (word_is(l.word, "linked")) {
+      // FUN_004c0fc0, "%d %d %d": one more record of the entry before the
+      // line, and entry flag 0x4000.
+      if (last) {
+        PartEntry::Linked k;
+        engine_sscanf(l.rest, "%d %d %d", &k.a, &k.b, &k.c);
+        last->linked.push_back(k);
+        last->flags |= 0x4000u;
       }
     } else if (word_is(l.word, "colors")) {
       // FUN_004c0930, "%#%d" then that many "%#%d" colours for the entry
@@ -570,12 +764,37 @@ void parse_part_cfg(const std::string& text, int32_t pack, PartTypeDesc* d) {
                           : 0;
         d->slots.back().attach.push_back(a);
       }
+    } else if (word_is(l.word, "slottype") || word_is(l.word, "slotflags")) {
+      // FUN_004c0190, "%d": both words write slot+0x64 of the slot before
+      // the line.
+      if (!d->slots.empty()) {
+        int32_t v = 0;
+        engine_sscanf(l.rest, "%d", &v);
+        d->slots.back().type_word = v;
+      }
+    } else if (word_is(l.word, "texture") || word_is(l.word, "mesh")) {
+      // FUN_004c0460 / FUN_004c04c0, "%d": a handle on the texture (typeof
+      // 7) / mesh (typeof 5) record with that id of the cfg's pack.
+      int32_t local = 0;
+      engine_sscanf(l.rest, "%d", &local);
+      const int32_t id = local ? static_cast<int32_t>(rpak_remap_local_id(
+                                     pack, static_cast<uint32_t>(local)))
+                               : 0;
+      if (word_is(l.word, "texture"))
+        d->texture_id = id;
+      else
+        d->mesh_id = id;
+    } else if (word_is(l.word, "category")) {
+      // FUN_004c0520: one number into type+0x115C.
+      engine_sscanf(l.rest, "%d", &d->category);
+    } else if (d->car) {
+      car_cfg_word(l, d);
     }
     // The other keywords of the table at 0x5DAB88 are read past: buoy,
-    // shadow, trigger, collision_ps, category,
-    // slotdmgmode, slotdeform, slottype, slotflags, slotmove, slotturn,
-    // deform, mesh, texture, logo, damage, intdamage, material, wing,
-    // rollbar, skinned, linked, stockpart, sfx_loop.
+    // shadow, trigger, collision_ps,
+    // slotdmgmode, slotdeform, slotmove, slotturn,
+    // deform, logo, damage, intdamage, material, wing,
+    // rollbar, skinned, stockpart, sfx_loop.
   });
 }
 
@@ -626,6 +845,29 @@ void part_type_derive(PartTypeDesc* d) {
   // the create string puts it.
   d->com_shift = total > 0.f && cam_len2(c) > kShiftLimit;
   if (!d->com_shift) d->com = CamV3();
+  // Fork: (M3 spec Q4) the exe keeps the bounds of a game node at node+0xB0
+  // (kind) / +0xB4 (centre) / +0xC0 (radius or half extents). For a part
+  // or a car they are a box (kind 1): FUN_00503c20 takes the box around
+  // the bounds of the node's physics-instance children (node type 2:
+  // `part_comp`, `bbone`, `click`, and of a car the wheel bodies and
+  // `steer`; each is a sphere of its shape's radius at its body, written
+  // by FUN_00524620 and the tail of FUN_005032d0, or the swept box of
+  // FUN_00504180 while the body moves). It runs at the end of the node's
+  // create (FUN_00523c80, FUN_005240e0) and whenever the frames of a body
+  // tree are recomputed (FUN_005030b0), and the size the detail rule reads
+  // is the length of the half extents. The sphere of radius 10 that the
+  // car's create FUN_004992e0 writes on the car's node is replaced by that
+  // box before GameRef.create returns.
+  // Not ported: it needs the bound radius of each shape kind and of a
+  // compound (FUN_005008c0), which were not read. The host takes a sphere
+  // around the reference body that holds every body shape.
+  d->bound_r = -1.f;
+  for (const PartEntry& e : d->entries) {
+    if (e.kind != 1) continue;
+    const CamV3 at = e.off + cam_mul(e.rot, e.com) - d->ref_at;
+    const float r = std::sqrt(cam_len2(at)) + e.reach;
+    if (d->bound_r < r) d->bound_r = r;
+  }
 }
 
 // PE 940 FUN_004c3780, the end of the type's init: every slot is put on
@@ -672,6 +914,15 @@ const PartTypeDesc* part_type_desc(const GameTypeDesc* type) {
   auto d = std::make_unique<PartTypeDesc>();
   d->type_id = type->type_id;
   d->cfg_path = type->cfg_path;
+  // `native car`: the init FUN_0049ab20 (part init, car defaults, the same
+  // line parser with the car's keyword table, FUN_004c3780). It presets the
+  // category to 2, body (type+0x115C = 2 right behind the part's field
+  // reset FUN_004c3940, which leaves 0); a `category` line of the cfg
+  // replaces it.
+  if (type->native_index == kNativeCar) {
+    d->car = std::make_unique<CarTypePart>();
+    d->category = 2;
+  }
   std::string text;
   if (type->cfg_is_inline) {
     text = type->cfg_inline;
@@ -685,6 +936,9 @@ const PartTypeDesc* part_type_desc(const GameTypeDesc* type) {
   }
   if (d->cfg_found)
     parse_part_cfg(text, rpak_id_pack(type->type_id), d.get());
+  // payload+0x18 of the type node: `lod_amp` (or the LODA chunk), default
+  // 1.0 (FUN_0051faf0).
+  d->lod_amp = type->has_lod_amp ? type->lod_amp : 1.f;
   part_type_derive(d.get());
   part_type_rebase_slots(d.get());
   if (native_type_log()) {
@@ -693,7 +947,7 @@ const PartTypeDesc* part_type_desc(const GameTypeDesc* type) {
     static bool s_first = true;
     const bool plain = d->cfg_found && d->unported_shapes == 0 &&
                        d->missing_shapes == 0;
-    bool log = !plain;
+    bool log = !plain || d->car != nullptr;  // every car type
     {
       std::lock_guard<std::mutex> lock(g_nt_mu);
       if (plain && s_first) {
@@ -704,9 +958,10 @@ const PartTypeDesc* part_type_desc(const GameTypeDesc* type) {
     if (log) {
       const RpakEntry* e = rpak_find_entry(type->type_id);
       std::fprintf(stderr,
-                   "[native-type] part type 0x%08X '%s' cfg '%s'%s: %zu "
+                   "[native-type] %s type 0x%08X '%s' cfg '%s'%s: %zu "
                    "entries (%d render, %d body, bone %d), click %d, %zu "
                    "slot(s), mass %g, mass centre (%.4f, %.4f, %.4f)%s%s%s\n",
+                   d->car ? "car" : "part",
                    static_cast<unsigned>(type->type_id),
                    e ? e->name.c_str() : "", d->cfg_path.c_str(),
                    d->cfg_found ? "" : " NOT FOUND", d->entries.size(),
@@ -773,8 +1028,30 @@ bool part_render_local(const PartTypeDesc& d, const PartEntry& r, CamV3* pos,
 // ---------------------------------------------------------------------------
 // The instance (0x14C bytes, FUN_00490830)
 // ---------------------------------------------------------------------------
-class PartObject final : public NativeObject {
+class PartObject;
+// Fork: every part and car object that exists, for the walk of a camera
+// over the nodes it sees (the exe walks its node tree, FUN_0045eb10). Main
+// thread only, like the camera pass and the natives of the script boot.
+// The list is never destroyed. The registries that own the objects
+// (g_objects, g_nodes, g_ticking) are defined above this fragment, so on an
+// exit that runs the static destructors they are torn down after everything
+// defined here, and each ~PartObject they release still reads the list.
+std::vector<PartObject*>& g_parts_live = *new std::vector<PartObject*>();
+
+class PartObject : public NativeObject {
  public:
+  PartObject() { g_parts_live.push_back(this); }
+  ~PartObject() override {
+    for (size_t i = g_parts_live.size(); i-- > 0;)
+      if (g_parts_live[i] == this) {
+        g_parts_live[i] = g_parts_live.back();
+        g_parts_live.pop_back();
+        break;
+      }
+  }
+  PartObject(const PartObject&) = delete;
+  PartObject& operator=(const PartObject&) = delete;
+
   const PartTypeDesc* type_ = nullptr;
   // The pose of the reference body (part+0x2C `bbone`, see
   // PartTypeDesc::ref_at): what GameRef.setMatrix and `install` place
@@ -796,23 +1073,54 @@ class PartObject final : public NativeObject {
   struct Inst {
     InvObject* r = nullptr;  // part+0x4C, a `part_r_o` render instance
     int entry = 0;           // part+0x50
+    // The render type the instance is made from: the entry's, or for the
+    // main render entry the part's own (part+0x9C).
+    int32_t res_id = 0;
+    // A `linked` entry of a mounted part (NativeTypes_part8.inc): 0 the
+    // instance follows the part's reference body like every other; 1 its
+    // bone00 follows the body of slot `link_a` with that slot's position
+    // and rotation; 2 the car poses bone00 on slot `link_a` and bone01 on
+    // slot `link_b` (its `add_linked` record). The slot records are those
+    // of `link_a_on` / `link_b_on`: this part or something up its mount
+    // chain (FUN_004c7bc0).
+    int link = 0;
+    int32_t link_a = 0, link_b = 0;
+    InvObject* link_a_on = nullptr;
+    InvObject* link_b_on = nullptr;
   };
   std::vector<Inst> insts_;
   int hidden_entries_ = 0;   // light-state entries (node flag 0x400000)
   int other_lod_entries_ = 0;
   bool unlinked_ = false;    // neither a body nor a click: nothing to follow
+  // The level of detail the render instances are made for, and the detail
+  // of the node (node+0xA0): the largest value a camera gave it in the
+  // frame `detail_frame_` (node+0xAC), kept until a camera sees the part
+  // again. A new node starts with the detail of the node it is made under
+  // (FUN_00523c80, see part_init); `detail_frame_` 0 = no camera has seen
+  // the part itself.
+  int level_ = 0;
+  float detail_ = 0.f;
+  uint32_t detail_frame_ = 0;
+  // Fork: what the part hangs under in the camera's walk, as of the frame
+  // `walk_frame_` (asked once per frame, not once per camera).
+  void* walk_parent_ = nullptr;
+  uint32_t walk_frame_ = 0;
+  bool gone_ = false;        // destroy() ran
 
   // part+0x78: one 0x68-byte entry per slot of the type, in the type's
   // order (FUN_004c1f90 copies position and rotation from the type's list;
-  // Part.setSlotPos rewrites them, which is not ported).
+  // Part.setSlotPos and setSlotDamage rewrite them).
   struct Slot {
     int32_t id = 0;
     CamV3 pos;                   // +0x2C
     CamM3 rot = cam_identity();  // +0x38
     // +0x14: 1 this part is installed through the slot, 2 a part is
-    // installed on the slot, 4 an install waits for its bolts, 0x10 the
-    // slot is disabled (Part.disableSlot, not ported), 0x40 with 0x10 on
-    // an installed slot locks the chain above it (FUN_004cb0b0).
+    // installed on the slot, 4 an install waits for its bolts, 8 a removal
+    // waits for its bolts (FUN_004cb510, both records), 0x10 the
+    // slot is disabled (Part.disableSlot), 0x20 the slot was moved
+    // (Part.setSlotPos / setSlotDamage: its pose goes into a saved car),
+    // 0x40 with 0x10 on an installed slot locks the chain above it
+    // (FUN_004cb0b0).
     uint32_t flags = 0;
     // +0x00: a handle on the node of the part on the other side. Fork: its
     // node object. A handle goes unbound when its node is destroyed.
@@ -829,6 +1137,25 @@ class PartObject final : public NativeObject {
   // +0xDC: the parts `add_part` announced (FUN_004c17b0); destroyed with
   // this part.
   std::vector<InvObject*> attached_;
+  // +0x70: the state word. Of a part: 0x10000000 hidden by `filter .. 2`,
+  // 0x20000000 set by `filter .. 1`. A car keeps its own bits here too
+  // (CarObject).
+  uint32_t flags_ = 0;
+  // +0x8C / +0x9C: handles on the mesh and on the main render type of this
+  // instance, copied from the type's at the create (type+0x10F8 `mesh`,
+  // +0x1108 the first render line). Their ids (+0x94 / +0xA4) are what
+  // Part.getMesh and getRenderType return; Part.setMesh and setRenderType
+  // rebind them.
+  int32_t mesh_ = 0;
+  int32_t render_type_ = 0;
+  // +0xAC: the owner of the render instances (render instance payload
+  // +0x1B4 / +0x1B8): the part's own node id until an install gives it the
+  // car's (FUN_004ca390: getinfo 0x3F of the car). 0 = the own node.
+  int32_t owner_ = 0;
+  // +0xD0: the `slottype` of the slot at the top of the chain of slots the
+  // part is installed through (FUN_004c8b10): on a car 101.. for a part on
+  // a wheel, 201.. on a hub, 301.. on an arm. Part.getWheelID reads it.
+  int32_t d0_ = 0;
 
   void push_pose() {
     render_d3d9_mesh_set_transform(key_, pos_.x, pos_.y, pos_.z, ypr_[0],
@@ -840,6 +1167,18 @@ class PartObject final : public NativeObject {
       if (s.id == id) return &s;
     return nullptr;
   }
+
+  // getinfo 0x2F: the world frame of the body a slot hangs on. A part has
+  // one body for all its slots, the reference body (FUN_004c1f90 binds
+  // every slot's bone handle to `bbone`); a car answers by the slot's
+  // `slottype` (CarObject, NativeTypes_part6.inc).
+  virtual void slot_frame(int32_t /*slot_id*/, CamV3* pos, CamM3* rot) {
+    *pos = pos_;
+    *rot = rot_;
+  }
+  // The render instances of level `level_` (FUN_004c2b10; a car adds its
+  // wheel renders, FUN_0049a8e0).
+  virtual void make_instances();
 
   // The methods below are in NativeTypes_part5.inc (slots and `install`).
   // The reference body gets this pose, and every part installed on this
@@ -864,21 +1203,119 @@ class PartObject final : public NativeObject {
   bool event(int32_t type, const char* text) override;
 };
 
-// PE 940 FUN_004c2b10 for level of detail 0: one render instance per
-// render entry whose `lod` range holds 0.
-void part_make_render_instances(PartObject* part) {
+// PE 940 FUN_00524840(part node, entry+0x44, alias, 0): a render instance
+// under the part's node, its bone00 at `at` / `rot` in the frame of the
+// part's reference body.
+// Fork: a host RenderRef object with its own id (Q12) under the part's key
+// in the renderer's tree; it waits on the pending list like every instance
+// whose type is not loaded, so a part no camera sees loads nothing.
+// `res_id` is the render type: the entry's, or the part's own for the main
+// render entry (part_entry_render).
+InvObject* part_new_render_instance(PartObject* part, const PartEntry& e,
+                                    int32_t res_id, const char* alias,
+                                    const CamV3& at, const CamM3& rot) {
+  InvObject* r = tree_host_new("java.util.resource.RenderRef");
+  if (!r) return nullptr;
+  {
+    std::lock_guard<std::mutex> lock(g_mu);
+    auto& rs = R(r);
+    rs.id = resref_next_runtime_id();
+    rs.type = 3;  // INSTANCE_RENDER
+    rs.restype = 3;
+    rs.type_id = res_id;
+    rs.parent = part->key_;
+    rs.alias = alias;
+    rs.loaded = true;
+  }
+  tree_field_set_obj(r, "alias", string_new(alias));
+  float yaw = e.ypr[0], pitch = e.ypr[1], roll = e.ypr[2];
+  bool same = true;
+  for (int a = 0; a < 3 && same; ++a)
+    for (int b = 0; b < 3 && same; ++b)
+      same = rot.m[a][b] == e.rot.m[a][b];
+  if (!same) cam_matrix_to_ypr(rot, &yaw, &pitch, &roll);
+  render_d3d9_mesh_set_tree_parent(r, part->key_);
+  render_d3d9_mesh_set_transform(r, at.x, at.y, at.z, yaw, pitch, roll, 1.f,
+                                 1.f, 1.f);
+  render_d3d9_mesh_set_pending_type(r, res_id);
+  // FUN_004ebd20(colors[index % count]): the instance colour of the
+  // create string's seventh field (render instance payload+0x17C).
+  if (!e.colors.empty()) {
+    const int32_t n = static_cast<int32_t>(e.colors.size());
+    const int32_t pick = part->colour_index_ % n;
+    render_d3d9_mesh_set_color(
+        r, e.colors[static_cast<size_t>(pick < 0 ? pick + n : pick)]);
+  }
+  return r;
+}
+
+// PE 940 FUN_004c2b10 (asm 0x4c2dc4..0x4c2dda): an entry whose render type
+// is the type's main one (type+0x1110) is instanced from the part's own
+// handle part+0x9C, which Part.setRenderType rebinds; every other entry
+// from its own.
+int32_t part_entry_render(const PartObject* part, const PartEntry& e) {
   const PartTypeDesc& d = *part->type_;
+  if (d.main_render && e.res_id == d.main_render && part->render_type_)
+    return part->render_type_;
+  return e.res_id;
+}
+
+// PE 940 FUN_004c2950 / FUN_004c1e90 / FUN_00498180, the loop over the
+// thresholds: the level is the first i with detail < t[i], else the count.
+int part_level_for(const PartTypeDesc& d, float detail) {
+  for (int i = 0; i < d.lod_count; ++i)
+    if (detail < d.lod_t[static_cast<size_t>(i)]) return i;
+  return d.lod_count;
+}
+
+inline bool part_entry_in_level(const PartEntry& e, int level) {
+  const int first = static_cast<int>((e.flags >> 16) & 0xfu);
+  const int last = static_cast<int>((e.flags >> 20) & 0xfu);
+  return first <= level && level <= last;
+}
+
+// The linked entries of the part's instances (NativeTypes_part8.inc).
+void part_link_instances(PartObject* part);
+void part_unlink_instance(PartObject* part, PartObject::Inst* inst);
+
+// PE 940 FUN_004c2b10(type, part, level): the render instances whose entry
+// is not of the level go (the last instance takes the freed place in the
+// list), and every other render entry of the level gets one.
+// Fork: the exe makes the instances of a new level when the level changes
+// and swaps them in once their render types are loaded (FUN_004c34e0); the
+// host drops the old ones at once and the new ones wait on the pending
+// list like every instance.
+void part_make_render_instances(PartObject* part, int level) {
+  const PartTypeDesc& d = *part->type_;
+  std::vector<char> kept(d.entries.size(), 0);
+  for (size_t k = part->insts_.size(); k-- > 0;) {
+    PartObject::Inst& in = part->insts_[k];
+    const size_t ei = static_cast<size_t>(in.entry);
+    if (ei < d.entries.size() && part_entry_in_level(d.entries[ei], level)) {
+      kept[ei] = 1;
+      continue;
+    }
+    part_unlink_instance(part, &in);
+    if (in.r) {
+      java_util_resource_ResourceRef_destroy(in.r);
+      java_util_resource_ResourceRef_deleteNative(in.r);
+    }
+    if (k + 1 < part->insts_.size()) part->insts_[k] = part->insts_.back();
+    part->insts_.pop_back();
+  }
+  part->hidden_entries_ = 0;
+  part->other_lod_entries_ = 0;
   for (size_t i = 0; i < d.entries.size(); ++i) {
     const PartEntry& e = d.entries[i];
     if (e.kind != 3) continue;
-    // Fork: the level of detail of the node (payload+0xA0 against the
-    // `lods` distances, FUN_004c2950) is not ported; the host always makes
-    // level 0. Entry flag 0x1000 keeps an entry out of every level.
-    const uint32_t first_lod = (e.flags >> 16) & 0xfu;
-    if (first_lod != 0 || (e.flags & 0x1000u) != 0) {
+    // Entry flag 0x1000 keeps an entry out of every level here: a car
+    // makes its wheel renders itself (FUN_0049a8e0,
+    // car_make_wheel_instances).
+    if (!part_entry_in_level(e, level) || (e.flags & 0x1000u) != 0) {
       ++part->other_lod_entries_;
       continue;
     }
+    if (kept[i]) continue;
     // An entry with a light-state bit (`flags` & 0x13f without 0x40: the
     // lamps and glows of a car part) gets node flag 0x400000 and is not
     // drawn until the car switches it on (`add_light`).
@@ -896,53 +1333,22 @@ void part_make_render_instances(PartObject* part) {
       part->unlinked_ = true;
       continue;
     }
-    // FUN_00524840(part node, entry+0x44, "part_r_o", 0): a render instance
-    // under the part's node. Fork: a host RenderRef object with its own id
-    // (Q12) under the part's key in the renderer's tree; it waits on the
-    // pending list like every instance whose type is not loaded, so a part
-    // no camera sees loads nothing.
-    InvObject* r = tree_host_new("java.util.resource.RenderRef");
+    const int32_t res = part_entry_render(part, e);
+    InvObject* r = part_new_render_instance(part, e, res, "part_r_o", at, rot);
     if (!r) continue;
-    {
-      std::lock_guard<std::mutex> lock(g_mu);
-      auto& rs = R(r);
-      rs.id = resref_next_runtime_id();
-      rs.type = 3;  // INSTANCE_RENDER
-      rs.restype = 3;
-      rs.type_id = e.res_id;
-      rs.parent = part->key_;
-      rs.alias = "part_r_o";
-      rs.loaded = true;
-    }
-    tree_field_set_obj(r, "alias", string_new("part_r_o"));
-    float yaw = e.ypr[0], pitch = e.ypr[1], roll = e.ypr[2];
-    bool same = true;
-    for (int a = 0; a < 3 && same; ++a)
-      for (int b = 0; b < 3 && same; ++b)
-        same = rot.m[a][b] == e.rot.m[a][b];
-    if (!same) cam_matrix_to_ypr(rot, &yaw, &pitch, &roll);
-    render_d3d9_mesh_set_tree_parent(r, part->key_);
-    render_d3d9_mesh_set_transform(r, at.x, at.y, at.z, yaw, pitch, roll, 1.f,
-                                   1.f, 1.f);
-    render_d3d9_mesh_set_pending_type(r, e.res_id);
-    // FUN_004ebd20(colors[index % count]): the instance colour of the
-    // create string's seventh field (render instance payload+0x17C).
-    if (!e.colors.empty()) {
-      const int32_t n = static_cast<int32_t>(e.colors.size());
-      const int32_t pick = part->colour_index_ % n;
-      render_d3d9_mesh_set_color(
-          r, e.colors[static_cast<size_t>(pick < 0 ? pick + n : pick)]);
-    }
     PartObject::Inst inst;
     inst.r = r;
     inst.entry = static_cast<int>(i);
+    inst.res_id = res;
     part->insts_.push_back(inst);
   }
 }
 
-// PE 940 FUN_004c2950 -> FUN_004c1f90 (type vt+0x0C).
-std::shared_ptr<NativeObject> part_create(const NativeCreate& c) {
-  auto part = std::make_shared<PartObject>();
+void PartObject::make_instances() { part_make_render_instances(this, level_); }
+
+// PE 940 FUN_004c1f90: the instance of a part type. The car's create
+// FUN_004992e0 calls it too, with its own bigger object (car_create).
+void part_init(PartObject* part, const NativeCreate& c) {
   part->type_ = part_type_desc(c.type);
   const PartTypeDesc& d = *part->type_;
   // "%f,%f,%f,%f,%f,%f,%d": position, angles, and the index into the
@@ -983,9 +1389,31 @@ std::shared_ptr<NativeObject> part_create(const NativeCreate& c) {
     part->slots_.push_back(e);
   }
   part->car_ = part->key_;
+  // The handles part+0x8C / +0x9C: the type's mesh and main render type
+  // (FUN_004c1f90 binds them from type+0x1104 / +0x1114).
+  part->mesh_ = d.mesh_id;
+  part->render_type_ = d.main_render;
   part->owns_create_pose = true;
   part->push_pose();
-  part_make_render_instances(part.get());
+  // PE 940 FUN_00523c80 (the node of a GameRef.create): before the type's
+  // create runs, the new node takes the detail of the node at its +0x24,
+  // its parent (FUN_004ea780): node vt+0x18(parent+0xA0), vt+0x14(parent
+  // +0x9C), the setters FUN_0051a6f0 / FUN_0051a740. The node's own factor
+  // and offset are still the 1 and 0 of its constructor there (FUN_00519260
+  // -> FUN_0051e930); the type's lod_amp is copied to node+0xEC after it.
+  // (M3 spec Q3.)
+  // Fork: the host keeps a detail for part and car objects only; a part
+  // made under any other node starts with 0, where the exe has the value
+  // that node carries.
+  if (c.parent) {
+    std::shared_ptr<NativeObject> up = native_object_of(c.parent);
+    if (up && up.get() != part &&
+        (up->type_index == kNativePart || up->type_index == kNativeCar))
+      part->detail_ = static_cast<PartObject*>(up.get())->detail_;
+  }
+  // FUN_004c2950: the level the node's detail gives, then FUN_004c2b10.
+  part->level_ = part_level_for(d, part->detail_);
+  part_make_render_instances(part, part->level_);
   // Not made here (Fork): the bodies and the click shape themselves, the
   // callback lists
   // (FUN_004ebd90(part, 0x10295, 0)): a part has nothing to tick on the
@@ -1010,6 +1438,15 @@ std::shared_ptr<NativeObject> part_create(const NativeCreate& c) {
                                    : "");
     }
   }
+}
+
+// PE 940 FUN_004c2950 -> FUN_004c1f90 (type vt+0x0C).
+std::shared_ptr<NativeObject> part_create(const NativeCreate& c) {
+  auto part = std::make_shared<PartObject>();
+  // Fork: native_object_create writes the index when the factory returns;
+  // the code a create runs asks for it before that.
+  part->type_index = kNativePart;
+  part_init(part.get(), c);
   return part;
 }
 
@@ -1147,67 +1584,5 @@ bool light_type_set_colours(int32_t id, int32_t diffuse, int32_t ambient,
   return true;
 }
 
-void native_part_install_dump(FILE* out);  // NativeTypes_part5.inc
-
-// `[render-dbg]` lines for the parts: a count, and one line per part whose
-// render instance has its mesh (a camera saw it).
-void native_part_debug_dump(FILE* out) {
-  if (!out || !native_script_boot()) return;
-  std::vector<std::shared_ptr<NativeObject>> parts;
-  {
-    std::lock_guard<std::mutex> lock(g_nt_mu);
-    for (const auto& kv : g_objects) {
-      if (!kv.second || kv.second->type_index != kNativePart) continue;
-      bool seen = false;
-      for (const auto& p : parts)
-        if (p == kv.second) seen = true;
-      if (!seen) parts.push_back(kv.second);
-    }
-  }
-  size_t instances = 0, with_mesh = 0;
-  for (const auto& o : parts) {
-    const PartObject* part = static_cast<const PartObject*>(o.get());
-    instances += part->insts_.size();
-    for (const PartObject::Inst& i : part->insts_)
-      if (render_d3d9_mesh_ready(i.r)) ++with_mesh;
-  }
-  std::fprintf(out,
-               "[render-dbg] native parts=%zu render_instances=%zu "
-               "with_mesh=%zu\n",
-               parts.size(), instances, with_mesh);
-  for (const auto& o : parts) {
-    const PartObject* part = static_cast<const PartObject*>(o.get());
-    for (const PartObject::Inst& i : part->insts_) {
-      if (!render_d3d9_mesh_ready(i.r)) continue;
-      const PartTypeDesc& d = *part->type_;
-      const PartEntry& e = d.entries[static_cast<size_t>(i.entry)];
-      const RpakEntry* te = rpak_find_entry(d.type_id);
-      const RpakEntry* re = rpak_find_entry(e.res_id);
-      float px = 0.f, py = 0.f, pz = 0.f;
-      render_d3d9_mesh_get_transform(i.r, &px, &py, &pz, nullptr, nullptr,
-                                     nullptr, nullptr, nullptr, nullptr);
-      const CamV3 world = part->pos_ + cam_mul(part->rot_, cam_v(px, py, pz));
-      // The slot this part is installed through, and on what.
-      char on[96];
-      on[0] = 0;
-      for (const PartObject::Slot& s : part->slots_)
-        if (s.other && (s.flags & 1u)) {
-          std::snprintf(on, sizeof(on), " installed: slot %d on %p slot %d",
-                        s.id, static_cast<void*>(s.other), s.other_slot);
-          break;
-        }
-      std::fprintf(out,
-                   "[render-dbg] native part %p '%s' body=(%.4f, %.4f, %.4f) "
-                   "ypr=(%.4f, %.4f, %.4f) mass_centre=(%.4f, %.4f, %.4f) "
-                   "instance %p render 0x%08X '%s' local=(%.4f, %.4f, %.4f) "
-                   "mesh_origin=(%.4f, %.4f, %.4f) sections=%d%s\n",
-                   static_cast<void*>(part->key_), te ? te->name.c_str() : "",
-                   part->pos_.x, part->pos_.y, part->pos_.z, part->ypr_[0],
-                   part->ypr_[1], part->ypr_[2], d.com.x, d.com.y, d.com.z,
-                   static_cast<void*>(i.r), static_cast<unsigned>(e.res_id),
-                   re ? re->name.c_str() : "", px, py, pz, world.x, world.y,
-                   world.z, render_d3d9_mesh_submesh_count(i.r), on);
-    }
-  }
-  native_part_install_dump(out);
-}
+// native_part_debug_dump, the `[render-dbg]` lines of the parts and cars,
+// is in NativeTypes_part6.inc.

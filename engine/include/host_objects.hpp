@@ -293,12 +293,116 @@ int32_t resref_node_flags(InvObject* o);
 // Returns 1 when the instance has its mesh now, 0 when the type is not a
 // mesh recipe (a light type), -1 when the type could not be loaded.
 int32_t renderref_materialise_pending(InvObject* instance, int32_t type_id);
+// PE 940 FUN_00461980: the detail a camera gives the nodes it walks, here
+// the part and car objects below `root` (NativeTypes_part8.inc). Called by
+// the camera pass once per camera and frame, before any camera draws, with
+// the eye, cot(aov / 2) and the camera's lodAmp / lodBias; then
+// native_camera_detail_end once: the level of detail of the parts that
+// were seen follows (FUN_0051a5f0). Script boot only.
+void native_camera_detail(void* root, const float eye[3], float cot_half_aov,
+                          float lod_amp, float lod_bias, uint32_t frame);
+void native_camera_detail_end(uint32_t frame);
 // Fork: one `[render-dbg]` line per native camera (NativeTypes.cpp), printed
 // by render_d3d9_debug_dump.
 void native_camera_debug_dump(FILE* out);
-// Fork: `[render-dbg]` lines for the instances of the native `part` type
-// (NativeTypes_part4.inc): a count and one line per drawn render instance.
+// Fork: `[render-dbg]` lines for the instances of the native `part` and
+// `car` types (NativeTypes_part6.inc): a count, the cars with their wheels,
+// and the parts with their render instances.
 void native_part_debug_dump(FILE* out);
+// The Part natives on the script boot: the answer of the native part or car
+// object of the receiver (NativeTypes_part6.inc; PE 940 Part.getCar
+// 0x4CC640, getCarRef 0x4CC550, getSlots 0x4CCED0, getSlotID 0x4CCAA0,
+// getSlotIndex 0x4CCBF0). Each returns false when the receiver has no such
+// object (always on the legacy path and in the unit smoke): the native then
+// answers from the legacy slot tables as before.
+//   native_part_car: the node id of the car the part sits on (the part
+//     itself until it is installed, a car itself) and the script instance
+//     of that node (null when its type has no script class);
+//   native_part_slot_count / _slot_id / _slot_index: the slot list of the
+//     type in cfg order; an index past the end gives id 0, an unknown id
+//     index 0.
+bool native_part_car(InvObject* self, int32_t* node_id,
+                     InvObject** script_instance);
+bool native_part_slot_count(InvObject* self, int32_t* count);
+bool native_part_slot_id(InvObject* self, int32_t index, int32_t* id);
+bool native_part_slot_index(InvObject* self, int32_t slot_id, int32_t* index);
+// The rest of the script-facing half (NativeTypes_part7.inc), same rule:
+// false = the receiver has no part / car object, answer from the legacy
+// tables.
+//   native_part_mount_slot: Part.getSlotID 0x4CCAA0 for an index below 0:
+//     the id of the slot the part is installed through, 0 when none;
+//   native_part_on_slot: Part.partOnSlot 0x4CD600: the script instance on
+//     the other side of the slot (-1: the part itself);
+//   native_part_slot_id_on_slot: Part.slotIDOnSlot 0x4CE770;
+//   native_part_wheel_id: Part.getWheelID 0x4CD2E0;
+//   native_part_set_slot_pos: Part.setSlotPos 0x4CDDC0; `pos` / `ypr` are
+//     three floats each, null where the script passed null;
+//   native_part_disable_slot / _slot_disabled: Part.disableSlot 0x4CE4A0,
+//     isSlotDisabled 0x4CE660;
+//   native_part_slot_damage / _set_slot_damage: Part.getSlotDamage
+//     0x4CCD10, setSlotDamage 0x4CDC30 (the pose text of a moved slot);
+//   native_part_render_type / _set_render_type: Part.getRenderType
+//     0x4CC9A0, setRenderType 0x4CD9E0;
+//   native_part_mesh / _set_mesh: Part.getMesh 0x4CC8A0, setMesh 0x4CD840.
+bool native_part_mount_slot(InvObject* self, int32_t* id);
+bool native_part_on_slot(InvObject* self, int32_t slot_id, InvObject** part);
+bool native_part_slot_id_on_slot(InvObject* self, int32_t slot_id,
+                                 int32_t* other_slot);
+bool native_part_wheel_id(InvObject* self, int32_t* id);
+bool native_part_set_slot_pos(InvObject* self, int32_t slot_id,
+                              const float* pos, const float* ypr);
+bool native_part_disable_slot(InvObject* self, int32_t slot_id,
+                              int32_t status);
+bool native_part_slot_disabled(InvObject* self, int32_t slot_id,
+                               int32_t* state);
+bool native_part_slot_damage(InvObject* self, int32_t index, char* out,
+                             size_t cap);
+bool native_part_set_slot_damage(InvObject* self, int32_t index,
+                                 const char* text);
+bool native_part_render_type(InvObject* self, int32_t* id);
+bool native_part_set_render_type(InvObject* self, int32_t id);
+bool native_part_mesh(InvObject* self, int32_t* id);
+bool native_part_set_mesh(InvObject* self, int32_t id);
+// The Chassis natives on the script boot: the answer of the car object of
+// the chassis (false = it has none).
+//   native_car_wheel_count: Chassis.getWheels 0x4B4280, the wheels of the cfg;
+//   native_car_mass: Chassis.getMass 0x4B2B90, the mass of the chassis
+//     compound in kg.
+bool native_car_wheel_count(InvObject* chassis, int32_t* count);
+bool native_car_mass(InvObject* chassis, float* kg);
+//   native_car_max_steer / _set_max_steer: Chassis.getMaxSteer 0x4B3110,
+//     setMaxSteer 0x4B5030; native_car_set_ackermann: setAckermann 0x4B47B0;
+//   native_car_force_update_begin: the first line of FUN_004aebf0
+//     (Chassis.forceUpdate 0x4B5890): the car loses the flag the
+//     `updatevariables` command sets; native_car_updatevariables: its call
+//     of the script instance's updatevariables().
+bool native_car_max_steer(InvObject* chassis, float* value);
+bool native_car_set_max_steer(InvObject* chassis, float value);
+bool native_car_set_ackermann(InvObject* chassis, float value);
+bool native_car_force_update_begin(InvObject* chassis);
+bool native_car_updatevariables(InvObject* chassis);
+// The WheelRef natives on the script boot: the wheel record of the car
+// object of the chassis the WheelRef was made for. `v` holds as many floats
+// as the field says. Set returns false when the chassis has no car object;
+// get also when the field has no getter or the wheel does not exist.
+enum NativeWheelField : int32_t {
+  kNativeWheelRadius = 0,  // setRadius 0x4B6E50 / getRadius 0x4B5DC0; 1
+  kNativeWheelRestLen,     // setRestLen 0x4B6EF0; 1
+  kNativeWheelMinLen,      // setMinLen 0x4B6990; 1
+  kNativeWheelMaxLen,      // setMaxLen 0x4B68B0; 1
+  kNativeWheelForce,       // setForce 0x4B6380; 1
+  kNativeWheelDamping,     // setDamping 0x4B6280 / 0x4B61D0; 2: bound, rebound
+  kNativeWheelSteer,       // setSteer 0x4B7010 / getSteer 0x4B5E00; 1
+  kNativeWheelYpr,         // setYpr 0x4B70E0 / getYpr 0x4B5E40; 3, set: null = the cfg's
+  kNativeWheelPos,         // setPos 0x4B6AF0 / getPos 0x4B5B90; 3, set: null = no offset
+  kNativeWheelArm,         // setArm 0x4B5F50; 7: length, p, n
+  kNativeWheelHub,         // setHub 0x4B65D0; 10: length, p1, p2, pc
+  kNativeWheelOpp,         // setOppWheel 0x4B6A30; 1: the wheel index, below 0 = none
+};
+bool native_car_wheel_set(InvObject* chassis, int32_t wheel, int32_t field,
+                          const float* v);
+bool native_car_wheel_get(InvObject* chassis, int32_t wheel, int32_t field,
+                          float* v);
 InvObject* gametype_get_parent(InvObject* o);  // GameType.createNativeInstance parent
 void frontend_gfx_engine_frame_notify();
 // Phase 2.119: stock LoadingScreen.run pacing loop (host).

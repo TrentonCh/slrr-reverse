@@ -341,7 +341,10 @@ bool camera_target_gone(const CamTarget& t) {
 // getinfo 2 = position, getinfo 3 = velocity (FUN_0048a430 steps 6 and 7).
 // Host: the game object of a pack instance by its id (the map), else the
 // native object of the host object bound to the id.
-// Fork: a target whose type has no host game object yet (car, object, part)
+// A car answers getinfo 2 with the point on the ground under its cfg
+// origin and getinfo 1 with its reference body (FUN_004a15c0): `move`
+// keeps its distance from the first, `look` aims at the second.
+// Fork: a target whose type has no host game object yet (`object`, ...)
 // answers with the host's generic GameRef pose; a target that is a physics
 // or render instance is not resolved.
 CamTargetPose camera_target_pose(const CamTarget& t) {

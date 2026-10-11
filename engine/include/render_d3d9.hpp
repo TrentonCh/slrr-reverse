@@ -219,6 +219,9 @@ void render_d3d9_scene_light_update_type(int32_t type_id,
 // Fork: `[render-dbg]` line: the scene lights and the device lights of the
 // last camera pass that saw one.
 void render_d3d9_scene_light_debug_dump(FILE* out);
+// Fork: one `[render-dbg]` line for the meshes with a `.bon` skeleton and
+// the sections drawn with two bone matrices (render_d3d9_part5.inc).
+void render_d3d9_bone_debug_dump(FILE* out);
 
 // Phase 2.108 / race71 — RenderRef.setFlare @ 0x00486B20 → OSD glow sprites
 // (PE RenderRef_applyFlare @ 0x0048CB40 stores min/max/color/count/rays as-is).
@@ -587,6 +590,18 @@ void render_d3d9_mesh_destroy(void* key);
 bool render_d3d9_mesh_ready(void* key);
 int32_t render_d3d9_mesh_submesh_count(void* key);
 int32_t render_d3d9_mesh_vertex_count(void* key);
+// The vertices and triangles of every section of a mesh.
+void render_d3d9_mesh_counts(void* key, int32_t* verts, int32_t* tris);
+// PE 940 FUN_004515e0: the bones of a mesh whose type record has `flags 8`,
+// from the mesh file's path with the extension `.bon`. Returns their
+// number (0: no such file, the mesh is drawn rigid).
+int32_t render_d3d9_mesh_load_bones(void* key);
+int32_t render_d3d9_mesh_bone_count(void* key);
+// The walk of a camera, asked from a node (render_d3d9_part5.inc): the node
+// one step up, and whether a camera with that root reaches the children of
+// `parent` (no WORLDTREELEAF container from `parent` up to the root).
+void* render_d3d9_camera_walk_parent(void* key);
+bool render_d3d9_camera_sees_below(void* root, void* parent);
 int32_t render_d3d9_mesh_index_count(void* key);
 int32_t render_d3d9_mesh_textured_count(void* key);
 void* render_d3d9_mesh_get_texture(void* key, int32_t submesh);
@@ -609,6 +624,8 @@ int32_t render_d3d9_mesh_get_bone_id(void* key, const char* alias);
 void render_d3d9_mesh_set_bone_local(void* key, int32_t bone_id, float px,
                                      float py, float pz, float yaw, float pitch,
                                      float roll);
+// The instance stops posing that bone (it follows bone00 again).
+void render_d3d9_mesh_erase_bone(void* key, int32_t bone_id);
 void render_d3d9_mesh_get_transform(void* key, float* px, float* py, float* pz,
                                     float* yaw, float* pitch, float* roll,
                                     float* sx, float* sy, float* sz);

@@ -384,6 +384,7 @@ int32_t java_util_resource_SfxRef_nplay(InvObject* self, InvObject* pos, float r
 void java_util_resource_SfxRef_stop(InvObject* self, int32_t instance);
 float java_game_parts_bodypart_Chassis_getMaxSteer(InvObject* self);
 void java_game_parts_bodypart_Chassis_setMaxSteer(InvObject* self, float val);
+float java_lang_Math_pow(float a, float b);
 int32_t java_util_Steam_initAPI();
 void java_util_Steam_neutralize();
 InvObject* java_util_Steam_getPackage(int32_t id);

@@ -56,6 +56,9 @@ void java_game_parts_bodypart_Chassis_setAckermann(InvObject* self, float a) {
   // live — no invent private clone on miss (PE silent ret without hop).
   // forceUpdate syncs TREE→hdr when blob appears later.
   if (!self) return;
+  // PE 940 0x4B47B0: header+0xA30 of the car object too (the Ackermann
+  // length FUN_004aa830 steers the front wheels with).
+  native_car_set_ackermann(self, a);
   tree_field_set_float(self, "ackermann", a);
   uint8_t* hdr = chassis_hdr_ptr(self);
   if (!hdr) {
@@ -82,6 +85,12 @@ float java_game_parts_bodypart_Chassis_getMass(InvObject* self) {
   // race123 PARTIAL: TREE mass; no inv_mass fdiv via +0x13BC.
   // race125 PARTIAL — kg TREE; contrast forceUpdate phys mass*8000 (+0x1E58).
   if (!self) return 0.f;
+  {
+    // PE 940 0x4B2B90: 1 / inverse mass of the chassis compound (car+0x13EC)
+    // of the car object.
+    float kg = 0.f;
+    if (native_car_mass(self, &kg)) return kg;
+  }
   float m = tree_field_get_float(self, "mass");
   if (m <= 0.f) m = tree_field_get_float(self, "chassis_mass");
   return m > 0.f ? m : 1200.f;
@@ -646,6 +655,10 @@ void java_game_parts_bodypart_Chassis_forceUpdate(InvObject* self) {
   // PE apply prologue: phys[+0x70] &= ~0x800000.
   const int32_t flags70 = tree_field_get_int(self, "force_update_flags70");
   tree_field_set_int(self, "force_update_flags70", flags70 & ~0x800000);
+  // PE 940 FUN_004aebf0, first line: the same flag of the car object (the
+  // `updatevariables` command sets it). True when the chassis has one
+  // (script boot).
+  const bool has_car = native_car_force_update_begin(self);
   // +0x1FBC cache: when hdr still aliases shared template (this+0x2E48),
   // Chassis_forceUpdate_cloneHdr malloc(3100) → private blob.
   int32_t hdr_tok = tree_field_get_int(self, "force_update_hdr");
@@ -663,8 +676,12 @@ void java_game_parts_bodypart_Chassis_forceUpdate(InvObject* self) {
   chassis_cam_slot_fill_from_hdr_inner(self);
   // PE apply: body only when suspend_update==0 (Chassis.load sets 1 then 0
   // before forceUpdate). Host clears flag after gate check.
+  // PE 940 FUN_004aebf0 only reads the field (FUN_004ece80). Fork (legacy
+  // path): the host cleared it; with a car object it stays what the script
+  // set, so a forceUpdate inside the bracket of Chassis.load or of the
+  // Vehicle constructor (suspend_update = 1 ... = 0) cannot open it.
   const int32_t suspend = tree_field_get_int(self, "suspend_update");
-  tree_field_set_int(self, "suspend_update", 0);
+  if (!has_car) tree_field_set_int(self, "suspend_update", 0);
   const int32_t n = tree_field_get_int(self, "force_update_count");
   tree_field_set_int(self, "force_update_count", n + 1);
   const int32_t nw = java_game_parts_bodypart_Chassis_getWheels(self);
@@ -678,7 +695,15 @@ void java_game_parts_bodypart_Chassis_forceUpdate(InvObject* self) {
     // clamp C_drag >= 0. Native only needs coeffs on hdr — script does the
     // rest when TREE runs; host soft-mirrors so forceUpdate still seeds
     // hdr+0x908 when Java path is partial.
-    {
+    // PE 940 FUN_004aebf0: FUN_0047dd50(node, "updatevariables", ..) right
+    // after the tyre numbers were copied into every wheel. With a car
+    // object the script instance's method runs (Chassis.updatevariables:
+    // drag, the wheels, and the updatevariables of brake, rim, tyre,
+    // spring, shock and suspension of every wheel, which write the wheel
+    // and slot records of the car object) in place of the mirror below.
+    if (has_car) {
+      native_car_updatevariables(self);
+    } else {
       // Java always assigns (field default fully_stripped_drag=0.333).
       float cd = tree_field_get_float(self, "fully_stripped_drag");
       tree_field_set_float(self, "C_drag", cd);
@@ -1176,14 +1201,21 @@ void java_game_parts_bodypart_Chassis_setNitroSFX(InvObject* self, InvObject* sf
 // Fork: the host does not load the chassis CFG. Until a value is set the
 // getter returns 0.7, the initialiser of the script field Chassis.max_steer,
 // so that field keeps the value it had before these natives were bound.
+// With a car object (script boot) the value is the car's: the cfg
+// `maxsteer` number until a script sets another.
 float java_game_parts_bodypart_Chassis_getMaxSteer(InvObject* self) {
   if (!self) return 0.f;
+  {
+    float v = 0.f;
+    if (native_car_max_steer(self, &v)) return v;
+  }
   if (!tree_field_get_int(self, "phys_maxsteer_set")) return 0.7f;
   return tree_field_get_float(self, "phys_maxsteer");
 }
 
 void java_game_parts_bodypart_Chassis_setMaxSteer(InvObject* self, float val) {
   if (!self) return;
+  native_car_set_max_steer(self, val);
   tree_field_set_float(self, "phys_maxsteer", val);
   tree_field_set_int(self, "phys_maxsteer_set", 1);
 }
@@ -1271,7 +1303,12 @@ int32_t java_game_parts_bodypart_Chassis_getWheels(InvObject* self) {
   // Host +0x1F40 stand-in: TREE `wheels` (Chassis.java seeds 4) mirrored
   // to phys_wheel_count. PE miss / unset → 0 (no invent default-4).
   if (!self) return 0;
-  const int32_t field = tree_field_get_int(self, "wheels");
+  // PE 940 0x4B4280: type+0x1FB4, the wheels of the cfg of the car object;
+  // without one the script field as before.
+  int32_t car_wheels = 0;
+  const bool has_car = native_car_wheel_count(self, &car_wheels);
+  const int32_t field =
+      has_car ? car_wheels : tree_field_get_int(self, "wheels");
   if (field > 0) {
     tree_field_set_int(self, "phys_wheel_count", field);
     ChassisCamTablesState& cam = chassis_cam_tables_ref(self);
@@ -1279,6 +1316,7 @@ int32_t java_game_parts_bodypart_Chassis_getWheels(InvObject* self) {
     cam.gear_digit_cap = field;
     return field;
   }
+  if (has_car) return 0;
   const int32_t phys = tree_field_get_int(self, "phys_wheel_count");
   if (phys > 0) return phys;
   return 0;

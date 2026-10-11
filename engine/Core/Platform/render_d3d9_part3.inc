@@ -258,6 +258,7 @@ void render_d3d9_debug_dump(FILE* out) {
   }
   native_camera_debug_dump(out);  // one line per native camera
   native_part_debug_dump(out);    // the native parts that are drawn
+  render_d3d9_bone_debug_dump(out);
   render_d3d9_scene_light_debug_dump(out);
   render_d3d9_ground_debug_dump(out);  // one line per ground mesh
   // Fork: the object sections of the last flushed frame that went through
@@ -1784,6 +1785,20 @@ bool parse_scx_v4(const uint8_t* data, size_t size, MeshState& out) {
   if (ver != 4 || nchunk == 0 || nchunk > 4096) return false;
   if (16ull + static_cast<uint64_t>(nchunk) * 8ull > size) return false;
 
+  // PE 940 FUN_00452960: the file is the count at +8, that many {chunk
+  // type, offset} pairs from +12, and then the chunks {type, size, ..} one
+  // after the other: 0 a material, which opens a group; 1 / 2 / 3 a
+  // section of that group (rigid / two bones {dword, boneA, boneB} / a
+  // bone list {dword, n, bone[n]}); 4 the vertices and 5 the indices of
+  // the section before them.
+  // Fork: the legacy path keeps its old reading of the directory: the
+  // offset of chunk i with the type of chunk i + 1 (the dword at 20 + 8i).
+  // With it a material is "the chunk before a rigid section", the vertex
+  // chunk "the one before type 5" and the index chunk "the one before type
+  // 0", which finds every rigid mesh and refuses a mesh with a type-2 or
+  // type-3 section (spring.scx, shock_absorber.scx, FR_strut.scx). The
+  // Build 940 boot reads the pairs as they are.
+  const bool boot940 = render_boot940();
   struct Chunk {
     uint32_t off;
     uint32_t typ;
@@ -1791,7 +1806,8 @@ bool parse_scx_v4(const uint8_t* data, size_t size, MeshState& out) {
   std::vector<Chunk> chunks(nchunk);
   for (uint32_t i = 0; i < nchunk; ++i) {
     if (!read_u32(data, size, 16 + i * 8, &chunks[i].off) ||
-        !read_u32(data, size, 16 + i * 8 + 4, &chunks[i].typ))
+        !read_u32(data, size, boot940 ? 12 + i * 8 : 16 + i * 8 + 4,
+                  &chunks[i].typ))
       return false;
     if (chunks[i].off >= size) return false;
   }
@@ -1801,20 +1817,61 @@ bool parse_scx_v4(const uint8_t* data, size_t size, MeshState& out) {
     return static_cast<uint32_t>(size);
   };
 
+  // The sections: the material chunk, the section chunk (-1 on the legacy
+  // path), the vertex and the index chunk of each.
+  struct Sect {
+    uint32_t mat;
+    int sec;
+    int v;
+    int x;
+  };
+  std::vector<Sect> sects;
+  if (boot940) {
+    int cur_mat = -1;
+    Sect pend{0, -1, -1, -1};
+    bool open = false;
+    for (uint32_t j = 0; j < nchunk; ++j) {
+      const uint32_t ty = chunks[j].typ;
+      if (ty == 0) {
+        cur_mat = static_cast<int>(j);
+        open = false;
+      } else if (ty >= 1 && ty <= 3) {
+        open = cur_mat >= 0;
+        pend = Sect{static_cast<uint32_t>(cur_mat < 0 ? 0 : cur_mat),
+                    static_cast<int>(j), -1, -1};
+      } else if (open && ty == 4 && pend.v < 0) {
+        pend.v = static_cast<int>(j);
+      } else if (open && ty == 5 && pend.x < 0) {
+        pend.x = static_cast<int>(j);
+      }
+      if (open && pend.v >= 0 && pend.x >= 0) {
+        sects.push_back(pend);
+        open = false;
+      }
+    }
+  } else {
+    for (uint32_t i = 0; i < nchunk; ++i) {
+      if (chunks[i].typ != 1) continue;
+      // Find verts(5) and indices(0) after this material.
+      int v_i = -1;
+      int x_i = -1;
+      for (uint32_t j = i + 1; j < nchunk; ++j) {
+        if (chunks[j].typ == 1) break;
+        if (chunks[j].typ == 5 && v_i < 0) v_i = static_cast<int>(j);
+        if (chunks[j].typ == 0 && x_i < 0) x_i = static_cast<int>(j);
+      }
+      if (v_i < 0 || x_i < 0) continue;
+      sects.push_back(Sect{i, -1, v_i, x_i});
+    }
+  }
+
   out.subs.clear();
   bool bounds_init = false;
 
-  for (uint32_t i = 0; i < nchunk; ++i) {
-    if (chunks[i].typ != 1) continue;
-    // Find verts(5) and indices(0) after this material.
-    int v_i = -1;
-    int x_i = -1;
-    for (uint32_t j = i + 1; j < nchunk; ++j) {
-      if (chunks[j].typ == 1) break;
-      if (chunks[j].typ == 5 && v_i < 0) v_i = static_cast<int>(j);
-      if (chunks[j].typ == 0 && x_i < 0) x_i = static_cast<int>(j);
-    }
-    if (v_i < 0 || x_i < 0) continue;
+  for (const Sect& sc : sects) {
+    const uint32_t i = sc.mat;
+    const int v_i = sc.v;
+    const int x_i = sc.x;
 
     const uint32_t voff = chunks[v_i].off;
     const uint32_t vend = chunk_end(static_cast<uint32_t>(v_i));
@@ -1866,6 +1923,7 @@ bool parse_scx_v4(const uint8_t* data, size_t size, MeshState& out) {
     int pos_off = 0;
     int nrm_off = stride >= 24 ? 12 : -1;  // legacy layout guess
     int uv_off = stride >= 32 ? 24 : -1;
+    int weight_off = -1;  // the first blend weight (flags 0x4 / 0x8 / 0x10)
     // Only when the flag walk matches the stride: the two colours and the
     // start of the uv area. FUN_00454940 addresses a uv set by channel:
     // local_60[k] = the summed size of the sets below k that the block has
@@ -1879,6 +1937,7 @@ bool parse_scx_v4(const uint8_t* data, size_t size, MeshState& out) {
       uint32_t o = 0;
       int f_pos = -1, f_nrm = -1, f_uv = -1, f_cola = -1, f_colb = -1;
       if (vflags & 0x001u) { f_pos = static_cast<int>(o); o += 12; }
+      const int f_weight = (vflags & 0x01cu) ? static_cast<int>(o) : -1;
       if (vflags & 0x004u) o += 4;
       else if (vflags & 0x008u) o += 8;
       else if (vflags & 0x010u) o += 12;
@@ -1906,6 +1965,7 @@ bool parse_scx_v4(const uint8_t* data, size_t size, MeshState& out) {
         colb_off = f_colb;
         uvbase_off = f_uvbase;
         uv_sets = nsets;
+        weight_off = f_weight;
       }
     }
     const uint64_t need =
@@ -1932,6 +1992,35 @@ bool parse_scx_v4(const uint8_t* data, size_t size, MeshState& out) {
     scx_v4_material(data, size, chunks[i].off, chunk_end(i), &sm);
     sm.verts.resize(vcount);
     const uint8_t* vsrc = data + voff + 16;
+    if (sc.sec >= 0) {
+      // The section chunk (FUN_00452960 cases 1 to 3): section vt+0x3C adds
+      // a bone index, vt+0x40 sets the bone mode.
+      const uint32_t soff = chunks[static_cast<size_t>(sc.sec)].off;
+      const uint32_t send = chunk_end(static_cast<uint32_t>(sc.sec));
+      const uint32_t sty = chunks[static_cast<size_t>(sc.sec)].typ;
+      uint32_t a = 0, b = 0;
+      if (sty == 2 && soff + 20 <= send && read_u32(data, size, soff + 12, &a) &&
+          read_u32(data, size, soff + 16, &b)) {
+        sm.bone_mode = 1;
+        sm.bone_idx.push_back(static_cast<int32_t>(a));
+        sm.bone_idx.push_back(static_cast<int32_t>(b));
+      } else if (sty == 3 && soff + 16 <= send &&
+                 read_u32(data, size, soff + 12, &a)) {
+        sm.bone_mode = -1;
+        for (uint32_t k = 0; k < a && k < 256; ++k) {
+          if (soff + 20 + k * 4 > send ||
+              !read_u32(data, size, soff + 16 + k * 4, &b))
+            break;
+          sm.bone_idx.push_back(static_cast<int32_t>(b));
+        }
+      }
+      if (sm.bone_mode != 0 && walk_ok && weight_off >= 0) {
+        sm.weights.resize(vcount);
+        for (uint32_t vi = 0; vi < vcount; ++vi)
+          std::memcpy(&sm.weights[vi],
+                      vsrc + static_cast<size_t>(vi) * stride + weight_off, 4);
+      }
+    }
     for (uint32_t vi = 0; vi < vcount; ++vi) {
       MeshVertex& v = sm.verts[vi];
       const uint8_t* p = vsrc + static_cast<size_t>(vi) * stride;

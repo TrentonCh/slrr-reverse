@@ -386,6 +386,7 @@ const NativeEntry kNativeTable[] = {
   {"java.util.resource.SfxRef", "stop", "void stop(int instance)", false, reinterpret_cast<void*>(&java_util_resource_SfxRef_stop)},
   {"java.game.parts.bodypart.Chassis", "getMaxSteer", "float getMaxSteer()", false, reinterpret_cast<void*>(&java_game_parts_bodypart_Chassis_getMaxSteer)},
   {"java.game.parts.bodypart.Chassis", "setMaxSteer", "void setMaxSteer(float val)", false, reinterpret_cast<void*>(&java_game_parts_bodypart_Chassis_setMaxSteer)},
+  {"java.lang.Math", "pow", "float pow(float a, float b)", true, reinterpret_cast<void*>(&java_lang_Math_pow)},
   {"java.util.Steam", "initAPI", "int initAPI()", true, reinterpret_cast<void*>(&java_util_Steam_initAPI)},
   {"java.util.Steam", "neutralize", "void neutralize()", true, reinterpret_cast<void*>(&java_util_Steam_neutralize)},
   {"java.util.Steam", "getPackage", "String getPackage(int id)", true, reinterpret_cast<void*>(&java_util_Steam_getPackage)},

@@ -217,6 +217,12 @@ int32_t java_game_parts_Part_getMesh(InvObject* self) {
   // sub_5447D0(0x20000000); success dword [block+0x94] (148).
   // race124 deepen: mesh @ +0x94 vs texture +0x84 / renderType +0xA4.
   // race125 deepen: same dual-hop family; TREE part_mesh unchanged.
+  {
+    // PE 940 0x4CC8A0: part+0x94, the id of the mesh handle of the game
+    // object.
+    int32_t id = 0;
+    if (self && native_part_mesh(self, &id)) return id;
+  }
   return self ? tree_field_get_int(self, "part_mesh") : 0;
 }
 
@@ -281,6 +287,8 @@ int32_t java_game_parts_Part_setMesh(InvObject* self, int32_t ID) {
   // PE @ 0x00469D90 size 0x13f (319). Unbox this+I; dual walk; Bind type=5;
   // ALWAYS eax=1. Host TREE part_mesh (Bind/rebind OOS).
   if (!self) return 1;
+  // PE 940 0x4CD840 -> FUN_004c72d0 on the game object.
+  if (native_part_set_mesh(self, ID)) return 1;
   if (native_ptr_get(self) && !part_soft_phys_mid(self, /*dual=*/true))
     return 1;
   tree_field_set_int(self, "part_mesh", ID);
@@ -311,6 +319,12 @@ int32_t java_game_parts_Part_getRenderType(InvObject* self) {
   // sub_5447D0(0x20000000); success dword [block+0xA4] (164).
   // race124 deepen: +0xA4 (164); TREE part_render_type.
   // race125 deepen: same dual-hop; no phys host — TREE stand-in.
+  {
+    // PE 940 0x4CC9A0: part+0xA4, the id of the main render type handle of
+    // the game object.
+    int32_t id = 0;
+    if (self && native_part_render_type(self, &id)) return id;
+  }
   return self ? tree_field_get_int(self, "part_render_type") : 0;
 }
 
@@ -324,6 +338,8 @@ int32_t java_game_parts_Part_setRenderType(InvObject* self, int32_t ID) {
   // PE @ 0x00469FA0 size 0x13f (319). Unbox this+I; dual walk; Bind type=14;
   // ALWAYS eax=1. Host TREE part_render_type (Bind/rebind OOS).
   if (!self) return 1;
+  // PE 940 0x4CD9E0 -> FUN_004c7470 on the game object.
+  if (native_part_set_render_type(self, ID)) return 1;
   if (native_ptr_get(self) && !part_soft_phys_mid(self, /*dual=*/true))
     return 1;
   tree_field_set_int(self, "part_render_type", ID);
@@ -575,6 +591,13 @@ int32_t java_game_parts_Part_flap(InvObject* self, int32_t mode) {
 int32_t java_game_parts_Part_getCar(InvObject* self) {
   // PE @ 0x004690A0 size 0x7c. Phys walk → [*(payload+0x4C)+0xC8].
   if (!self) return 0;
+  {
+    // PE 940 0x4CC640: the id of the car handle of the game object
+    // (part+0xC8). Part.addPart builds root and target of its `install`
+    // from it, so with the car's id every part node hangs under the car.
+    int32_t car_id = 0;
+    if (native_part_car(self, &car_id, nullptr)) return car_id;
+  }
   InvObject* root = part_car_root(self);
   return root ? java_util_resource_ResourceRef_id(root) : 0;
 }
@@ -596,6 +619,11 @@ int32_t java_game_parts_Part_getCar(InvObject* self) {
 int32_t java_game_parts_Part_getWheelID(InvObject* self) {
   // PE @ 0x004691F0 size 0x96. Phys → [*(payload+0x4C)+0xD0]; (slot-101)%10.
   if (!self) return -1;
+  {
+    // PE 940 0x4CD2E0: from part+0xD0 of the game object.
+    int32_t id = -1;
+    if (native_part_wheel_id(self, &id)) return id;
+  }
   return part_wheel_id(self);
 }
 
@@ -614,6 +642,8 @@ void java_game_parts_Part_disableSlot(InvObject* self, int32_t slotID,
   // Fail / miss → silent ret 0. NO Mighty.
   // W35-09 soft: Native.ptr live + dual getPayload fail → silent (PE).
   // Phys flags+0x78 / mate PrepareLod still OOS. Host TREE otherwise.
+  // PE 940 0x4CE4A0: the slot record of the game object and its mate.
+  if (self && native_part_disable_slot(self, slotID, status)) return;
   if (self && native_ptr_get(self) && !part_soft_phys_mid(self, /*dual=*/true))
     return;
   part_disable_slot(self, slotID, status);
@@ -642,6 +672,12 @@ InvObject* java_game_parts_Part_getSlotDamage(InvObject* self,
                                               int32_t slotIndex) {
   // PE @ 0x00468AB0 size 0x193. Dual phys walk; flags&0x20 → sprintf 6f CSV;
   // ALWAYS String_from_cstr (empty on miss). Host g_slot_dmg CSV.
+  {
+    // PE 940 0x4CCD10: the pose text of a slot record with flag 0x20.
+    char text[256];
+    if (self && native_part_slot_damage(self, slotIndex, text, sizeof(text)))
+      return string_new(text);
+  }
   if (!self || slotIndex < 0) return string_new("");
   if (slotIndex >= part_slot_count(self)) return string_new("");
   auto it = g_slot_dmg.find(self);
@@ -670,6 +706,11 @@ InvObject* java_game_parts_Part_getSlotDamage(InvObject* self,
 void java_game_parts_Part_setSlotDamage(InvObject* self, int32_t slotIndex,
                                         InvObject* data) {
   // PE @ 0x00468C50 size 0x193. Phys flags walk; len>1 → 6-float blob.
+  // PE 940 0x4CDC30: the pose of the slot record of the game object.
+  if (self &&
+      native_part_set_slot_damage(self, slotIndex,
+                                  data ? string_cstr(data) : ""))
+    return;
   if (!self || slotIndex < 0) return;
   if (slotIndex >= part_slot_count(self)) return;
 
@@ -697,6 +738,17 @@ void java_game_parts_Part_setSlotPos(InvObject* self, int32_t slotID, InvObject*
   // may sub_473230/sub_470E20 rebuild. Always ret 1 (eax discarded VOID).
   // Host TREE: part_set_slot_pos + WheelRef sync slots 101..104.
   // GAPS: sub_419860 / phys flags / Mat3x4_mulLeft not mirrored.
+  {
+    // PE 940 0x4CDDC0: the slot record of the game object; the part on the
+    // slot is put on it again.
+    float p[3] = {0.f, 0.f, 0.f};
+    float y[3] = {0.f, 0.f, 0.f};
+    if (pos) vec3_get(pos, &p[0], &p[1], &p[2]);
+    if (ypr) ypr_get(ypr, &y[0], &y[1], &y[2]);
+    if (self && native_part_set_slot_pos(self, slotID, pos ? p : nullptr,
+                                         ypr ? y : nullptr))
+      return;
+  }
   part_set_slot_pos(self, slotID, pos, ypr);
   // Phase 2.65: chassis wheel slots keep WheelRef state in sync.
   if (slotID >= 101 && slotID <= 104) {
@@ -732,6 +784,11 @@ void java_game_parts_Part_setSlotPos(InvObject* self, int32_t slotID, InvObject*
 int32_t java_game_parts_Part_getSlots(InvObject* self) {
   // PE @ 0x004684A0 size 0xc4. Phys → [*(*(obj+0xC)+0x1150)]; fail ebx=0.
   if (!self) return 0;
+  {
+    // PE 940 0x4CCED0: type+0x1160, the number of `slot` lines of the cfg.
+    int32_t count = 0;
+    if (native_part_slot_count(self, &count)) return count;
+  }
   return part_slot_count(self);
 }
 
@@ -756,6 +813,17 @@ int32_t java_game_parts_Part_getSlots(InvObject* self) {
 int32_t java_game_parts_Part_getSlotID(InvObject* self, int32_t slotIndex) {
   // PE @ 0x00468570 size 0x164. Phys → [node+0x48]; fail ebp=0.
   if (!self) return 0;
+  if (slotIndex >= 0) {
+    // PE 940 0x4CCAA0, index >= 0: the id of that slot of the type, cfg
+    // order (FUN_004c7020). Part.load names the target slot of a loaded
+    // part with it.
+    int32_t id = 0;
+    if (native_part_slot_id(self, slotIndex, &id)) return id;
+  } else {
+    // Index below 0: the slot the part is installed through.
+    int32_t id = 0;
+    if (native_part_mount_slot(self, &id)) return id;
+  }
   if (slotIndex < 0) {
     // PE loc_468688: *[obj+0x115C] / flag&1 → mate slot ID on self.
     InvObject* parent = tree_field_get_obj(self, "part_parent");
@@ -788,6 +856,11 @@ int32_t java_game_parts_Part_getSlotID(InvObject* self, int32_t slotIndex) {
 int32_t java_game_parts_Part_getSlotIndex(InvObject* self, int32_t slotID) {
   // PE @ 0x004686E0 size 0x10B. Phys: [node+0x48]==slotID → index.
   if (!self) return 0;
+  {
+    // PE 940 0x4CCBF0: the place of the slot in the type's list.
+    int32_t index = 0;
+    if (native_part_slot_index(self, slotID, &index)) return index;
+  }
   const int32_t n = part_slot_count(self);
   for (int32_t i = 0; i < n; ++i) {
     if (part_slot_id_at(self, i) == slotID) return i;
@@ -806,6 +879,11 @@ int32_t java_game_parts_Part_getSlotIndex(InvObject* self, int32_t slotID) {
 
 int32_t java_game_parts_Part_isSlotDisabled(InvObject* self, int32_t slotID) {
   // PE @ 0x00469970 size 0x13C. ebx=0 fail; &0x50→2; else (>>4)&1.
+  {
+    // PE 940 0x4CE660: the flags of the slot record of the game object.
+    int32_t state = 0;
+    if (self && native_part_slot_disabled(self, slotID, &state)) return state;
+  }
   if (!self || slotID == 0) return 0;
   InvObject* slots = tree_field_get_obj(self, "part_slots");
   if (!slots) return 0;
@@ -891,6 +969,12 @@ int32_t java_game_parts_Part_setSfxLoopParams(InvObject* self, float a,
 InvObject* java_game_parts_Part_partOnSlot(InvObject* self, int32_t slotID) {
   // PE @ 0x004687F0 size 0x19F. Fail → null; -1 → self Part*; else child.
   if (!self) return nullptr;
+  {
+    // PE 940 0x4CD600: the script instance of the node the slot record of
+    // the game object is bound to.
+    InvObject* other = nullptr;
+    if (native_part_on_slot(self, slotID, &other)) return other;
+  }
   if (native_ptr_get(self) && !part_soft_phys_mid(self, /*dual=*/true))
     return nullptr;
   if (slotID == -1) return self;
@@ -906,6 +990,11 @@ InvObject* java_game_parts_Part_partOnSlot(InvObject* self, int32_t slotID) {
 // TREE part_slot_id_on_slot.
 int32_t java_game_parts_Part_slotIDOnSlot(InvObject* self, int32_t slotID) {
   // PE @ 0x00468990 size 0x11F. Phys → [flags+0x10]; fail 0.
+  {
+    // PE 940 0x4CE770: record+0x10 of the slot record of the game object.
+    int32_t other = 0;
+    if (self && native_part_slot_id_on_slot(self, slotID, &other)) return other;
+  }
   if (self && native_ptr_get(self) && !part_soft_phys_mid(self, /*dual=*/true))
     return 0;
   return part_slot_id_on_slot(self, slotID);
@@ -935,6 +1024,12 @@ InvObject* java_game_parts_Part_getCarRef(InvObject* self) {
   // race123/124 deepen: chassis @ block+0xCC; hop1 → [payload2+0x50];
   // hop0 flag 0xA0000000; TREE part_car_root.
   // race125 deepen: dual walk reconfirm; no phys host — part_car_root.
+  {
+    // PE 940 0x4CC550: the script instance (payload+0x50) of the node of
+    // the car handle part+0xCC.
+    InvObject* car = nullptr;
+    if (self && native_part_car(self, nullptr, &car)) return car;
+  }
   return part_car_root(self);
 }
 

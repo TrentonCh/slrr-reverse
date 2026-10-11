@@ -71,6 +71,28 @@ WheelRefState& WR_eff(InvObject* self) {
   return WR(self);
 }
 
+// PE 940: the native pointer of a WheelRef is the wheel record of its car
+// (Chassis.getWheel 0x4B4150). On the script boot that record is in the car
+// object of the chassis the WheelRef was made for (`chassis` and `wheel_id`
+// are the two fields Chassis.getWheel sets). False when the chassis has no
+// car object (the old build, the unit smoke): the side table is all there
+// is then.
+bool wheelref_car_set(InvObject* self, int32_t field, const float* v) {
+  if (!self) return false;
+  InvObject* ch = tree_field_get_obj(self, "chassis");
+  if (!ch) return false;
+  return native_car_wheel_set(ch, tree_field_get_int(self, "wheel_id"), field,
+                              v);
+}
+
+bool wheelref_car_get(InvObject* self, int32_t field, float* v) {
+  if (!self) return false;
+  InvObject* ch = tree_field_get_obj(self, "chassis");
+  if (!ch) return false;
+  return native_car_wheel_get(ch, tree_field_get_int(self, "wheel_id"), field,
+                              v);
+}
+
 WheelPhysExtra& extra_eff(InvObject* self) {
   static WheelPhysExtra orphan;
   if (!self) return orphan;
@@ -767,6 +789,12 @@ InvObject* java_game_parts_WheelRef_getPos(InvObject* self) {
   // WR.py(+0x7C)−slot_y (no +0x38/+0x3C); lock fail→zeros; has_pos-only /
   // attach fallback when no chassis (GAP).
   if (!self) return nullptr;
+  {
+    // PE 940 0x4B5B90 on the wheel record of the car object.
+    float v[3];
+    if (wheelref_car_get(self, kNativeWheelPos, v))
+      return vec3_new(v[0], v[1], v[2]);
+  }
 
   float x = 0.f, y = 0.f, z = 0.f;
   // PE veh=[handle+0x22C]; host TREE chassis (set by Chassis.getWheel).
@@ -808,6 +836,12 @@ InvObject* java_game_parts_WheelRef_getYpr(InvObject* self) {
   // @ 0x0054ECD0 into +0x90 then qmemcpy → +0x110 (0x30). race125
   // PARTIAL: WheelPhysExtra.mat90 stand-in (no raw wheel* +0x90 blob).
   if (!self) return nullptr;
+  {
+    // PE 940 0x4B5E40: the Ypr of w+0x90 of the car object's wheel record.
+    float v[3];
+    if (wheelref_car_get(self, kNativeWheelYpr, v))
+      return ypr_new(v[0], v[1], v[2]);
+  }
   auto& w = WR_eff(self);
   auto& e = extra_eff(self);
   float y = 0, p = 0, r = 0;
@@ -839,6 +873,11 @@ float java_game_parts_WheelRef_getSteer(InvObject* self) {
   // fld dword [handle+0xC8] (200) — primary store of setSteer @ 0x00440E90
   // (mov [handle+0xC8] @ 0x440EC0). NO fmul. NOT getDrive [+0xCC] /
   // getRadius [+0x60]. Host WR.steer; !self = handle 0. race117 SKIP 1:1.
+  {
+    // PE 940 0x4B5E00: w+0xC8 of the car object's wheel record.
+    float v = 0.f;
+    if (wheelref_car_get(self, kNativeWheelSteer, &v)) return v;
+  }
   return self ? WR_eff(self).steer : 0.f;
 }
 
@@ -853,6 +892,11 @@ float java_game_parts_WheelRef_getRadius(InvObject* self) {
   // Natives_Register_Partial @ 0x00442B69. Callees: JVM_UnboxArg,
   // JVM_vm_get_int_field. Host WR.radius; !self = handle 0. race125
   // deepen_partial SKIP — primary [+0x60] already 1:1 (ctor 0.32f gap only).
+  {
+    // PE 940 0x4B5DC0: w+0x60 of the car object's wheel record.
+    float v = 0.f;
+    if (wheelref_car_get(self, kNativeWheelRadius, &v)) return v;
+  }
   return self ? WR_eff(self).radius : 0.f;
 }
 
@@ -871,6 +915,14 @@ void java_game_parts_WheelRef_setPos(InvObject* self, InvObject* val) {
   //   dword triple); has_pos; slot 101+wid sync (not in PE). Gaps:
   //   table-base add, lock/sub_419860, +0x27C.. deltas, sub_48AEA0,
   //   sub_492030; null Vector3 still writes table base (host early-out).
+  if (self) {
+    // PE 940 0x4B6AF0: the mount of the car object's wheel record (a null
+    // vector puts it back on its cfg place). The legacy stand-in below (a
+    // slot of the TREE tables) is for a chassis without car object.
+    float v[3] = {0.f, 0.f, 0.f};
+    if (val) vec3_get(val, &v[0], &v[1], &v[2]);
+    if (wheelref_car_set(self, kNativeWheelPos, val ? v : nullptr)) return;
+  }
   if (!self || !val) return;
   auto& w = WR_eff(self);
   vec3_get(val, &w.px, &w.py, &w.pz);
@@ -899,6 +951,14 @@ void java_game_parts_WheelRef_setYpr(InvObject* self, InvObject* val) {
   //   +0x1F50. Then ALWAYS qmemcpy [handle+0x110] ← [handle+0x90]
   //   size 0x30. race125 PARTIAL: mat90/mat110 stand-in; null Ypr
   //   table path (+0x1F50 via GameRef channel) still OOS.
+  if (self) {
+    // PE 940 0x4B70E0: w+0x90 of the car object's wheel record (a null Ypr
+    // takes the one of the cfg `wheel` line). The legacy stand-in below is
+    // for a chassis without car object.
+    float v[3] = {0.f, 0.f, 0.f};
+    if (val) ypr_get(val, &v[0], &v[1], &v[2]);
+    if (wheelref_car_set(self, kNativeWheelYpr, val ? v : nullptr)) return;
+  }
   if (!self || !val) return;
   auto& w = WR_eff(self);
   auto& e = extra_eff(self);
@@ -938,6 +998,8 @@ void java_game_parts_WheelRef_setSteer(InvObject* self, float val) {
   // bits @ 0x440EC0; no fmul (unlike setWidth @ 0x004416C0 fmul 0.5 into
   // [handle+0x1D4]). getSteer @ 0x00440E50 flds same slot. NOT setDrive
   // [handle+0xCC]/[+0xE0]. Host WR.steer = val (PE dword). !self = handle 0.
+  // PE 940 0x4B7010: also the wheel record of the car object.
+  wheelref_car_set(self, kNativeWheelSteer, &val);
   if (self) WR_eff(self).steer = val;
 }
 
@@ -950,6 +1012,8 @@ void java_game_parts_WheelRef_setRadius(InvObject* self, float val) {
   // Also fstp [handle+0x5C]=val+[handle+0x50] then thiscall sub_491F80
   // ([handle+0x30], ...) — not hosted. Java metres (Tyre mm→m). Host
   // WR.radius = val (PE dword). !self = handle 0.
+  // PE 940 0x4B6E50: also the wheel record of the car object.
+  wheelref_car_set(self, kNativeWheelRadius, &val);
   if (self) WR_eff(self).radius = val;
 }
 
@@ -1169,6 +1233,8 @@ void java_game_parts_WheelRef_setForce(InvObject* self, float val) {
   // thiscall sub_491F80 (not hosted; shared setRadius/setDamping/set*Len).
   // No derived handle store (unlike setRestLen [+0x5C]). Host WR.force.
   // !self = handle 0.
+  // PE 940 0x4B6380: also the wheel record of the car object.
+  wheelref_car_set(self, kNativeWheelForce, &val);
   if (self) WR_eff(self).force = val;
 }
 
@@ -1179,6 +1245,12 @@ void java_game_parts_WheelRef_setDamping(InvObject* self, float val) {
   // val*flt_5F0B0C (bytes 33 33 33 3F ≈0.7); thiscall sub_491F80 (not
   // hosted). W35-10: wheel_apply_damping_f.
   if (!self) return;
+  {
+    // PE 940 0x4B6280: w+0x48 = val, w+0x4C = val x DAT_0059383c (0.7) of
+    // the car object's wheel record too.
+    const float both[2] = {val, val * 0.7f};
+    wheelref_car_set(self, kNativeWheelDamping, both);
+  }
   wheel_apply_damping_f(WR_eff(self), val);
 }
 
@@ -1191,6 +1263,11 @@ void java_game_parts_WheelRef_setDamping_1(InvObject* self, float bound,
   // W35-10: wheel_apply_damping_ff declared Soft PE but body still local
   // (world_state.cpp OOS this ticket — no *0.7 path).
   if (!self) return;
+  {
+    // PE 940 0x4B61D0: also the wheel record of the car object.
+    const float both[2] = {bound, rebound};
+    wheelref_car_set(self, kNativeWheelDamping, both);
+  }
   auto& w = WR_eff(self);
   w.damp_bound = bound;
   w.damp_rebound = rebound;
@@ -1202,6 +1279,8 @@ void java_game_parts_WheelRef_setRestLen(InvObject* self, float val) {
   // silent ret. NO Mighty. Else [handle+0x50]=val (restLen); [+0x5C]=
   // [+0x60]+val (radius+restLen); thiscall sub_491F80 (not hosted).
   // W35-10: wheel_apply_rest_len Soft stores +0x5C (=radius+val).
+  // PE 940 0x4B6EF0: also the wheel record of the car object.
+  wheelref_car_set(self, kNativeWheelRestLen, &val);
   if (self) wheel_apply_rest_len(WR_eff(self), val);
 }
 
@@ -1210,6 +1289,8 @@ void java_game_parts_WheelRef_setMinLen(InvObject* self, float val) {
   // Else [handle+0x58]=val; thiscall sub_491F80 (not hosted). No derived
   // write (unlike setRestLen [+0x5C]). Twin of setMaxLen [+0x54].
   // race125 filler SKIP 1:1.
+  // PE 940 0x4B6990: also the wheel record of the car object.
+  wheelref_car_set(self, kNativeWheelMinLen, &val);
   if (self) WR_eff(self).min_len = val;
 }
 
@@ -1218,6 +1299,8 @@ void java_game_parts_WheelRef_setMaxLen(InvObject* self, float val) {
   // Else [handle+0x54]=val; thiscall sub_491F80 (not hosted). Twin of
   // setMinLen [+0x58]; no derived write (unlike setRestLen [+0x5C]).
   // race125 filler SKIP 1:1.
+  // PE 940 0x4B68B0: also the wheel record of the car object.
+  wheelref_car_set(self, kNativeWheelMaxLen, &val);
   if (self) WR_eff(self).max_len = val;
 }
 
@@ -1311,6 +1394,11 @@ void java_game_parts_WheelRef_setOppWheel(InvObject* self, int32_t id) {
   // (unbounded arithmetic like PE); id∈[0,8) also touches slot so
   // +0x22C/base stay live. No raw *[veh+0x13E4] invent.
   if (!self) return;
+  {
+    // PE 940 0x4B6A30: also the wheel record of the car object.
+    const float n = static_cast<float>(id);
+    wheelref_car_set(self, kNativeWheelOpp, &n);
+  }
   WR_eff(self).opp_wheel = id;
   tree_field_set_int(self, "opp_wheel", id);
   WheelPhysExtra& me = extra_eff(self);
@@ -1367,6 +1455,11 @@ void java_game_parts_WheelRef_setArm(InvObject* self, float len, float px, float
   // Construction twin: allocCamBlob @ 0x44B2A8..0x44B2E0 copies tmpl →
   // wheel[+0x234/+0x238/+0x244] (no Phys_*). Soft: WR.arm + LEA sidemap.
   if (!self) return;
+  {
+    // PE 940 0x4B5F50: also the wheel record of the car object.
+    const float v[7] = {len, px, py, pz, nx, ny, nz};
+    wheelref_car_set(self, kNativeWheelArm, v);
+  }
   auto& w = WR_eff(self);
   w.arm[0] = len;
   const float nlen = std::sqrt(nx * nx + ny * ny + nz * nz);
@@ -1406,6 +1499,11 @@ void java_game_parts_WheelRef_setHub(InvObject* self, float len, float p1x, floa
   // hub[+0x254..] (after opp LEA). Soft: WR.hub + LEA sidemap; no
   // Phys_allocChildBody("hub") invent.
   if (!self) return;
+  {
+    // PE 940 0x4B65D0: also the wheel record of the car object.
+    const float v[10] = {len, p1x, p1y, p1z, p2x, p2y, p2z, pcx, pcy, pcz};
+    wheelref_car_set(self, kNativeWheelHub, v);
+  }
   auto& w = WR_eff(self);
   float pc_x = pcx + (w.has_pos ? w.px : 0.f);
   float pc_y = pcy + (w.has_pos ? w.py : 0.f);  // PE also −(+0x38++0x3C)

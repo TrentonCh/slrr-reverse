@@ -208,6 +208,8 @@ struct CamPassStats {
   int32_t prelit_transparent_mode3_sections = 0;
   // Passes whose camera saw a scene light (they do not use the stand-in).
   int32_t light_passes = 0;
+  // Sections drawn with two bone matrices (draw_two_bone_section).
+  int32_t two_bone_sections = 0;
 };
 CamPassStats g_cam_pass_stats;
 std::vector<std::string> g_cam_pass_log;
@@ -591,6 +593,25 @@ struct MeshSubmesh {
   // Ground mesh: index of the section's material in the material table
   // (the draw order of rg_ground). -1 for every other mesh.
   int32_t mat_index = -1;
+  // INVO v4 section chunk (PE 940 FUN_00452960; section+0x14 / +8 / +0xC):
+  // type 1 = rigid (mode 0), type 2 {dword, boneA, boneB} = two bones (mode
+  // 1), type 3 {dword, n, bone[n]} = a bone list (mode -1); and the first
+  // blend weight of every vertex (vertex format bit 0x4), empty without
+  // one. Read on the Build 940 boot only.
+  int32_t bone_mode = 0;
+  std::vector<int32_t> bone_idx;
+  std::vector<float> weights;
+};
+
+// PE 940 mesh bone (0xA4 bytes at mesh+0x120, count mesh+0x11C), read from
+// `<mesh>.bon` (render_d3d9_mesh_load_bones): +0x00 parent, +0x04 name,
+// +0x24 the 4x4 bind matrix with the position in its fourth row. Host: the
+// position is in file units, like the vertices.
+struct MeshBone {
+  std::string name;
+  int32_t parent = -1;
+  float bind[16] = {1.f, 0.f, 0.f, 0.f, 0.f, 1.f, 0.f, 0.f,
+                    0.f, 0.f, 1.f, 0.f, 0.f, 0.f, 0.f, 1.f};
 };
 
 // PE 940 render group a mesh's sections are drawn in when the group does not
@@ -621,6 +642,10 @@ struct MeshState {
   // FUN_00451130), one entry per header of the render object's `mesh`
   // file, without geometry. A section copies its material from here.
   std::vector<MeshSubmesh> materials;
+  // The skeleton of a mesh whose type record has `flags 8`; empty for
+  // every other mesh, which is then drawn rigid whatever its section
+  // chunks say (FUN_00465e40 / FUN_00469990: RI+0xD0 == 0).
+  std::vector<MeshBone> bones;
 };
 std::unordered_map<void*, MeshState> g_meshes;
 uint32_t g_mesh_seq = 0;
@@ -1731,6 +1756,13 @@ static bool render_boot940() {
   return on;
 }
 
+// Fragment 5: the detail a camera gives the nodes of its walk, and a
+// section with two bone matrices.
+static void camera_offer_detail(void* cam_key);
+static bool draw_two_bone_section(void* key, const MeshState& ms,
+                                  const MeshSubmesh& sm,
+                                  const D3DMATRIX& world);
+
 // rg_ground of a camera pass (render_d3d9_part4.inc): the sections of the
 // ground meshes the camera sees, drawn in material mode 3.
 struct GroundSec {
@@ -2210,6 +2242,10 @@ static void draw_camera_instances(const std::vector<void*>& members,
       g_dev->SetStreamSource(0, nullptr, 0, 0);
       g_dev->SetIndices(nullptr);
       g_dev->SetFVF(fvf_default);
+    } else if (sm->bone_mode == 1 && !ms.bones.empty() &&
+               draw_two_bone_section(sec.key, ms, *sm, world)) {
+      // FUN_00468cd0 / FUN_00444180: drawn with the matrices of its two
+      // bones (render_d3d9_part5.inc).
     } else {
       const UINT ntri = static_cast<UINT>(sm->indices.size() / 3);
       g_dev->DrawIndexedPrimitiveUP(
@@ -2440,6 +2476,16 @@ void draw_viewport_cameras() {
   }
   const std::vector<void*> saved_queue = g_mesh_queue;
   void* const saved_vp = g_active_vp;
+  // PE 940 FUN_0045e910 -> FUN_00461980: every camera gives the nodes of
+  // its walk a detail value, and the level of detail of a part or car
+  // follows the largest of the frame (FUN_0051a5f0).
+  // Host: all cameras first, then the levels, then the passes, so that an
+  // instance of the wrong level is neither loaded nor drawn. Build 940 boot
+  // only.
+  if (render_boot940()) {
+    for (const Pass& pc : passes) camera_offer_detail(pc.cam);
+    native_camera_detail_end(g_cam_pass_frame);
+  }
   for (const Pass& pc : passes) {
     void* cam_key = pc.cam;
     const CameraState& cam = g_cameras[cam_key];

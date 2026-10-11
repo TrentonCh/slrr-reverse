@@ -193,6 +193,17 @@ static float dyno_sample_table(int rpm_step, const std::vector<float>& table,
 //   stepCombustion @ 0x4B764F fdiv dt(+0x84)/T_loss — Soft NEVER reads Java
 //   "T_loss". Turbo: calcDyno @ 0x46ac82 mov [esi+0E4h],0; prepCycle @ 0x4B6E91
 //   gate mul(+0xDC)>0 && range(+0xE8)>0. Native.ptr / 0x1EC P-V walks OOS.
+// Fork: (M3 review, fix pass a) what this returns is NOT the exe's number.
+// PE 940 DynoData.calcDyno 0x4CBA80 runs the combustion cycle per RPM bin
+// (the fillTables / prepCycle / stepCombustion walk named above); the host
+// scales a sine curve by residuals of the same fields. From M3 step 2 on
+// the Part natives hand every engine part of a car to Part.fillDynoData,
+// so the fields are the scripts' (checked on the test car: cylinders, bore,
+// stroke, maxRPM, the charger, nitro and fuel rail numbers), and the
+// garage prints this stand-in's maxHP and the class it gives in its top
+// bar ("Vehicle class D (211HP)": Garage.refreshCarClassString,
+// CareerEvent.checkClass; the script sources name 518HP for that car).
+// Known wrong until the cycle is ported; not in M3.
 float java_game_parts_DynoData_calcDyno(InvObject* self, float tablesize) {
   if (!self) return 0.f;  // PE derefs Unbox this; host guard
 
