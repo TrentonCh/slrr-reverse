@@ -108,7 +108,19 @@ welcome dialog. Stock frames: `../slrr-ghidra/notes/reference_frames/`.
    Class_newInstance behaviour in the exe).
 6. Retire the C++ Soft boot shims; then physics / FFB behind the native
    contract (FORK.md).
-7. Source compiler as a standalone tool (ENGINE.md M3, parallel work).
+7. Source compiler (in progress 2026-10-11; everything is still outside the
+   repo in `../slrr-ghidra/compiler/`: `notes/compiler_spec.md` is the plan,
+   `lib/` the strict class-file tools, `spec/spike_compiler.py` the
+   prototype). Proven so far: all 3,454 sources tokenise and parse; the
+   declarations, the constant pool, statements and expressions are
+   reproduced from source; the prototype's output is byte-identical to
+   2,649 of the 2,651 comparable shipped class files and it compiles all
+   635 source-only classes. Being built: the clean reference package
+   `slrrc` (Python, milestones M1 to M5) and an offline class cache for
+   the 635. Then: the host class loader looks in the cache (no write into
+   the install), the C++ port linked into the engine, and two exe reads
+   (float literal conversion, pack-name spelling).
+   Original note: standalone tool (ENGINE.md M3, parallel work).
    Now needed by real saves: since the File natives work (see Done),
    LOAD CAREER builds the saved car, and a stock-written 2023 career in
    the install has a rim whose class exists only as source

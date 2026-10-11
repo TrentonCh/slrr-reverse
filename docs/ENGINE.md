@@ -201,6 +201,38 @@ car classes sit in the other 15 `scripts` directories under parts/ and 51 under 
 
 ### 4.3 The class format (TUFA)
 
+**Update, 2026-10-11 (compiler groundwork; tools and notes in `../slrr-ghidra/compiler/`).**
+A strict reader and writer now round-trips all 2,921 class files byte for byte, and a
+prototype compiler built from rules learned on the shipped pairs reproduces 2,649 of the
+2,651 comparable Build 940 class files byte for byte and compiles all 635 sources that
+have no class. Corrections to this section and to 4.2 and 4.4:
+
+- The u16 "slot" of a tree node is the SOURCE LINE NUMBER of the token the node was
+  reduced on, not a slot. It looked constant because field initialisers sit on one line.
+- The fifth word of a method row is the local slot count: `this` + parameters + the most
+  locals alive at once (0 for an empty tree).
+- The 12-byte header is itself a chunk (`TUFA`, size 4, payload = build number). Chunk
+  order is always `TUFA CONS [FILD] [MTHD] CLSS TREE`, no padding.
+- Jumps are signed node offsets relative to the jump node. An expression statement has no
+  "drop" node: its last node is written as `stmt` (0x1008) instead of `expr`.
+- The compiler does NOT emit pool entries in parse order. One interning table per class is
+  filled in five steps: seed (class, superclass, interfaces), type descriptors in the
+  order of the parser's reductions, member names in source order, a resolve pass over the
+  trees by row vector (class entries and member refs), and an emit pass in tree order
+  (string literals, unresolved names, pack names with rids).
+- A call ends in a pool method ref only when every argument is a literal, a local, a
+  simple-name field or `this` and the lookup finds a method; any other argument form
+  forces a call by bare name. The compiler knows types only for names and literals.
+- 15 pairs are stale (the source was edited after the class was compiled) and 2 more were
+  compiled against classes that have since changed, so 2,649 files is the reachable
+  byte-identical goal, not 2,663.
+- Two things come from outside the source and are still open: the float literal
+  conversion (four conversions occur in the shipped classes, one per file; about 19% of
+  float nodes are 1 or 2 ulp off the correctly rounded value) and the spelling of pack
+  names in rid entries (it comes from the resource system; a 126-entry table reproduces
+  all of them). Both need the exe's scanner and resource code to be read.
+- Flag 0x80 exists on 20 methods of `Vector` and `Signal` (name "synchronized" inferred).
+
 A `.class` is one or more concatenated blobs: a 12-byte header (`TUFA`, u32 4, u32 build
 number), then chunks of 4-byte tag + u32 size (`tufa.cpp:285-325`). The layouts hold for
 all 2,993 blobs of the install (strict walk with exact chunk consumption); the last
