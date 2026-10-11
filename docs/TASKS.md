@@ -15,49 +15,42 @@ Old-build regression (from `E:\NFS.SLRR Edition\NFS.SLRR Edition`):
 `timeout 150 slrr_engine.exe --game --no-wait` must print vehicleTypes=25,
 `hub EXIT ok=1` and exit 5. Delete `tree_rpk_scan_boot` after every run.
 
-## Next steps (ordered, 2026-10-09 late)
+## Next steps (ordered, 2026-10-10)
 
 Where it stands: the 940 scripts boot to the main menu, ENTER opens the
-sliding menu, NEW CAREER opens the name dialog, typing works, ENTER
-confirms and `GameLogic.actualState` becomes `java.game.Garage` (garage
-OSD drawn: lift, money, day, welcome dialog). Unattended check:
-`SLRR_PE_BOOT_KEYS="13:0x1C,16:0x1C,19:0x14,19.4:0x12,19.8:0x20,22:0x1C"`
-with `SLRR_PE_BOOT_SECONDS=40`.
+sliding menu, NEW CAREER opens the name dialog, typing works (scripted and
+real keyboard), ENTER confirms and `GameLogic.actualState` becomes
+`java.game.Garage`; ENTER closes the welcome dialog. Since 75569af the 2D
+layer (menu, dialogs, garage bars, all texts) is pixel identical to the
+stock frames at 1366x768; the 3D garage is not drawn yet. Unattended
+check: `SLRR_PE_BOOT_KEYS="13:0x1C,16:0x1C,19:0x14,19.4:0x12,19.8:0x20,22:0x1C"`
+with `SLRR_PE_BOOT_SECONDS=40` (add `,36:0x1C` and 48 s to close the
+welcome dialog), frame dump compared with
+`../slrr-ghidra/notes/reference_frames/stock_*.png`.
 
-1. UI pass (in progress 2026-10-10; keep the E: path green). The exe's
-   camera and text paths were decompiled (Build 940 addresses in
-   docs/ENGINE.md section 7) and they explain every visible defect:
-   - Field of view: the value passed to `Camera.create` is the FULL
-     vertical angle (Osd: 60 * 0.5 = 30 degrees, half angle 15;
-     `5.48 * tan(15) = 1.469 = Osd.SCALE_3D`). The host used it as the half
-     angle, so every Osd rectangle was drawn at 46% size.
-   - Handedness: the exe is right-handed (view = inverse camera world,
-     `D3DXMatrixPerspectiveFovRH`); the host's LH look-at down -Z mirrored
-     X. This is the "mirrored dialog".
-   - Texts are NOT 3D geometry. An `r_text` instance contributes only its
-     bone00 world (x, y) as an NDC anchor with y DOWN; the glyphs are
-     screen-space quads taken from the font mesh (vertex xy * 0.1 =
-     pixels, advance = vertex[c*4+1].x * 0.1, 1 texel per pixel, POINT
-     sampling). The legacy text pass drew y up (prompt and banner at the
-     top instead of the bottom) and spaced letters by quad width.
-   - Viewports are a bound list drawn in ascending priority (lowest
-     first, highest on top), several at once; `Osd.hide` = unbind + destroy the camera. The camera's tree
-     walk skips any subtree with `WORLDTREELEAF` (0x40), which is how
-     `Group.deactivate` hides things. Texts are part of that walk.
-   - `fade.SCX` is a font-layout mesh used as the charset of the Text "a"
-     (`Osd.darken`); `frontend:0x1A25` = mesh 0x1A4A + texture 0xA8.
-   - Instance colour (`RenderRef.setColor`) is used only by render types
-     whose `flags` have 0x80 with 0x200 or 0x400; Rectangles ignore it.
-     Blending comes from the mesh material flags: the Rectangle mesh is
-     "transparent", so rectangles blend by texture alpha, depth test on,
-     depth write off, drawn back to front after the opaque groups, texts
-     last. Each camera pass clears depth only.
-   - The fade curtain glyph is one large triangle with a negative advance;
-     ALIGN_CENTER is what puts it over the viewport.
-   Work: step 1 camera pass (bound list, RH view, fovy, hidden check),
-   step 2 texts (glyph table from the font mesh, NDC anchor, tree texts
-   only in their camera's pass). Legacy passes stay for parentless texts
-   and the old build.
+1. UI pass: done (75569af). What the exe does and what the host got wrong
+   is in ENGINE.md section 7 and docs/VM.md session 5. Left over, none
+   visible on the tested screens:
+   - instance colour modes (render type flags 0x80 + 0x200 / 0x400) are
+     plumbed but no tested screen shows a paint can;
+   - prelit meshes: the baked lighting is the second vertex colour
+     (D3DFVF_SPECULAR), combined per material pass; not ported;
+   - int/float to String conversion happens at call binding only, not at
+     stores into String fields and locals (the exe converts in every
+     assign; the host still uses Int 0 as null in places);
+   - `resolve_world` applies a parent's bone00 pose twice to a child
+     attached to bone 0 in the camera pass (no tested screen has a posed
+     parent);
+   - the script's own `Config.<init>/loadConfig` is not run; only
+     `video_x/video_y` are seeded from `save/game/options`;
+   - `System.buildNumber` now returns 940 on the script boot, so
+     `System.nextGen()` is true and scripts take their Build 900+
+     branches (credits, hall of fame, event list, track screens may call
+     natives the host lacks: `Sound.playTrack`, `getAIparam_float`,
+     `getMaterialIndex`, `errorVM`);
+   - texture addressing clamp per texture entry (thin seams between map
+     tiles on the old-build minimap), per-instance hide bit 22, the old
+     build's minimap pass has no reference frame.
 2. Garage scene (ENGINE.md M2 and the "Drawing the garage scene" row of its
    dependency map). The garage is a native `ground` instance
    (`map = new GroundRef(...)`, payload `gametype 0x00010035`) whose render
@@ -91,10 +84,15 @@ with `SLRR_PE_BOOT_SECONDS=40`.
    load when the class is missing or its time stamp differs from the
    source; 635 sources ship without a class (lights, doors, kits, some
    wheels and running gear; no chassis). Oracle: 2,819 shipped pairs.
-8. Window size from `save/game/options` (1366x768 on this machine; part
-   of the UI pass), then the frame-loop differences listed in ENGINE.md
-   section 3 (rate gates, four `input_tick` calls per iteration, the load
-   rate that never reaches the pump).
+8. Frame-loop differences listed in ENGINE.md section 3 (rate gates, four
+   `input_tick` calls per iteration, the load rate that never reaches
+   the pump). The window size from `save/game/options` is done (75569af).
+9. Loader quick wins (ENGINE.md section 12, "independent"): test native
+   flag 0x40 instead of "empty tree" (a longer garage run logs about 450
+   `no native binding` lines for empty script methods such as
+   `Part.addStockParts`, `Part.check4warnings`, `Osd.pressEffect`);
+   resolve dotted `script <class name>` payloads through the classpath;
+   add the ninth classpath entry (`java.net`).
 
 Ground truth for anything visual: the stock-game reference frames
 (`../slrr-ghidra/notes/reference_frames/stock_*.png`, 1366x768, outside
@@ -146,6 +144,9 @@ comes after the menu is up.
 | Invoke runs the resolved (owner, method) slot; deferred VM thread delete; text instance destroy; pump re-entry guard | bb4baa7 | by-name fallback picked the wrong overload; heap corruption after NEW CAREER; 577 `ResourceRef.<init>(null)` errors gone |
 | PE frame loop (SimulateFrame + Input tick + animate dispatch), GII_ANIMATE registry, scripted keys in `Input.lastKey`, runtime `ResourceRef` children | 9674d59 | `Osd.animate` runs every frame; typing reaches `StringInput.key`; MouseCursor null errors gone |
 | Scripted keys carry the ToAsciiEx character | 438a265 | ENTER (13) finishes the name dialog; career starts, `actualState = Garage` |
+| Buffered DirectInput keyboard events | 7c99b60 | real typing reaches `Input.lastKey`; confirmed by hand |
+| docs/ENGINE.md: how the game and engine work, fact-checked | 597da74 | 151 corrections from eight section checkers |
+| UI pass: bound viewport list, RH camera with full-angle fovy, WORLDTREELEAF, material-driven blending, screen-space texts from the charset mesh, window size from the options file | 75569af | 2D layer pixel identical to the stock frames at 1366x768 |
 
 ## In progress
 

@@ -1,6 +1,7 @@
 # How Street Legal Racing: Redline works, and where the host stands
 
-Written 2026-10-09 and fact-checked 2026-10-10 against `dev` at f43c741, the Build 940
+Written 2026-10-09 and fact-checked 2026-10-10 against `dev` at f43c741 (the UI pass of
+75569af landed afterwards; see the note at the start of section 7), the Build 940
 Steam install on D: and the pre-940 reference install on E:. `docs/TASKS.md` is the live
 tracker; `docs/VM.md` is the progress log with the Ghidra-confirmed Build 940 addresses;
 `docs/BACKGROUND.md` has the ecosystem, legal and design notes; `FORK.md` has the
@@ -662,6 +663,18 @@ Config is applied before `GfxEngine_InitDisplay`). The host opens a fixed 1024 x
 window (`:642`), so its frames cannot be compared with stock frames until the window
 matches.
 
+**Update, 2026-10-10 (75569af).** The UI pass implemented the exe column of the table
+below: bound viewport list in ascending priority, right-handed camera with the full-angle
+field of view, the `WORLDTREELEAF` walk, material-driven blending, screen-space texts from
+the charset mesh at a y-down NDC anchor, `fade.SCX` as a charset, and the window size from
+`save/game/options`. On the prompt, sliding menu, name dialog and garage the host's frame
+dump is pixel identical to stock frames of the same states in every static region of the
+2D layer. The "Host at HEAD" column, the paragraph that follows and the rendering rows of
+the section 10 table describe f43c741, before that commit, and are kept as the record of
+what was wrong. Still missing after it: the 3D garage (the GameRef `render` command and
+the native `ground` and `camera` types), instance colour modes on a real paint can, the
+second vertex colour of prelit meshes, and the leftovers listed in TASKS.md step 1.
+
 **What the host draws today** (committed HEAD f43c741; the UI pass that implements the
 exe's model below is in progress in the working tree and is not described here).
 `render_d3d9_flush()` (`render_d3d9_part1.inc:2069-2153`) clears, begins the scene,
@@ -778,19 +791,19 @@ usable; host-only = no exe counterpart. PE / Soft / OOS are upstream's code mark
 | ResourceRef natives | soft | 20 bound; `ResState` per object, synchronous load, no destroy queue | `Resources_part2.inc:1183-1700` (HEAD) |
 | Scripted GameType creation | partial | first-line `script <path>` payloads only; dotted class names, `native X` types and two-line payloads fall back to `java.game.<alias>`; the `.cfg` an entry names is never read | `GameRef_part1.inc:1185-1221` |
 | Meshes and textures | partial | INVO v4/v3 positions, normals, one UV, u16 indices; v4 strides 24-40 only (17 files read at the wrong stride); no bones, LOD, material classes; textures by filename heuristic; DDS via runtime D3DX, PNG/JPEG via WIC, PTX last level only | `render_d3d9_part3.inc:999-1296`, `part2.inc:416-444, 1095-1230` (HEAD) |
-| Fonts and Text | soft | glyph table built from the font SCX UVs only (advance and bearings ignored), drawn as world-space quads under the camera or as y-up screen quads that ignore viewport binding and hidden state; the exe draws screen-space quads from the font vertex buffer at a y-down NDC anchor; `Text.setScale` and `Text.getPos(Vector3)` unbound; a charset the font parser rejects (`fade.SCX`) falls back to simple20 | `RenderNatives.cpp:498-716`, `render_d3d9_part1.inc:1233-1340, 1955-2067`, `render_d3d9_part3.inc:504-551` (HEAD) |
-| Present walk | soft | legacy `draw_meshes`, `draw_osd_rects` and `draw_osd_texts` passes run around the Fork camera pass whatever the viewport binding or hidden state, where the exe draws only what each bound viewport's cameras collect in their tree walk, meshes then texts; in the main loop the host presents first and the exe last (section 3) | `render_d3d9_part1.inc:2069-2153` (HEAD); exe `FUN_00421920` |
-| Viewports / cameras | soft | rect and priority stored, but one viewport is active at a time where the exe keeps a bound list; the native angle is used as the half angle under a left-handed look-at (46% size, X mirrored) where the exe uses it as the full vertical angle, right-handed; the clear uses the Java renderflags, which the exe's `Viewport.activate` drops; no LOD or occlusion, one global fog | `RenderNatives.cpp:159-317, 717-944`, `render_d3d9_part1.inc:1133-1189, 1342-1488, 2285-2307` (HEAD); exe `FUN_00461dd0`, `FUN_004e6ab0` |
-| Hidden state (WORLDTREELEAF) | missing | flags are stored, nothing in the renderer reads 0x40; the exe's camera walk does not descend (`FUN_0045eb10`) | `GameRef_core.cpp:725-752` |
+| Fonts and Text | faithful | since 75569af: glyph table from the charset mesh, charset through the pack's render object, y-down NDC anchor, screen-space quads in the camera's pass, `Text.setScale` bound. Before 75569af: glyph table built from the font SCX UVs only (advance and bearings ignored), drawn as world-space quads under the camera or as y-up screen quads that ignore viewport binding and hidden state; the exe draws screen-space quads from the font vertex buffer at a y-down NDC anchor; `Text.setScale` and `Text.getPos(Vector3)` unbound; a charset the font parser rejects (`fade.SCX`) falls back to simple20 | `RenderNatives.cpp:498-716`, `render_d3d9_part1.inc:1233-1340, 1955-2067`, `render_d3d9_part3.inc:504-551` (HEAD) |
+| Present walk | partial | since 75569af: bound viewports drawn in ascending priority, each camera's tree walk, meshes by material group then texts; the legacy passes remain for parentless texts and the legacy mesh queue. Before 75569af: legacy `draw_meshes`, `draw_osd_rects` and `draw_osd_texts` passes run around the Fork camera pass whatever the viewport binding or hidden state, where the exe draws only what each bound viewport's cameras collect in their tree walk, meshes then texts; in the main loop the host presents first and the exe last (section 3) | `render_d3d9_part1.inc:2069-2153` (HEAD); exe `FUN_00421920` |
+| Viewports / cameras | partial | since 75569af: bound list, full-angle right-handed projection, general inverse view, depth-only clear; still no LOD or occlusion. Before 75569af: rect and priority stored, but one viewport is active at a time where the exe keeps a bound list; the native angle is used as the half angle under a left-handed look-at (46% size, X mirrored) where the exe uses it as the full vertical angle, right-handed; the clear uses the Java renderflags, which the exe's `Viewport.activate` drops; no LOD or occlusion, one global fog | `RenderNatives.cpp:159-317, 717-944`, `render_d3d9_part1.inc:1133-1189, 1342-1488, 2285-2307` (HEAD); exe `FUN_00461dd0`, `FUN_004e6ab0` |
+| Hidden state (WORLDTREELEAF) | faithful | since 75569af: the camera walk does not descend into a 0x40 container. Before 75569af: flags are stored, nothing in the renderer reads 0x40; the exe's camera walk does not descend (`FUN_0045eb10`) | `GameRef_core.cpp:725-752` |
 | GameRef camera (`render` command) | missing | three numbers parsed into stand-ins; no host camera bound; the five-number camera form is not handled | `GameRef_part1.inc:1646-1746` |
 | Main loop (PE boot) | partial | every stage on every iteration: present, Win32 pump, input poll, `input_tick`, SimulateFrame, resource pumps, scheduler, animate. Against Build 940: present first instead of last, no rate gates, no Sfx or AsyncLoad stage, resource pumps before the VM pump, scheduler called without `jvm_pump_frame`, notify wakes one waiter, `input_tick` four times, load rate stuck at 16 | `game_boot_part1.inc:744-769`; exe 0x47D760; section 3 |
 | SimulateFrame | faithful | dt clamp, warp, substep pick, control tick, timers; substep 0.05 is a guess; measures its own dt with `GetTickCount` | `System_part2.inc:1452-1527` |
-| Window / device | soft | fixed 1024x768 windowed, no vsync, software vertex processing; `Config.video_*` never applied although the scripts lay out from them | `render_d3d9_part1.inc:655-776` (HEAD) |
+| Window / device | partial | since 75569af: the script boot opens at the size in `save/game/options`; still windowed only, no vsync. Before 75569af: fixed 1024x768 windowed, no vsync, software vertex processing; `Config.video_*` never applied although the scripts lay out from them | `render_d3d9_part1.inc:655-776` (HEAD) |
 | DirectInput | partial | keyboard (64-event buffer) + mouse, background mode with foreground gate; no joysticks | `input_win32.cpp:245-346, 743-760` |
 | Controller / ControlSet / hotkeys / lastKey | soft | host axis-map table (152 per Controller) and host smoothing filter, the PE blob is mirrored but inert; 512-slot hotkey semantics, ascii packing and cheat ring follow the PE | `IO_part1.inc:563-611, 720-795`, `IO_part2.inc:326-600` |
 | MouseCursor | partial | 0-arg `getPos`/`getPickedPos`; gadget pick over script `PhysicsRef` boxes, tied to the Soft state lookup, which is null on the script boot | `Cars.cpp:621-760`, `Resources_part4.inc:768-850` |
 | Force feedback | missing | slots exist, no effect created, no joystick | `input_win32.cpp:859-861, 1104-1111` |
-| Steam | missing | 0 of 5 natives; `GameLogic` exits when `Steam.postInit()` is 0, yet the boot reaches Garage: why is `[unknown]` | natives_stubs.cpp; GameLogic.java:335 |
+| Steam | soft | since 75569af: the five natives have stand-ins on the script boot (`initAPI` returns 1). Before 75569af: 0 of 5 natives; `GameLogic` exits when `Steam.postInit()` is 0, yet the boot reaches Garage: why is `[unknown]` | natives_stubs.cpp; GameLogic.java:335 |
 | Vehicle build (`forceUpdate`) | partial | bookkeeping as side maps; no body | `Chassis_part2.inc:636-958` |
 | Rigid body / tires / ground | missing | arcade Euler on a plane; a derived road spine on the old-build path | `Resources_part4.inc:25-36, 150-400`, `Resources_part3.inc:1549-1707` |
 | Audio and video | soft | DirectSound8/MCI backend exists, natives never call it; 10 of the 17 Sound natives the 940 exe registers are bound (8 of the 14 declared names); DirectShow to texture with the 3-arg `openVideo` only | `Sound.cpp:698-745`, `video_fmv.cpp:251-375` |

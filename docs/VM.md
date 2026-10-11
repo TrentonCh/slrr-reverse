@@ -399,3 +399,57 @@ native missing (`GameLogic.updateCodeROC`), `Object.finalize` unbound,
 compiled classes missing for `camera`, `cursor`, `SplashScreen`,
 `lift_support/cfg`, `stock_Battery_silver` (the exe compiles sources on
 demand).
+
+### 2026-10-10 (session 5): the UI matches the stock frames
+
+Method. Two things made this session different from the earlier render
+work: the exe's present, camera and text paths were decompiled before
+anything was changed (function addresses in ENGINE.md section 7), and the
+user captured the stock game on this machine, which gave reference frames
+(1366x768, kept outside the repo) to compare frame dumps against. Earlier
+frames had been judged by eye without a reference and were wrong in ways
+that looked plausible.
+
+What the host had wrong, all in the Fork camera pass and the legacy text
+pass:
+
+- The angle passed to `Camera.create` is the full vertical field of view
+  (the script halves `CAM_AOV = 60`; `5.48 * tan(15 deg) = 1.469 =
+  Osd.SCALE_3D`). The host used it as the half angle: every rectangle at
+  46% size.
+- The exe is right-handed (view = inverse of the camera world,
+  `D3DXMatrixPerspectiveFovRH`). The host's left-handed look-at down -Z
+  mirrored X. Together with the next point this was the "rotated dialog".
+- A `Text` is an `r_text` instance that contributes only an NDC anchor
+  (bone00 world x, y; y down); its glyphs are screen-space quads from the
+  charset mesh (vertex xy * 0.1 = pixels, advance = vertex[4c+1].x * 0.1,
+  one texel per pixel). The host drew y up and spaced by quad width.
+- Viewports are a bound list drawn in ascending priority; the host kept
+  one active viewport, so only one Osd layer was ever visible.
+- The camera walk skips a `WORLDTREELEAF` subtree; nothing in the host
+  read the flag.
+- Blending and lighting come from the mesh material, not from the texture
+  format; the instance colour is ignored unless the render type's flags
+  ask for it. Rectangles are "transparent" sections: texture-alpha blend,
+  depth write off, back to front.
+- The window size comes from `save/game/options`; the scripts lay out in
+  pixels of that mode, and the host window was fixed at 1024x768.
+- `fade.SCX`, the dialog curtain, is the charset of a Text "a": one large
+  triangle with a negative advance that ALIGN_CENTER moves over the
+  viewport.
+
+Result (75569af): on the prompt, sliding menu, name dialog and garage the
+frame dump is pixel identical to the stock frames in the menu band, the
+logo, dialog titles and buttons, the garage bars and the welcome dialog;
+the dialog closes on ENTER and its texts disappear. The old-build
+regression is unchanged in its markers. Side fixes that the comparison
+forced: strings from `lang_string_from_cstr` are registered so `==`
+compares text (TextBox line breaks), int arguments bound to String
+parameters are converted as `Thread::callMethod` does ("DAY 1"),
+`System.buildNumber` returns 940 on the script boot and the five Steam
+natives have stand-ins (the version line), INVO v4 vertices are decoded by
+their format flags, non-DDS textures load with one mip level,
+`ResourceRef.scaleMesh` reaches existing instances.
+
+Next is the 3D garage: a native `ground` instance with a native `camera`
+GameType driven by text commands (TASKS.md step 2).
