@@ -9,6 +9,9 @@ namespace inv {
 // From JVM_bootstrap_GameRef (0040fe70): FUN_0041cfe0(fs, package)
 const ClasspathMapEntry kClasspathMap[] = {
     {"system/Scripts/lang", "java.lang"},
+    // Fork: ninth entry of the exe's classpath (940 strings list
+    // system\scripts\{lang,net,io,util,render,sound}); upstream omitted it.
+    {"system/Scripts/net", "java.net"},
     {"system/Scripts/io", "java.io"},
     {"system/Scripts/util", "java.util"},
     {"system/Scripts/render", "java.render"},

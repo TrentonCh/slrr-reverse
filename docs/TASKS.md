@@ -68,8 +68,8 @@ welcome dialog), frame dump compared with
      null on the host (`GameLogic.updateCodeROC` -> `null.trim()`).
    - The six `class file missing` lines: `camera`, `cursor` and
      `lift_support/cfg` are `native <type>` payloads (step 2);
-     `stock_Battery_silver` is a dotted `script <class name>` payload that
-     must resolve through the classpath (137 such entries);
+     `stock_Battery_silver` was a dotted `script <class name>` payload
+     (137 such entries), fixed;
      `SplashScreen` is a pre-940 class only the legacy path asks for.
    - The autosave on NEW CAREER writes a `main` that is not stock
      compatible (`write(new GameRef(id))` comes out empty). Test runs
@@ -92,8 +92,13 @@ welcome dialog), frame dump compared with
    (`Part.addStockParts`, `Part.check4warnings`, `Osd.pressEffect`: no
    0x40 flag, zero nodes) returns at once instead of going down the native
    branch; about 470 `no native binding` lines per garage run are gone.
-   Open: resolve dotted `script <class name>` payloads through the
-   classpath; add the ninth classpath entry (`java.net`); the CONS decoder
+   Also done: dotted `script <class name>` payloads load through the
+   classpath (`stock_Battery_silver` is a real part again; the four
+   `GameRef.setWear/setTear/setTexture/addStockParts not found` errors
+   are gone) and the ninth classpath entry (`java.net`) exists. A 48 s
+   garage run now logs one script error (the `trim` null) and four
+   `class file missing` lines (three native types, one legacy ask).
+   Open: the CONS decoder
    misreads a class ref that is the last pool entry (`GameState.class`);
    21 host native entries shadow methods that have script bodies in 940
    (`RenderRef.getPos`, `Text.setDefaultColor`, `Object.hashCode`, ...).

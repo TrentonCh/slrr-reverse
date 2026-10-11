@@ -1191,6 +1191,24 @@ std::string script_fqn_for_res(int32_t res_id, const RpakEntry* e) {
     std::string path(reinterpret_cast<const char*>(blob.data()) + 7, end - 7);
     while (!path.empty() && path.back() == ' ') path.pop_back();
     if (!path.empty()) {
+      // Fork: 137 pack entries of Build 940 (133 in parts.rpk) give a dotted
+      // class name instead of a .class path, e.g.
+      // `script java.game.parts.accessories.stock_Battery_silver`. Read as
+      // a path it never resolved ("class file missing .../java/game/parts/
+      // accessories/stock_Battery_silver.class") and the part became a plain
+      // GameRef. A dotted name is loaded through the classpath. The exe's
+      // payload parser is not decompiled; the rule is inferred from the data.
+      {
+        const bool has_sep = path.find('/') != std::string::npos ||
+                             path.find(static_cast<char>(92)) != std::string::npos;
+        const bool dot_class = path.size() > 6 &&
+                               path.compare(path.size() - 6, 6, ".class") == 0;
+        if (!has_sep && !dot_class && path.find('.') != std::string::npos) {
+          if (Jvm* j = jvm_active()) {
+            if (j->find_class(path.c_str()) || j->load_class(path.c_str())) return path;
+          }
+        }
+      }
       // PE loads the file named by the entry; the TUFA CLSS name is the
       // class (CareerEvents/JuniorCurcuit.class declares java.game.JuniorCurcuit).
       if (Jvm* j = jvm_active()) {
