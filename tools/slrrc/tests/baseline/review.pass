@@ -1,0 +1,229 @@
+diagnostics: ... also when a member is looked up: an error in default mode
+diagnostics: ... also when a member is looked up: an error in strict mode
+diagnostics: ... also when no body looks a member up (default mode)
+diagnostics: ... also when no body looks a member up (strict mode)
+diagnostics: DEL in a string literal: a warning, an error in strict mode
+diagnostics: NUL in a string literal: a warning, an error in strict mode
+diagnostics: TimeAttackTest still compiles in strict mode, byte for byte, with its two warnings
+diagnostics: a TAB in a string literal: no diagnostic
+diagnostics: a caller up to 975 frames deep under a limit of 1000 gets a result, never RecursionError
+diagnostics: a class that is its own superclass: an error in default mode
+diagnostics: a class that is its own superclass: an error in strict mode
+diagnostics: a control character in a comment: no diagnostic
+diagnostics: a control character in a string literal: a warning, an error in strict mode
+diagnostics: a local that hides an instance field in a static method: no diagnostic
+diagnostics: a lone CR in a string literal: a warning, an error in strict mode
+diagnostics: a pack without a file: a warning at every literal, default mode
+diagnostics: a pack without a file: a warning at every literal, strict mode
+diagnostics: a ring among classes of the provider alone is not an error of this source
+diagnostics: a ring through a class of the provider: an error
+diagnostics: a static field in a static method: no diagnostic
+diagnostics: a variable named like a class the source casts to: the same diagnostics whichever method comes first
+diagnostics: a variable named like a class the source creates: the same diagnostics whichever method comes first
+diagnostics: a variable named like a class used only as the head of a name: the same diagnostics whichever method comes first
+diagnostics: a variable named like the class of the source itself: the same diagnostics whichever method comes first
+diagnostics: an inherited instance field in a static method: a warning, an error in strict mode
+diagnostics: an instance field as an argument in a static method: a warning, an error in strict mode
+diagnostics: an instance field at the head of a name in a static method: a warning, an error in strict mode
+diagnostics: an instance field in a static method: a warning, an error in strict mode
+diagnostics: an instance field in an instance method: no diagnostic
+diagnostics: an instance field in the initialiser of a static field: a warning, an error in strict mode
+diagnostics: an instance field in the initialiser of an instance field: no diagnostic
+diagnostics: an instance field of another object in a static method: no diagnostic
+diagnostics: no warning from a PackNames that has the table and no file list
+diagnostics: no warning from a PackNames that names every pack as written
+diagnostics: the NUL is copied into the utf8 entry all the same (default mode)
+diagnostics: three classes of a source in a ring: an error at each
+diagnostics: what None means is written at the interface
+driver: --dump ast, trees and class to a pipe: the bytes of the dump functions
+driver: --dump tokens to a pipe: the bytes of the source, LF line ends
+driver: --only-missing --dry-run lists the source whose class file is unreadable
+driver: --only-missing compiles it
+driver: ... the manifest describes the files that are there, and no temporary file is left
+driver: ... with --check -v
+driver: ... with --dry-run
+driver: 150 nested parentheses compile through the command line
+driver: 180 nested parentheses compile through the command line
+driver: 190 nested parentheses compile through the command line
+driver: 196 nested parentheses: the command line reports what the library reports under the limit of the tests
+driver: 20 files that are no manifest of this format are replaced with a warning
+driver: 205 nested parentheses: the command line reports what the library reports under the limit of the tests
+driver: a class file another program has open: that source fails, the others are compiled, exit code 1
+driver: a class file that cannot be opened is reported, and the class is known from its source
+driver: a class file that cannot be written: the same on every system
+driver: a class file the reader accepts is not missing
+driver: a damaged class file beside the source of the superclass: reported, and the class is known from its source
+driver: a first run writes three class files and a manifest that agrees with them
+driver: a manifest of this format is taken over: the entries of other outputs stay
+driver: a manifest that cannot be written: refused before a class file is written
+driver: a run that ends with an exception still writes the manifest of what it wrote
+driver: a source that cannot be read fails alone: the others are compiled, exit code 1
+driver: a source whose name the code page lacks, with -v: no UnicodeEncodeError
+driver: a text class file beside the source of the superclass: reported, and the class is known from its source
+driver: an --out directory whose name the code page lacks
+driver: an empty class file beside the source of the superclass: reported, and the class is known from its source
+driver: the command line sets the limit the tests run under
+driver: two sources, one the superclass of the other, compile
+driver: write_atomic removes its temporary file when the rename fails
+floats: ... and the self test is whole again
+floats: a build with double-0.1 fails the self test in the settings B
+floats: a build with fma fails the self test in the settings A, B
+floats: a build with ftz fails the self test in the settings A, B, C, D
+floats: a build with signed fails the self test in the settings A, B, C, D
+floats: a build with toward-0 fails the self test in the settings A, B, C, D
+floats: a build with wide fails the self test in the settings A, B, C, D
+floats: a build with x87-24 fails the self test in the settings C, D
+floats: a build with x87-53 fails the self test in the settings A, B
+floats: a build with x87-64 fails the self test in the settings A, B
+floats: float_bits equals the exact model (363 literal texts, 4 settings)
+floats: floatlit.self_test() finds nothing
+floats: the 15 rows of SELF_TEST are the bits of the exact model
+floats: the C forms name every intermediate result and the build settings
+floats: the command line refuses to compile when the self test fails
+floats: the four settings differ pairwise on some row
+floats: the wrong builds are the ones this test knows
+gaps: ... and the emitter writes those refs
+gaps: lookup: back(F) binds to (F)I with score 0
+gaps: lookup: back(I) binds to (I)I with score 0
+gaps: lookup: conv(I) binds to (Ljava.lang.String;)I with score 100
+gaps: lookup: pick(I,I) binds to (ILjava.lang.String;)I with score 100
+gaps: mutant caught: int for a float parameter costs 100
+gaps: mutant caught: the line of an assignment is the last token of its value
+gaps: mutant caught: the line of x++ is the token behind it
+gaps: mutant caught: the nodes of a declaration carry the line of the declared name
+gaps: mutant caught: the type of instanceof is interned before its operand
+gaps: mutant caught: true and false have no type as arguments
+gaps: one token per line, written out by hand: a local declaration
+gaps: one token per line, written out by hand: an assignment
+gaps: one token per line, written out by hand: x++
+gaps: pool order: (float) x: the cast type before the types in x
+gaps: pool order: a field type before the types of its initialiser
+gaps: pool order: a local type after the types of all its initialisers
+gaps: pool order: new T[n]: the array type before the types in n
+gaps: pool order: x instanceof T: the types in x before T
+gaps: the package is itself again after the mutants
+gaps: true as an argument is typed: the call ends in a method ref
+numbers: "nothing" is NONE, NO_FIT or 0, never a negative number
+numbers: __init__.py: no negative number, no counter that has to go below zero
+numbers: classes.py: no negative number, no counter that has to go below zero
+numbers: classfile.py: no negative number, no counter that has to go below zero
+numbers: columns, float digits and resource ids without a negative subscript
+numbers: decl.py: no negative number, no counter that has to go below zero
+numbers: diag.py: no negative number, no counter that has to go below zero
+numbers: dump.py: no negative number, no counter that has to go below zero
+numbers: emit.py: no negative number, no counter that has to go below zero
+numbers: floatlit.py: no negative number, no counter that has to go below zero
+numbers: packs.py: no negative number, no counter that has to go below zero
+numbers: parser.py: no negative number, no counter that has to go below zero
+numbers: pool.py: no negative number, no counter that has to go below zero
+numbers: scanner.py: no negative number, no counter that has to go below zero
+numbers: the loops that counted down still give the same nodes
+numbers: the rule is written down for the port
+numbers: the two places that may compare with zero are the ones listed
+numbers: write.py: no negative number, no counter that has to go below zero
+parser: 190 nested parentheses compile
+parser: 196 nested parentheses: the limit is reported at the innermost operand
+parser: 197 nested parentheses: the limit is reported at the innermost operand
+parser: 199 nested parentheses: the limit is reported at the innermost operand
+parser: 205 nested blocks: the limit is reported at a "{" 200 levels down
+parser: 230 nested parentheses: the limit is reported inside the nesting
+parser: __init__.py raises and catches only what its text says
+parser: an operator chain of 260: the limit is reported at its first operand
+parser: classes.py raises and catches only what its text says
+parser: classfile.py raises and catches only what its text says
+parser: decl.py raises and catches only what its text says
+parser: diag.py raises and catches only what its text says
+parser: dump.py raises and catches only what its text says
+parser: emit.py raises and catches only what its text says
+parser: floatlit.py raises and catches only what its text says
+parser: one diagnostic and no tree: a missing ")"
+parser: one diagnostic and no tree: a missing identifier
+parser: one diagnostic and no tree: a statement before the first case label
+parser: one diagnostic and no tree: an unclosed block
+parser: one diagnostic and no tree: an unclosed class body
+parser: one diagnostic and no tree: an unclosed switch body
+parser: one diagnostic and no tree: else without if
+parser: one diagnostic and no tree: new without "(" or "["
+parser: one diagnostic and no tree: new without a type
+parser: one diagnostic and no tree: no class keyword
+parser: one diagnostic and no tree: no expression
+parser: one diagnostic and no tree: super without "."
+parser: packs.py raises and catches only what its text says
+parser: parser.py raises and catches only what its text says
+parser: pool.py raises and catches only what its text says
+parser: scanner.py raises and catches only what its text says
+parser: shipped sources: the same (384 sources)
+parser: synthetic sources: every node is closed exactly once, after its children and its items
+parser: the layout of the items is written down for the port
+parser: the number of every node, written out by hand: a switch and a for
+parser: the number of every node, written out by hand: an assignment
+parser: the way the parser stops is written down for the port
+parser: write.py raises and catches only what its text says
+provider: ... (field type): the name the source wrote does not reach the class file
+provider: ... and the bytes do not depend on it either
+provider: Garage.java: 349 questions for 349 names (600 before the fix)
+provider: a class answered under another spelling of its name is not taken (superclass)
+provider: a damaged descriptor in the superclass ends in diagnostics, not in an exception
+provider: a provider that keeps rule 3 declares two sources that name each other
+provider: accepted: a constructor with a return part, as the loader of the engine holds it
+provider: accepted: an empty class, as a provider answers while it declares a source
+provider: accepted: an interface
+provider: accepted: arrays of arrays
+provider: accepted: constructors
+provider: accepted: the type that resolved nowhere
+provider: class_of_desc
+provider: desc_kind tells 33 descriptors and non-descriptors apart
+provider: every class of the corpus keeps the contract
+provider: refused: a constructor that is no descriptor
+provider: refused: a field descriptor "L"
+provider: refused: a field descriptor "["
+provider: refused: a field descriptor with a tail
+provider: refused: a field descriptor without ";"
+provider: refused: a field of type void
+provider: refused: a field with an empty descriptor
+provider: refused: a field with an empty name
+provider: refused: a method descriptor "(L"
+provider: refused: a method descriptor "(["
+provider: refused: a method descriptor without "("
+provider: refused: a method descriptor without ")"
+provider: refused: a method that is no descriptor at all
+provider: refused: a method with an empty name
+provider: refused: a method without a return part
+provider: refused: a void parameter
+provider: refused: an empty interface name
+provider: refused: an empty superclass name
+provider: refused: another name than the one asked for
+provider: shipped sources: one question per name and per pack (140 sources)
+provider: split_params
+provider: the contract is written at the interface
+provider: the declaration text holds a constructor as the pool does, whatever return part the provider gave it
+provider: the entry points a host needs are named for the port
+provider: the interfaces of a class decide a method ref
+provider: the pack names are asked once per written name
+provider: the provider is asked once per name (the 75 synthetic sources of extra4)
+provider: the static flag of a field decides the class of its ref
+reader: no comparison of the reader has a sum on either side
+reader: rejected: the length of the first utf8 entry set to a length near 2**32 (9 values, 7 of them wrap)
+reader: rejected: the node count of the first tree set to a length near 2**32 (9 values, 7 of them wrap)
+reader: rejected: the number of interfaces set to a length near 2**32 (9 values, 7 of them wrap)
+reader: rejected: the number of pool entries set to a length near 2**32 (9 values, 7 of them wrap)
+reader: rejected: the number of static fields set to a length near 2**32 (9 values, 7 of them wrap)
+reader: rejected: the number of static methods set to a length near 2**32 (9 values, 7 of them wrap)
+reader: rejected: the size of the CONS chunk set to a length near 2**32 (9 values, 7 of them wrap)
+reader: rejected: the size of the TREE chunk set to a length near 2**32 (9 values, 7 of them wrap)
+reader: shipped class files are still accepted (74 files)
+reader: the class file the checks start from is read back
+reader: the offsets of the test are the ones of the file
+reader: the rule is written down for the port
+readme: the README says how to point the tests at another corpus
+readme: the README says which Python, and what the nesting limit asks of a caller
+readme: the library example of the README runs and gives the shipped Trigger.class
+results: ... and the lists of the FrontResult do not grow with it
+results: a warning of the emitter reaches the result
+results: an error of the emitter reaches the result
+results: compile_source() holds the same lists
+results: emit_trees() holds what the emitter consulted and missed
+results: front() hands out lists of its own
+results: shipped sources: the result holds every class of the front half and more, none twice, each found or missed as the provider says
+results: the emitter goes on consulting and missing classes
+results: the lists of a result do not change when another source is compiled

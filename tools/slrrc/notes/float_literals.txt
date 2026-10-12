@@ -1,0 +1,59 @@
+Build 940 pairs consistent with their source: 2514 files with float literals
+float nodes                     35084
+  matched with a token          35084
+  not matched (within 2 ulp)    0
+token forms: {'plain': 34854, 'suffix f': 230}
+difference from the correctly rounded value, in ulp:
+  -2   7
+  -1   2947
+  +0   28459
+  +1   3658
+  +2   13
+samples reproduced by a candidate conversion:
+  exact              28459 of 35084
+  div10              34481 of 35084
+  mul01              33873 of 35084
+  div10 or mul01     35012 of 35084
+  none of the three  6 of 35084
+class files by which candidate their literals need:
+  div10                                        188
+  mixed                                        10
+  mul01                                        60
+  undetermined (both agree on every literal)   2256
+  with a literal neither explains              25
+distinct token texts 15760; texts compiled to more than one pattern: 95
+  0.071      nearest 0x3D916873 : 0x3D916873 x92 (parts/running_gear/scripts/FL_susp/src/Baiern_DS_FL_McPherson_strut.java:44), 0x3D916874 x3 (multibot/maps/Zandvoort/data/src/track_data.java:64)
+  0.001      nearest 0x3A83126F : 0x3A83126F x50 (multibot/maps/DerbyArena/data/src/track_data.java:33), 0x3A83126E x39 (multibot/maps/A1Ring/data/src/track_data.java:65)
+  0.004      nearest 0x3B83126F : 0x3B83126E x51 (multibot/maps/NationalDirtRaceway/data/src/track_data.java:33), 0x3B83126F x21 (multibot/maps/HockenheimGP/data/src/track_data.java:305)
+  0.013      nearest 0x3C54FDF4 : 0x3C54FDF3 x52 (multibot/maps/A1Ring/data/src/track_data.java:291), 0x3C54FDF4 x3 (multibot/maps/Zandvoort/data/src/track_data.java:66)
+  0.043      nearest 0x3D3020C5 : 0x3D3020C4 x49 (multibot/maps/NationalDirtRaceway/data/src/track_data.java:296), 0x3D3020C5 x5 (multibot/maps/HockenheimGP/data/src/track_data.java:209)
+  0.121      nearest 0x3DF7CED9 : 0x3DF7CEDA x48 (parts/running_gear/scripts/RL_susp/src/Baiern_CS_RL_trailing_arm.java:43), 0x3DF7CED9 x6 (sl/Scripts/game/Gamemodes/src/CircuitRacing.java:131)
+  0.058      nearest 0x3D6D9168 : 0x3D6D9168 x47 (parts/running_gear/scripts/RL_susp/src/Baiern_CS_RL_trailing_arm.java:40), 0x3D6D916A x3 (multibot/maps/SPAFrankoohapsGPCircuit/data/src/track_data.java:35), 0x3D6D9169 x1 (sl/Scripts/game/Gamemodes/src/CircuitRacing.java:175)
+  0.024      nearest 0x3CC49BA6 : 0x3CC49BA6 x47 (parts/running_gear/scripts/RL_susp/src/Baiern_CS_RL_trailing_arm.java:47), 0x3CC49BA7 x3 (multibot/maps/LagunaSeca/data/src/track_data.java:240)
+  0.030      nearest 0x3CF5C28F : 0x3CF5C28F x47 (parts/running_gear/scripts/FL_susp/src/Baiern_DS_FL_McPherson_strut.java:40), 0x3CF5C290 x3 (multibot/maps/Zandvoort/data/src/track_data.java:360)
+  0.002      nearest 0x3B03126F : 0x3B03126F x29 (multibot/maps/GatewayRoad/data/src/track_data.java:62), 0x3B03126E x20 (multibot/maps/A1Ring/data/src/track_data.java:36)
+  0.077      nearest 0x3D9DB22D : 0x3D9DB22D x48 (parts/running_gear/scripts/FL_susp/src/Baiern_DS_FL_McPherson_strut.java:43), 0x3D9DB22E x1 (parts/running_gear/scripts/FR_susp/src/Prime_FR_McPherson_strut.java:43)
+  0.296      nearest 0x3E978D50 : 0x3E978D50 x47 (multibot/maps/Vallelunga/data/src/track_data.java:193), 0x3E978D51 x1 (parts/running_gear/scripts/FR_susp/src/Prime_FR_McPherson_strut.java:39)
+integer part >= 2**32 (wraps): 9
+  parts/scripts/enginepart/block/SRC/Block_Inline.java:57 1000000000000000.0 -> 0x4F24C680
+  parts/scripts/enginepart/block/SRC/Block_Inline.java:92 1000000000000000.0 -> 0x4F24C680
+  parts/scripts/enginepart/block/SRC/Block_Inline.java:150 1000000000000000.0 -> 0x4F24C680
+  parts/scripts/enginepart/block/SRC/Block_Vee.java:108 1000000000000000.0 -> 0x4F24C680
+  parts/scripts/enginepart/block/SRC/Block_Vee.java:152 1000000000000000.0 -> 0x4F24C680
+  parts/scripts/enginepart/block/SRC/Block_Vee.java:201 1000000000000000.0 -> 0x4F24C680
+  parts/scripts/enginepart/block/SRC/Block_Vee.java:233 1000000000000000.0 -> 0x4F24C680
+  parts/scripts/enginepart/block/SRC/Block_Vee.java:282 1000000000000000.0 -> 0x4F24C680
+  parts/scripts/rgearpart/reciprocatingrgearpart/SRC/Tyre.java:118 50000000000.0 -> 0x4F243B74
+files with literals neither div10 nor mul01 reproduces: 25
+  multibot/maps/Nurburgring/data/track_data.class (6)
+  multibot/maps/Sandown/data/track_data.class (5)
+  parts/engines/Baiern_Emer/scripts/Baiern_Devils_6SFi_3_6_block.class (1)
+  parts/engines/Baiern_Emer/scripts/Baiern_Kraftwerk_2_5_block.class (1)
+  parts/engines/Baiern_Emer/scripts/Emer_MotorSport_GT2_block.class (1)
+  parts/engines/Baiern_Emer/scripts/Emer_StreetGT_block.class (1)
+  parts/engines/Dodge_BMW_Racing_V10/scripts/European_V10_engine_block.class (1)
+  parts/engines/MC_Prime_SuperDuty/scripts/MC_Prime_SuperDuty_automatic_transmission.class (1)
+  parts/engines/MC_Prime_SuperDuty/scripts/SuperDuty_Extra_750_transmission.class (1)
+  parts/running_gear/scripts/brakes/brake_MC_GTB_front.class (1)
+  parts/running_gear/scripts/brakes/brake_MC_GTB_rear.class (1)
+  parts/running_gear/scripts/shocks/shock_absorber_MC_GTB_front.class (1)

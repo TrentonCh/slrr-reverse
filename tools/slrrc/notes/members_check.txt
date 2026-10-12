@@ -1,0 +1,64 @@
+check_members: declarations of the parser against the class files
+corpus D:\SLRR-test
+
+pairs 2819, classes 2873, field rows 3805 (static 1319, instance 2486), method rows 5411 (static 72, instance 5339; 2913 constructors, 113 native)
+
+ok   U1    2819 of 2819   the source parses
+ok   U2    2819 of 2819   number of top-level types = number of blobs in the class file
+ok   C1    2873 of 2873   blob name = package + "." + declared name, in source order
+ok   C2    2873 of 2873   interface flag of CLSS = declared with the keyword interface
+ok   C3    2873 of 2873   superclass = the class named after extends, resolved; java.lang.Object without extends; none for an interface
+ok   C4    2873 of 2873   interface list = the names after implements, resolved, in source order
+ok   F1    5746 of 5746   number of static fields and of instance fields (one row per declarator)
+ok   F2    3805 of 3805   field names, in source order inside each vector
+ok   F3    3805 of 3805   field flags = mask of the modifier keywords
+ok   F4    3805 of 3805   field type descriptor (primitive, class resolved through package and imports, "[" per dimension)
+ok   F5    3805 of 3805   a field owns an initialiser tree exactly when its declarator has "= expression"
+ok   F6    3805 of 3805   index of the initialiser tree = position among the tree owners in source order
+ok   M1    5746 of 5746   number of static methods and of instance methods
+ok   M2    5411 of 5411   method names in source order inside each vector; a constructor is <init>
+ok   M3    5411 of 5411   method flags = mask of the modifier keywords (static 0x8, native 0x40, ...)
+ok   M4    5411 of 5411   number of parameters in the descriptor = number of declared parameters
+ok   M5    5411 of 5411   method descriptor: parameter types and return type resolved; a constructor has no return part
+ok   M6    5411 of 5411   index of the method tree = position among the tree owners in source order (none for abstract)
+ok   M7    5411 of 5411   the tree is empty exactly for ";" bodies (native or not) and for "{}" of a method; a constructor with "{}" has code
+ok   M8    5411 of 5411   locals word = this + parameters + deepest nesting of declared locals; 0 without code
+ok   M9    2873 of 2873   no constructor is added: the class file has <init> rows exactly for the declared constructors
+ok   T1    2873 of 2873   number of trees of the blob = fields with initialiser + methods that are not abstract
+ok   D1    2993 of 2993   every descriptor of every blob of the corpus (pairs or not) is built from I, F, V, L<class>; and [ with at most one [
+
+Per category (pairs, comparisons, failed comparisons):
+  pair_940                2651 pairs    88050 comparisons  0 failed
+  pair_940 (stale)          12 pairs      249 comparisons  0 failed
+  pair_other               153 pairs     2914 comparisons  0 failed
+  pair_other (stale)         3 pairs       57 comparisons  0 failed
+
+Constructors per class (M9): none 12, one 2818, several 43
+
+Scopes (M8): methods whose locals word a different scoping gets wrong,
+of 5183 methods with a non-zero locals word:
+       5  switch is one scope
+      72  for variable outlives the loop
+     184  no scopes
+
+Descriptors of all class files (D1), by first letter: F 2640, I 9984, L 14819, V 2435
+
+Body form against tree (M7):
+      64  constructor with ";" -> empty tree
+    2789  constructor with "{ ... }" -> code
+      60  constructor with "{}" -> code
+       7  method with ";" -> empty tree
+    2342  method with "{ ... }" -> code
+      36  method with "{}" -> empty tree
+     113  native method with ";" -> empty tree
+
+Type names in declarations (extends, implements, field, parameter and return types): 5302
+  written with dots: 0
+  first found in file:      68
+  first found in package:   531
+  first found in import:    4014
+  first found in java.lang: 689
+  with candidates in more than one package: 0
+  unknown: 0
+
+94263 of 94263 comparisons agree; 23 of 23 rules hold without exception (5.6 s)

@@ -1,0 +1,279 @@
+corpus  D:\SLRR-test
+trees   9772   nodes 647650
+
+S1    holds  99895 of 99895  tags with a carrier are followed by it
+S2    holds  88854 of 88854  literal carriers only behind expr/stmt literal
+S3    holds  14806 of 14806  0x1006 only behind declare, new, newarray, instanceof, cast
+S4    holds  7959 of 7959  0x1019 only first in a path of >= 2 segments or as cast carrier
+S5a   holds  3945 of 3945  declare is followed by type
+S5b   holds  3047 of 3047  0x002C only two nodes after a declare
+S6a   holds  26536 of 26536  call is preceded by push_int
+S6b   holds* 26535 of 26536  call is followed by a lone method ref or a path header whose last segment is method/name
+        * known exception: system/scripts/util/resource/Texture.class#0 tree 1 node 5 (call followed by a bare 0x1001: the callee name resolved to a local variable (Texture.<init>(I), line 21))
+S6c   holds  26535 of 26535  the node after a call path is expr/stmt call
+S7    holds  31746 of 31746  call path segments: first local/field/class/name, middle field/name, method only last
+S8    holds  32405 of 32405  field path segments: first local/field/class, rest field/name
+S9    holds  26535 of 26535  0x101A and 0x4012 only inside paths
+S10a  holds  1998 of 1998  0x4025/0x4026 are followed by expr/stmt call
+S10b  holds* 28533 of 28534  expr/stmt call only behind a call form
+        * known exception: system/scripts/util/resource/Texture.class#0 tree 1 node 7 (the expr call that follows the same malformed call)
+S11a  holds  12540 of 12540  0x0021 0x0022 0x0023 0x4026 are preceded by push_int
+S11b  holds  3044 of 3044  0x0022/0x0023 are followed by stmt ctor
+S11c  holds  3044 of 3044  stmt ctor only behind 0x0022/0x0023; expr ctor never
+S12   holds  13331 of 13331  jump targets inside the tree and not on a consumed node
+S13   holds  1145 of 1145  and_test/or_test + jump land behind the matching expr land/lor
+S14   holds  161 of 161  pop is preceded by case and followed by jump
+S15   holds  13 of 13  bool carriers hold 0 or 1
+S16   holds  18470 of 18470  push_int before a 0x101A call equals the descriptor's parameter count
+S17   holds  200951 of 200951  expr/stmt tags are in the emitted set of the table
+S18   holds  10825 of 10825  ret only in constructors; ret_value/push_void/value never there
+S19   holds  3044 of 3044  a constructor with code holds exactly one this_init/super_init
+S20   holds  3890 of 3890  value and push_void are followed by releases, then ret_value
+S21   holds  2414 of 2414  parameter receivers: type under reversed numbering equals the class of the member ref
+S21f  info   2072 of 2414  ... the same test with forward numbering (control)
+X1    holds  428675 of 428675  no node pops more than the stack holds
+X2    holds  9115 of 9115  depth and local count agree at joins
+X3    holds* 9874 of 9875  end with 1 value, ret with 0, ret_value with 1
+        * known exception: system/scripts/render/Frontend.class#0 tree 16 node 28 ret_value with depth 2 (the only "new T(...);" used as a statement: stmt new leaves the object on the stack (Frontend, line 100))
+X4    holds  67923 of 67923  stack empty after every stmt and store
+X5    holds  48186 of 48186  declare/release/local indices follow the live local count
+X6    holds  3713 of 3713  no local live at ret_value; no path runs off the end
+
+call_first:
+  0x4012                       2508
+  0x1001                       4276
+  0x1019                       1994
+  0x101B                       7495
+call_form:
+  lone method ref              10262
+call_last:
+  0x4012                       8065
+  0x101A                       8208
+call_path_len:
+  1                            2508
+  2                            12314
+  3                            1220
+  4                            205
+  5                            26
+carrier_of_cast:
+  0x1006                       49
+  0x1019                       180
+carrier_of_instanceof:
+  0x1006                       257
+carrier_of_literal:
+  0x000C                       1614
+  0x4009                       13114
+  0x100B                       28450
+  0x100D                       13
+  0x100E                       9190
+  0x200A                       36473
+carrier_of_new:
+  0x1006                       8685
+carrier_of_newarray:
+  0x1006                       1870
+ctor_start:
+  push_int 0; super_init; stmt ctor 313
+  super_init with arguments    2676
+  this_init                    55
+field_path_first:
+  0x1001                       7336
+  0x1019                       5785
+  0x101B                       2819
+field_path_len:
+  2                            15442
+  3                            476
+  4                            17
+  5                            5
+jump_direction_0x1014:
+  back                         736
+  forward                      3958
+jump_direction_0x1015:
+  forward                      8026
+jump_direction_0x1016:
+  back                         3
+jump_direction_0x1017:
+  forward                      608
+locals_live_at_ret:
+  0                            2987
+  1                            36
+  2                            5
+  3                            6
+  4                            4
+  6                            3
+  7                            2
+  8                            2
+nodes:
+  consumed                     197575
+  reached                      428675
+  unreachable                  21400
+simulated:
+  nodes                        428675
+stmt_tag_depth_after:
+  ('add_assign', 0)            455
+  ('and_assign', 0)            4
+  ('assign', 0)                42048
+  ('call', 0)                  18106
+  ('ctor', 0)                  3044
+  ('div_assign', 0)            8
+  ('mul_assign', 0)            105
+  ('or_assign', 0)             31
+  ('postdec', 0)               73
+  ('postinc', 0)               879
+  ('predec', 0)                3
+  ('preinc', 0)                7
+  ('sub_assign', 0)            111
+  ('xor_assign', 0)            2
+tag_expr:
+  0x00                         5
+  0x01                         413
+  0x0A                         530
+  0x0B                         1047
+  0x0D                         8
+  0x0E                         6
+  0x0F                         992
+  0x10                         3671
+  0x11                         41
+  0x12                         847
+  0x13                         1738
+  0x02                         732
+  0x14                         5
+  0x15                         961
+  0x16                         9699
+  0x17                         41
+  0x18                         22
+  0x19                         112
+  0x1A                         12
+  0x1B                         10427
+  0x1C                         88854
+  0x03                         476
+  0x1E                         8684
+  0x1F                         1870
+  0x20                         257
+  0x21                         229
+  0x23                         1112
+  0x04                         5
+  0x05                         112
+  0x06                         253
+  0x07                         2322
+  0x08                         439
+  0x09                         151
+tag_stmt:
+  0x17                         879
+  0x18                         73
+  0x19                         7
+  0x1A                         3
+  0x1B                         18107
+  0x1E                         1
+  0x22                         3044
+  0x23                         42048
+  0x24                         105
+  0x25                         8
+  0x27                         455
+  0x28                         111
+  0x2C                         4
+  0x2D                         2
+  0x2E                         31
+unreachable:
+  0x0024                       1
+  0x0004                       16
+  0x0028                       150
+  0x1003                       20753
+  0x0029                       27
+  0x1007                       151
+  0x1008                       1
+  0x1014                       91
+  0x101B                       32
+  0x1027                       1
+  0x002B                       177
+
+token census over 2663 Build 940 pairs
+  token                     source     class  files agreeing   class side
+  ||                           363       363   2663 of 2663    expr/stmt lor (tag 0x01)
+  || (tests)                   363       363   2663 of 2663    0x0005 or_test
+  &&                           618       618   2663 of 2663    expr/stmt land (tag 0x02)
+  && (tests)                   618       618   2663 of 2663    0x0004 and_test
+  |                            418       418   2663 of 2663    tag 0x03
+  ^                              1         1   2663 of 2663    tag 0x04
+  &                             35        35   2663 of 2663    tag 0x05
+  !=                           204       204   2663 of 2663    tag 0x06
+  ==                          2089      2089   2663 of 2663    tag 0x07
+  >=                           373       373   2663 of 2663    tag 0x08
+  <=                           134       134   2663 of 2663    tag 0x09
+  >                            459       459   2663 of 2663    tag 0x0A
+  <                            852       852   2663 of 2663    tag 0x0B
+  >>>                            0         0   2663 of 2663    tag 0x0C
+  >>                             6         6   2663 of 2663    tag 0x0D
+  <<                             2         2   2663 of 2663    tag 0x0E
+  - binary                     829       829   2663 of 2663    tag 0x0F
+  + binary                    3362      3362   2663 of 2663    tag 0x10
+  %                             36        36   2663 of 2663    tag 0x11
+  /                            702       702   2663 of 2663    tag 0x12
+  * (outside import)          1451      1451   2663 of 2663    tag 0x13
+  ~                              1         1   2663 of 2663    tag 0x14
+  !                            810       810   2663 of 2663    tag 0x15
+  - unary                     9521      9521   2663 of 2663    tag 0x16
+  + unary                       86         -   2663 of 2663    no node
+  x++                          752       752   2663 of 2663    tag 0x17
+  x--                           82        82   2663 of 2663    tag 0x18
+  ++x                          118       118   2663 of 2663    tag 0x19
+  --x                           10        10   2663 of 2663    tag 0x1A
+  ?                              5         5   2663 of 2663    tag 0x00
+  =                          45605     45605   2663 of 2663    tag 0x23 + 0x002C init + field initialiser trees
+  *=                            72        72   2663 of 2663    tag 0x24
+  /=                             7         7   2663 of 2663    tag 0x25
+  %=                             0         0   2663 of 2663    tag 0x26
+  +=                           391       391   2663 of 2663    tag 0x27
+  -=                            73        73   2663 of 2663    tag 0x28
+  <<= >>= >>>=                   0         0   2663 of 2663    tags 0x29-0x2B
+  &=                             1         1   2663 of 2663    tag 0x2C
+  ^=                             1         1   2663 of 2663    tag 0x2D
+  |=                            30        30   2663 of 2663    tag 0x2E
+  string literal             12482     12482   2663 of 2663    0x4009
+  null                        1341      1341   2663 of 2663    0x000C
+  true / false                  10        10   2663 of 2663    0x100D
+  resource id literal         9063      9063   2663 of 2663    0x100E
+  int literal                26021     26028   2656 of 2663    0x100B
+  float literal              35197     35197   2663 of 2663    0x200A
+  instanceof                   222       222   2663 of 2663    tag 0x20
+  new                        10054     10054   2663 of 2663    tags 0x1E + 0x1F
+  case                         483       483   2663 of 2663    0x1017
+  switch                       133       133   2663 of 2663    0x0018
+  do                             3         3   2663 of 2663    0x1016
+  super.name(                  761       761   2663 of 2663    0x4026
+  this(                         13        13   2663 of 2663    0x0022
+  [ expr ]                   14491     14491   2663 of 2663    0x0020 + tag 0x1F
+  (Type) cast                  211       211   2663 of 2663    tag 0x21
+  super( tokens 2469, super_init nodes 2680: 211 super_init nodes have no token (implicit super()); files with fewer nodes than tokens: 0
+  files with at least one disagreement: 7
+    parts/engines/Callaway_Cadillac_Bugatti_V16/scripts/Cyclone_4speed_transmission.class: int literal source 8 class 9
+    parts/engines/Dodge_BMW_Racing_V10/scripts/V10_adjustable_6_speed_AWD_automatic_transmission.class: int literal source 13 class 14
+    parts/engines/Einvagen_Duhen_Ishima_Focer/scripts/Duhen_D20CV_manual_transmission.class: int literal source 15 class 16
+    parts/engines/Einvagen_Duhen_Ishima_Focer/scripts/Faktun_Group_Tran6_manual_transmission.class: int literal source 15 class 16
+    parts/engines/Einvagen_Duhen_Ishima_Focer/scripts/Shimutshibu_RC_T5600R1_manual_transmission.class: int literal source 12 class 13
+    parts/engines/GMC_Nissan_Honda_Hyundai_Opel/scripts/V6_adjustable_6_speed_RWD_automatic_transmission.class: int literal source 13 class 14
+    parts/engines/Lama_Performance_V12/scripts/LP_V12_transmission_street.class: int literal source 11 class 12
+
+line check over 2819 pairs (all builds): node token found on the recorded source line
+  str      12780 of   12791   exceptions in 7 files
+  int      26051 of   26058   exceptions in 7 files
+  float    35527 of   35534   exceptions in 4 files
+  rid       9063 of    9063   exceptions in 0 files
+  name    100158 of  100174   exceptions in 3 files
+  files with an exception: 15
+    cars/racers/Baiern_data/scripts/Baiern_R_windshield_2.class: str
+    cars/racers/Codrac_data/scripts/Codrac_L_taillights.class: str
+    cars/racers/Coyot_data/scripts/Coyot_RL_brake_light.class: str
+    cars/racers/Coyot_data/scripts/Coyot_RR_brake_light.class: str
+    parts/engines/Callaway_Cadillac_Bugatti_V16/scripts/Cyclone_4speed_transmission.class: int
+    parts/engines/Dodge_BMW_Racing_V10/scripts/V10_adjustable_6_speed_AWD_automatic_transmission.class: int
+    parts/engines/Einvagen_Duhen_Ishima_Focer/scripts/Duhen_D20CV_manual_transmission.class: int
+    parts/engines/Einvagen_Duhen_Ishima_Focer/scripts/Faktun_Group_Tran6_manual_transmission.class: int
+    parts/engines/Einvagen_Duhen_Ishima_Focer/scripts/Shimutshibu_RC_T5600R1_manual_transmission.class: int
+    parts/engines/GMC_Nissan_Honda_Hyundai_Opel/scripts/V6_adjustable_6_speed_RWD_automatic_transmission.class: int
+    parts/engines/Lama_Performance_V12/scripts/LP_V12_transmission_street.class: int
+    parts/neons/scripts/neontube_L_Aqua.class: float, name, str
+    parts/neons/scripts/neontube_L_Blue.class: float, name, str
+    parts/neons/scripts/neontube_R_Aqua.class: float, name, str
+    parts/running_gear/scripts/shocks/shock_absorber_SunStrip_22_rear.class: float
+
+all MUST rules hold (rules marked holds* have only the known exceptions)

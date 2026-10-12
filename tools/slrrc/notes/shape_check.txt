@@ -1,0 +1,285 @@
+check_shape: postfix shape of every tree, AST against class file
+corpus D:\SLRR-test
+
+trees compared 7742 (field initialisers 2331, methods 5411), events 386973
+trees with the same shape: 7727 of 7742
+
+category              pairs  pairs equal   trees   equal  different of these: literal only
+pair_940               2651         2650    7570    7569          1                      1
+pair_940 (stale)         12            1      15       4         11                      4
+pair_other              153          153     154     154          0                      0
+pair_other (stale)        3            0       3       0          3                      0
+
+"literal only": the sequences are equal once the value of each literal is
+ignored, so the structure agrees and only a string, a number or a resource
+id differs.
+
+Trees that differ (15):
+  [pair_940 (stale)] [literal] cars/racers/Baiern_data/scripts/Baiern_R_windshield_2 (Baiern_R_windshield_2) method <init>(I), line 10, tree 0: event 10 of 30 / 30
+            6  source ('op', 'assign', 's')                        class ('op', 'assign', 's')
+            7  source ('lit', 'str', 'Baiern CoupeSport GT III rear windshield') class ('lit', 'str', 'Baiern CoupeSport GT III rear windshield')
+            8  source ('var', 'name')                              class ('var', 'name')
+            9  source ('op', 'assign', 's')                        class ('op', 'assign', 's')
+      >>   10  source ('lit', 'str', 'The plastic replacement rear windshield for the CoupeSports GT III racercars.') class ('lit', 'str', 'The platsic replacement rear windshield for the CoupeSports GT III racercars.')
+           11  source ('var', 'description')                       class ('var', 'description')
+           12  source ('op', 'assign', 's')                        class ('op', 'assign', 's')
+           13  source ('lit', 'int', 60)                           class ('lit', 'int', 60)
+           14  source ('argc', 1)                                  class ('argc', 1)
+  [pair_940 (stale)] [literal] cars/racers/Codrac_data/scripts/Codrac_L_taillights (Codrac_L_taillights) method <init>(I), line 10, tree 0: event 7 of 23 / 23
+            3  source ('op', 'ctor', 's')                          class ('op', 'ctor', 's')
+            4  source ('var', 'PACKAGE')                           class ('var', 'PACKAGE')
+            5  source ('var', 'carCategory')                       class ('var', 'carCategory')
+            6  source ('op', 'assign', 's')                        class ('op', 'assign', 's')
+      >>    7  source ('lit', 'str', 'Codrac left taillights')     class ('lit', 'str', 'Codrac stock left taillights')
+            8  source ('var', 'name')                              class ('var', 'name')
+            9  source ('op', 'assign', 's')                        class ('op', 'assign', 's')
+           10  source ('lit', 'str', 'Stock left taillights for Codrac models.') class ('lit', 'str', 'StockS left taillights for Codrac models.')
+           11  source ('var', 'description')                       class ('var', 'description')
+  [pair_940 (stale)] [literal] cars/racers/Coyot_data/scripts/Coyot_RL_brake_light (Coyot_RL_brake_light) method <init>(I), line 10, tree 0: event 7 of 23 / 23
+            3  source ('op', 'ctor', 's')                          class ('op', 'ctor', 's')
+            4  source ('var', 'PACKAGE')                           class ('var', 'PACKAGE')
+            5  source ('var', 'carCategory')                       class ('var', 'carCategory')
+            6  source ('op', 'assign', 's')                        class ('op', 'assign', 's')
+      >>    7  source ('lit', 'str', 'Coyot left brake light')     class ('lit', 'str', 'Coyot rear left brake light')
+            8  source ('var', 'name')                              class ('var', 'name')
+            9  source ('op', 'assign', 's')                        class ('op', 'assign', 's')
+           10  source ('lit', 'str', 'Stock left taillight component for Coyot models.') class ('lit', 'str', 'Stock left taillights for Coyot models.')
+           11  source ('var', 'description')                       class ('var', 'description')
+  [pair_940 (stale)] [literal] cars/racers/Coyot_data/scripts/Coyot_RR_brake_light (Coyot_RR_brake_light) method <init>(I), line 10, tree 0: event 7 of 23 / 23
+            3  source ('op', 'ctor', 's')                          class ('op', 'ctor', 's')
+            4  source ('var', 'PACKAGE')                           class ('var', 'PACKAGE')
+            5  source ('var', 'carCategory')                       class ('var', 'carCategory')
+            6  source ('op', 'assign', 's')                        class ('op', 'assign', 's')
+      >>    7  source ('lit', 'str', 'Coyot right brake light')    class ('lit', 'str', 'Coyot rear right brake light')
+            8  source ('var', 'name')                              class ('var', 'name')
+            9  source ('op', 'assign', 's')                        class ('op', 'assign', 's')
+           10  source ('lit', 'str', 'Stock right taillight component for Coyot models.') class ('lit', 'str', 'Stock left taillights for Coyot models.')
+           11  source ('var', 'description')                       class ('var', 'description')
+  [pair_940 (stale)] [structure] parts/engines/Callaway_Cadillac_Bugatti_V16/scripts/Cyclone_4speed_transmission (Cyclone_4speed_transmission) method <init>(I), line 12, tree 0: event 63 of 85 / 85
+           59  source ('op', 'assign', 's')                        class ('op', 'assign', 's')
+           60  source ('lit', 'float', '1.4')                      class ('lit', 'float', 1068708659)
+           61  source ('var', 'end_ratio')                         class ('var', 'end_ratio')
+           62  source ('op', 'assign', 's')                        class ('op', 'assign', 's')
+      >>   63  source ('var', 'TT_AUTO')                           class ('lit', 'int', 1)
+           64  source ('var', 'type')                              class ('var', 'type')
+           65  source ('op', 'assign', 's')                        class ('op', 'assign', 's')
+           66  source ('lit', 'float', '40.0')                     class ('lit', 'float', 1109393408)
+           67  source ('var', 'starter_torque')                    class ('var', 'starter_torque')
+  [pair_940 (stale)] [structure] parts/engines/Dodge_BMW_Racing_V10/scripts/V10_adjustable_6_speed_AWD_automatic_transmission (V10_adjustable_6_speed_AWD_automatic_transmission) method <init>(I), line 12, tree 0: event 73 of 104 / 104
+           69  source ('op', 'assign', 's')                        class ('op', 'assign', 's')
+           70  source ('lit', 'float', '2.500')                    class ('lit', 'float', 1075838976)
+           71  source ('var', 'end_ratio')                         class ('var', 'end_ratio')
+           72  source ('op', 'assign', 's')                        class ('op', 'assign', 's')
+      >>   73  source ('var', 'TT_AUTO')                           class ('lit', 'int', 1)
+           74  source ('var', 'type')                              class ('var', 'type')
+           75  source ('op', 'assign', 's')                        class ('op', 'assign', 's')
+           76  source ('lit', 'float', '50.0')                     class ('lit', 'float', 1112014848)
+           77  source ('var', 'starter_torque')                    class ('var', 'starter_torque')
+  [pair_940 (stale)] [structure] parts/engines/Einvagen_Duhen_Ishima_Focer/scripts/Duhen_D20CV_manual_transmission (Duhen_D20CV_manual_transmission) method <init>(I), line 11, tree 0: event 76 of 111 / 111
+           72  source ('op', 'assign', 's')                        class ('op', 'assign', 's')
+           73  source ('lit', 'float', '40.0')                     class ('lit', 'float', 1109393408)
+           74  source ('var', 'starter_torque')                    class ('var', 'starter_torque')
+           75  source ('op', 'assign', 's')                        class ('op', 'assign', 's')
+      >>   76  source ('var', 'TT_MANUAL_CLUTCH')                  class ('lit', 'int', 2)
+           77  source ('var', 'type')                              class ('var', 'type')
+           78  source ('op', 'assign', 's')                        class ('op', 'assign', 's')
+           79  source ('lit', 'int', 7)                            class ('lit', 'int', 7)
+           80  source ('var', 'centerDifferential_slot_ID')        class ('var', 'centerDifferential_slot_ID')
+  [pair_940 (stale)] [structure] parts/engines/Einvagen_Duhen_Ishima_Focer/scripts/Faktun_Group_Tran6_manual_transmission (Faktun_Group_Tran6_manual_transmission) method <init>(I), line 13, tree 0: event 76 of 111 / 111
+           72  source ('op', 'assign', 's')                        class ('op', 'assign', 's')
+           73  source ('lit', 'float', '40.0')                     class ('lit', 'float', 1109393408)
+           74  source ('var', 'starter_torque')                    class ('var', 'starter_torque')
+           75  source ('op', 'assign', 's')                        class ('op', 'assign', 's')
+      >>   76  source ('var', 'TT_MANUAL_CLUTCH')                  class ('lit', 'int', 2)
+           77  source ('var', 'type')                              class ('var', 'type')
+           78  source ('op', 'assign', 's')                        class ('op', 'assign', 's')
+           79  source ('lit', 'int', 7)                            class ('lit', 'int', 7)
+           80  source ('var', 'centerDifferential_slot_ID')        class ('var', 'centerDifferential_slot_ID')
+  [pair_940 (stale)] [structure] parts/engines/Einvagen_Duhen_Ishima_Focer/scripts/Shimutshibu_RC_T5600R1_manual_transmission (Shimutshibu_RC_T5600R1_manual_transmission) method <init>(I), line 11, tree 0: event 76 of 104 / 104
+           72  source ('op', 'assign', 's')                        class ('op', 'assign', 's')
+           73  source ('lit', 'float', '40.0')                     class ('lit', 'float', 1109393408)
+           74  source ('var', 'starter_torque')                    class ('var', 'starter_torque')
+           75  source ('op', 'assign', 's')                        class ('op', 'assign', 's')
+      >>   76  source ('var', 'TT_MANUAL')                         class ('lit', 'int', 3)
+           77  source ('var', 'type')                              class ('var', 'type')
+           78  source ('op', 'assign', 's')                        class ('op', 'assign', 's')
+           79  source ('lit', 'int', 7)                            class ('lit', 'int', 7)
+           80  source ('var', 'centerDifferential_slot_ID')        class ('var', 'centerDifferential_slot_ID')
+  [pair_940 (stale)] [structure] parts/engines/GMC_Nissan_Honda_Hyundai_Opel/scripts/V6_adjustable_6_speed_RWD_automatic_transmission (V6_adjustable_6_speed_RWD_automatic_transmission) method <init>(I), line 12, tree 0: event 73 of 102 / 102
+           69  source ('op', 'assign', 's')                        class ('op', 'assign', 's')
+           70  source ('lit', 'float', '3.00')                     class ('lit', 'float', 1077936128)
+           71  source ('var', 'end_ratio')                         class ('var', 'end_ratio')
+           72  source ('op', 'assign', 's')                        class ('op', 'assign', 's')
+      >>   73  source ('var', 'TT_AUTO')                           class ('lit', 'int', 1)
+           74  source ('var', 'type')                              class ('var', 'type')
+           75  source ('op', 'assign', 's')                        class ('op', 'assign', 's')
+           76  source ('lit', 'float', '100.0')                    class ('lit', 'float', 1120403456)
+           77  source ('var', 'starter_torque')                    class ('var', 'starter_torque')
+  [pair_940 (stale)] [structure] parts/engines/Lama_Performance_V12/scripts/LP_V12_transmission_street (LP_V12_transmission_street) method <init>(I), line 12, tree 0: event 71 of 92 / 92
+           67  source ('op', 'assign', 's')                        class ('op', 'assign', 's')
+           68  source ('lit', 'float', '50.0')                     class ('lit', 'float', 1112014848)
+           69  source ('var', 'starter_torque')                    class ('var', 'starter_torque')
+           70  source ('op', 'assign', 's')                        class ('op', 'assign', 's')
+      >>   71  source ('var', 'TT_AUTO')                           class ('lit', 'int', 1)
+           72  source ('var', 'type')                              class ('var', 'type')
+           73  source ('op', 'assign', 's')                        class ('op', 'assign', 's')
+           74  source ('lit', 'float', '9.0')                      class ('lit', 'float', 1091567616)
+           75  source ('argc', 1)                                  class ('argc', 1)
+  [pair_other (stale)] [structure] parts/neons/scripts/neontube_L_Aqua (neontube_L_Aqua) method <init>(I), line 11, tree 0: event 4 of 17 / 20
+            0  source ('var', 'id')                                class ('var', None)
+            1  source ('argc', 1)                                  class ('argc', 1)
+            2  source ('super_init')                               class ('super_init')
+            3  source ('op', 'ctor', 's')                          class ('op', 'ctor', 's')
+      >>    4  source ('lit', 'str', 'Left aqua neon light tube')  class ('var', 'COMMON')
+            5  source ('var', 'name')                              class ('var', 'carCategory')
+            6  source ('op', 'assign', 's')                        class ('op', 'assign', 's')
+            7  source ('lit', 'float', '45.25')                    class ('lit', 'str', 'Left StreetGlow Aqua Neon Tube')
+            8  source ('argc', 1)                                  class ('var', 'name')
+  [pair_other (stale)] [structure] parts/neons/scripts/neontube_L_Blue (neontube_L_Blue) method <init>(I), line 11, tree 0: event 4 of 17 / 23
+            0  source ('var', 'id')                                class ('var', None)
+            1  source ('argc', 1)                                  class ('argc', 1)
+            2  source ('super_init')                               class ('super_init')
+            3  source ('op', 'ctor', 's')                          class ('op', 'ctor', 's')
+      >>    4  source ('lit', 'str', 'Left blue neon light tube')  class ('var', 'COMMON')
+            5  source ('var', 'name')                              class ('var', 'carCategory')
+            6  source ('op', 'assign', 's')                        class ('op', 'assign', 's')
+            7  source ('lit', 'float', '45.25')                    class ('lit', 'str', 'Left StreetGlow Blue Neon Tube')
+            8  source ('argc', 1)                                  class ('var', 'name')
+  [pair_other (stale)] [structure] parts/neons/scripts/neontube_R_Aqua (neontube_R_Aqua) method <init>(I), line 11, tree 0: event 4 of 17 / 20
+            0  source ('var', 'id')                                class ('var', None)
+            1  source ('argc', 1)                                  class ('argc', 1)
+            2  source ('super_init')                               class ('super_init')
+            3  source ('op', 'ctor', 's')                          class ('op', 'ctor', 's')
+      >>    4  source ('lit', 'str', 'Right aqua neon light tube') class ('var', 'COMMON')
+            5  source ('var', 'name')                              class ('var', 'carCategory')
+            6  source ('op', 'assign', 's')                        class ('op', 'assign', 's')
+            7  source ('lit', 'float', '45.25')                    class ('lit', 'str', 'Right StreetGlow Aqua Neon Tube')
+            8  source ('argc', 1)                                  class ('var', 'name')
+  [pair_940] [literal] sl/Scripts/game/CareerEvents/TimeAttackTest (TimeAttackTest) method init()V, line 17, tree 4: event 4 of 135 / 135
+            0  source ('lit', 'rid', 258)                          class ('lit', 'rid', 258)
+            1  source ('var', 'track_data_id')                     class ('var', 'track_data_id')
+            2  source ('op', 'assign', 's')                        class ('op', 'assign', 's')
+            3  source ('new', 'e', 'Ljava.util.resource.ResourceRef;') class ('new', 'e', 'Ljava.util.resource.ResourceRef;')
+      >>    4  source ('lit', 'rid', 9)                            class ('lit', 'rid', 0)
+            5  source ('argc', 1)                                  class ('argc', 1)
+            6  source ('new_init')                                 class ('new_init')
+            7  source ('var', 'title_res')                         class ('var', 'title_res')
+            8  source ('op', 'assign', 's')                        class ('op', 'assign', 's')
+
+Class type names in the sources of the pairs (declarations and bodies): 12707
+  first found in file                           283
+  first found in import                         4890
+  first found in java.lang                      6700
+  first found in nowhere                        0
+  first found in package                        834
+  with candidates in more than one package      0
+
+Name paths (a, a.b.c, a.b.f(...)) in the trees of consistent pairs that agree:
+     11958  bare call f(...)
+      9668  bare call f(...) compiled as a method ref
+      2290  bare call f(...) compiled as a path of 1 starting with name
+      6908  class prefix = the first identifier resolved as a type name
+         0  class prefix that is another class than the resolver finds
+         0  first identifier is also a class name but compiled as a variable
+     91542  name paths
+      6908  name paths starting with a class node
+     56130  name paths starting with a field node
+     28504  name paths starting with a local node
+         0  name paths whose node count differs from the number of identifiers
+
+Literals in the trees of consistent pairs that agree (value compared):
+        10  bool literals
+        35  escapes \"
+       249  escapes \\
+       235  escapes \n
+         2  escapes \t
+     35413  float literals
+     35413  float literals (kind compared, bits not)
+     25940  int literals
+       180  int literals above 0x7FFFFFFF (hex)
+       478  int literals written in hex
+     84514  literals
+      1343  null literals
+      9055  rid literals
+       667  rid literals with 4 hex digits
+         5  rid literals with 7 hex digits
+      8382  rid literals with 8 hex digits
+         1  rid literals with 9 hex digits
+     12753  str literals
+        51  str literals holding a raw TAB
+       249  str literals with an escape
+
+Events of the trees that agree, by kind:
+       618  and_test
+     37310  argc
+     24386  call
+      1088  call_on
+       760  call_super
+       483  case
+       211  cast
+      3293  declare
+      2331  end
+       687  getfield
+     12608  index
+       222  instanceof
+      3971  jump
+      6944  jump_false
+         3  jump_true
+     84531  lit
+      8241  new
+      8241  new_init
+      1814  newarray
+      3352  op add e
+       391  op add_assign s
+         1  op and_assign s
+      1097  op assign e
+     40199  op assign s
+        35  op band e
+         1  op bnot e
+       416  op bor e
+         1  op bxor e
+      9390  op call e
+     16844  op call s
+         5  op cond e
+      2835  op ctor s
+       702  op div e
+         7  op div_assign s
+      2089  op eq e
+       373  op ge e
+       459  op gt e
+       618  op land e
+       134  op le e
+       811  op lnot e
+       363  op lor e
+       852  op lt e
+        36  op mod e
+      1451  op mul e
+        72  op mul_assign s
+       204  op ne e
+      9520  op neg e
+        30  op or_assign s
+        17  op postdec e
+        65  op postdec s
+        32  op postinc e
+       720  op postinc s
+         9  op predec e
+         1  op predec s
+       112  op preinc e
+         6  op preinc s
+         2  op shl e
+         6  op shr e
+       829  op sub e
+        73  op sub_assign s
+         1  op xor_assign s
+       363  or_test
+       133  pop
+      1780  push_void
+      2836  ret
+      2961  ret_value
+      2559  store
+      2822  super_init
+        13  this_init
+      1181  value
+     79416  var
+
+7727 of 7742 trees agree; 0 trees of consistent pairs differ in structure (7.6 s)

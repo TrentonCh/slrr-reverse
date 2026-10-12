@@ -1,0 +1,143 @@
+MB field of an interface is not inherited
+MB member behind length
+MB member of an array other than length
+MB member of an int
+MB method name used as a field
+MB unknown member
+MB unknown member in the receiver of a call
+MB unknown member of a class
+N class name as a value
+N class written with its package
+N local of a case group used in the next group
+N local of a for used behind it
+N local used behind its scope
+N unknown head of a dotted name
+N unknown name
+N unknown name as an assignment target
+N unknown name in a field initialiser
+N unknown receiver of a call
+NM several errors are all reported
+U return with a value in a constructor
+W ?: as an argument of a resolvable call
+W call named like a field
+W call named like a local
+W call named like a parameter
+W call named like an inherited field
+W complement as an argument of a resolvable call
+W compound assignment as a value
+W compound assignment as an argument
+W constructor that ends in return
+W continue in a do
+W continue in a for without update
+W continue in a while
+W continue inside a switch in a for
+W instanceof as an argument of a resolvable call
+W length of a computed value
+W length of the value of a call
+W local passed to a call in its own initialiser
+W local used in its own initialiser
+W method body that emits no node
+W new array as an argument of a resolvable call
+W not as an argument of a resolvable call
+W odd argument in a call through a name
+W parenthesised dotted name as a receiver
+W parenthesised literal as an argument of a resolvable call
+W parenthesised name as an argument of a resolvable call
+W parenthesised name as the receiver of a call
+W parenthesised name as the receiver of a member
+W return with a value in a void method
+W return without a value in a value method
+W this in a field initialiser
+W this in a static field initialiser
+W this in a static method
+W true as an argument of a resolvable call
+W two overloads fit equally well
+W value method that does not end in return
+W value method that ends in if else
+W variable named like a class of the source
+W void method that ends in return
+X break in an if
+X break outside a loop
+X continue in a switch without a loop
+X continue outside a loop
+lookup p.C.link
+lookup p.C.x
+lookup p.I.IC
+lookup p.Loop1.lf
+lookup p.Loop1.nowhere
+lookup p.Loop1.num(I)
+lookup p.Nowhere.num(I)
+lookup p.Nowhere.x
+lookup p.S.ar(I)
+lookup p.S.ar([F)
+lookup p.S.ar([I)
+lookup p.S.ar(null)
+lookup p.S.conv(I)
+lookup p.S.conv(Ljava.lang.String;)
+lookup p.S.far(Ljava.lang.Object;)
+lookup p.S.far(Ljava.lang.String;)
+lookup p.S.far(Lp.T;)
+lookup p.S.ifc(Lp.A;)
+lookup p.S.ifc(Lp.C;)
+lookup p.S.ifc(Lp.T;)
+lookup p.S.mixed(null)
+lookup p.S.nosuch(I)
+lookup p.S.num()
+lookup p.S.num(?)
+lookup p.S.num(F)
+lookup p.S.num(I)
+lookup p.S.num(I,I)
+lookup p.S.ob(I)
+lookup p.S.ob(L;)
+lookup p.S.ob([I)
+lookup p.S.ob([Lp.T;)
+lookup p.S.ob(null)
+lookup p.S.onlyint(F)
+lookup p.S.onlyint(null)
+lookup p.S.pick(Ljava.lang.String;)
+lookup p.S.pick(Lp.A;)
+lookup p.S.pick(Lp.C;)
+lookup p.S.pick(Lp.T;)
+lookup p.S.st(F)
+lookup p.S.st(I)
+lookup p.S.st([I)
+lookup p.S.tie(null)
+lookup p.S.two(I,I)
+lookup p.S.unk(L;)
+lookup p.S2.conv(I)
+lookup p.S2.far(Ljava.lang.String;)
+lookup p.S2.far(Lp.T;)
+lookup p.S2.num(F)
+lookup p.S2.num(I)
+lookup p.T.IC
+lookup p.T.SA
+lookup p.T.ST
+lookup p.T.base
+lookup p.T.nowhere
+lookup p.T.x
+ok best of several overloads
+ok calls
+ok continue in a for with update
+ok field initialisers
+ok local that hides a field
+ok names
+ok odd arguments of a call nothing resolves
+ok return forms
+ok static method
+ok switch and loops
+ok true as an argument of a call nothing resolves
+ok unreachable statements
+ok value method with an empty body
+tree calls#0
+tree defaults of appendix B#0
+tree loops and constructors#0
+tree loops and constructors#1
+tree loops and constructors#2
+tree names#0
+tree operators and literals#0
+tree operators and literals#1
+tree operators and literals#2
+tree operators and literals#3
+tree operators and literals#4
+tree statements#0
+tree switch#0

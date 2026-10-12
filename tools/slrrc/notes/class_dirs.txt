@@ -1,0 +1,62 @@
+study_class_dirs: where the classes named by a source live
+
+distinct class names per source, all 3,454 sources: 7116
+      77  same file                                          pair_940 77  pair_other 0  source_only 0
+    6703  classpath directory of its package                 pair_940 5786  pair_other 158  source_only 759
+      70  directory of the source (not on the classpath)     pair_940 70  pair_other 0  source_only 0
+     266  another directory (not on the classpath)           pair_940 265  pair_other 0  source_only 1
+
+packages whose classes all sit in the classpath directory of the package: 26 of 53
+packages elsewhere (27):
+  java.game                                                    24 directories, e.g. multibot/maps/a1ring/data
+  java.game.cars                                               25 directories, e.g. cars/racers/axis_data/scripts
+  java.game.parts                                              3 directories, e.g. misc/garage/vehicle_lift/scripts
+  java.game.parts.engines.Baiern_Emer                          1 directory, e.g. parts/engines/baiern_emer/scripts
+  java.game.parts.engines.Callaway_Cadillac_Bugatti_V16        1 directory, e.g. parts/engines/callaway_cadillac_bugatti_v16/scripts
+  java.game.parts.engines.Dodge_BMW_Racing_V10                 1 directory, e.g. parts/engines/dodge_bmw_racing_v10/scripts
+  java.game.parts.engines.Einvagen_Duhen_Ishima_Focer          1 directory, e.g. parts/engines/einvagen_duhen_ishima_focer/scripts
+  java.game.parts.engines.GMC_Nissan_Honda_Hyundai_Opel        1 directory, e.g. parts/engines/gmc_nissan_honda_hyundai_opel/scripts
+  java.game.parts.engines.Lama_Performance_V12                 1 directory, e.g. parts/engines/lama_performance_v12/scripts
+  java.game.parts.engines.MC_Prime_SuperDuty                   1 directory, e.g. parts/engines/mc_prime_superduty/scripts
+  java.game.parts.interior                                     3 directories, e.g. parts/interior/scripts/seats
+  java.game.parts.mufflers                                     1 directory, e.g. parts/mufflers/scripts
+  java.game.parts.neons                                        1 directory, e.g. parts/neons/scripts
+  java.game.parts.pedals                                       1 directory, e.g. parts/pedals/scripts
+  java.game.parts.rgearpart.reciprocatingrgearpart             2 directories, e.g. cars/racers/scripts
+  java.game.parts.running_gear                                 1 directory, e.g. parts/running_gear/scripts
+  java.game.parts.running_gear.brakes                          1 directory, e.g. parts/running_gear/scripts/brakes
+  java.game.parts.running_gear.fl_susp                         1 directory, e.g. parts/running_gear/scripts/fl_susp
+  java.game.parts.running_gear.fr_susp                         1 directory, e.g. parts/running_gear/scripts/fr_susp
+  java.game.parts.running_gear.rl_susp                         1 directory, e.g. parts/running_gear/scripts/rl_susp
+  java.game.parts.running_gear.rr_susp                         1 directory, e.g. parts/running_gear/scripts/rr_susp
+  java.game.parts.running_gear.scripts                         1 directory, e.g. parts/running_gear/scripts
+  java.game.parts.running_gear.shocks                          1 directory, e.g. parts/running_gear/scripts/shocks
+  java.game.parts.running_gear.springs                         1 directory, e.g. parts/running_gear/scripts/springs
+  java.game.parts.running_gear.sways                           1 directory, e.g. parts/running_gear/scripts/sways
+  java.game.parts.wheels.rims                                  1 directory, e.g. parts/wheels/rims/scripts
+  java.game.parts.wheels.tyres                                 1 directory, e.g. parts/wheels/tyres/scripts
+
+classes named from another directory that is not on the classpath (24 distinct):
+     22 sources name java.game.cars.Whisper_models
+     15 sources name java.game.cars.Emer_models
+     14 sources name java.game.cars.Yotta_models
+     14 sources name java.game.cars.Badge_models
+     13 sources name java.game.cars.Baiern_models
+     13 sources name java.game.cars.Hauler_s_models
+     12 sources name java.game.cars.Duhen_models
+     12 sources name java.game.cars.Codrac_models
+     12 sources name java.game.cars.Einvagen_models
+     12 sources name java.game.cars.Kurumma_models
+     11 sources name java.game.cars.Axis_models
+     11 sources name java.game.cars.Remo_models
+
+classes declared under one full name in several directories (3):
+      8 directories declare java.game.cars.kit_Custom_body
+      8 directories declare java.game.cars.kit_Tuner_body
+     21 directories declare java.game.track_data
+  e.g. parts/engines/Baiern_Emer/scripts/src/Baiern_88er_crankshaft.java names java.game.cars.Baiern_models, which lives in cars/racers/baiern_data/scripts
+  e.g. parts/engines/Baiern_Emer/scripts/src/Baiern_90er_crankshaft.java names java.game.cars.Baiern_models, which lives in cars/racers/baiern_data/scripts
+  e.g. parts/engines/Baiern_Emer/scripts/src/Baiern_alternator.java names java.game.cars.Baiern_models, which lives in cars/racers/baiern_data/scripts
+  e.g. parts/engines/Baiern_Emer/scripts/src/Baiern_Devils_6SFi_3_6_block.java names java.game.cars.Baiern_models, which lives in cars/racers/baiern_data/scripts
+  e.g. parts/engines/Baiern_Emer/scripts/src/Baiern_Devils_6SFi_3_6_flywheel.java names java.game.cars.Baiern_models, which lives in cars/racers/baiern_data/scripts
+  e.g. parts/engines/Baiern_Emer/scripts/src/Baiern_Devils_6SFi_3_6_turbo_exhaust_header.java names java.game.cars.Yotta_models, which lives in cars/racers/yotta_data/scripts

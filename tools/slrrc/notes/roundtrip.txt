@@ -1,0 +1,28 @@
+corpus            D:\SLRR-test
+class files       2921  (8433322 bytes)
+parsed strictly   2921
+parse errors      0
+blobs             2993
+byte-identical    2921 of 2921
+  via JSON dict   2921 of 2921
+  canonical list  2921 of 2921
+validate problems 0 blobs
+chunk layouts (per blob):
+  CONS MTHD CLSS TREE          2659
+  CONS FILD MTHD CLSS TREE     328
+  CONS FILD CLSS TREE          4
+  CONS CLSS TREE               2
+builds (files / blobs):
+  0x24F9D  2757 / 2829
+  0x24F5C  159 / 159
+  0x11AE1  5 / 5
+blobs per file:
+  1  2892
+  2  13
+  3  8
+  4  2
+  5  3
+  8  1
+  9  1
+  11  1
+failures          0

@@ -1,0 +1,181 @@
+B byte above 0x7F in a block comment
+B byte above 0x7F in a line comment
+B byte above 0x7F in a string
+B byte order mark
+L backslash
+L block comment not closed
+L byte above 0x7F outside a string
+L hex without digits
+L number with letters
+L stray character
+L string ends in a backslash
+L string not closed
+LIM 65535 lines are fine
+LIM blocks 300 deep
+LIM more than 65535 lines
+LIM name chain of 300
+LIM nesting of 150 is fine
+LIM parentheses 300 deep
+LIM sum of 150 terms is fine
+LIM sum of 300 terms
+T unknown field type
+T unknown parameter type
+T unknown qualified type
+T unknown type behind new
+TT unknown interface
+TT unknown superclass
+U ++ on a call
+U -- behind a literal
+U array initialiser of a field
+U array initialiser of a local
+U array of void
+U assignment to a call
+U assignment to a parenthesised name
+U brackets after a parameter list
+U break with a label
+U cast to a class array type
+U cast to an array type
+U character literal
+U continue with a label
+U declaration as the body of else
+U declaration as the body of if
+U declaration as the body of while
+U field of type void
+U float with an exponent
+U float with an exponent and a point
+U float with suffix d
+U initialiser block
+U instanceof with a primitive type
+U instanceof with an array type
+U interface with extends
+U interface with implements
+U labelled statement
+U member of new T[n]
+U modifier on a local
+U modifier on a parameter
+U native method with a body
+U new with an initialiser list
+U open dimension in new
+U operator <<=
+U operator >>=
+U operator >>>
+U operator >>>=
+U parameter of type void
+U second default label
+U static initialiser block
+U super(..) not first
+U super.field
+U this(..) as a value
+U this(..) in a method
+U two dimensions in a type
+U two dimensions in new
+U two dimensions type and name
+U type declared twice
+W ?: inside ?:
+W ?: inside an argument of ?:
+W ?: inside the condition of ?:
+W abstract method
+W brackets after a field name
+W brackets after a local name
+W brackets after a parameter name
+W constructor named otherwise
+W decimal int above 2147483647
+W decimal int with a leading zero
+W default not last
+W empty group
+W empty statement
+W escape other than the four
+W final class
+W final local
+W final method
+W final parameter
+W float with suffix F
+W float without digits after the point
+W float without digits before the point
+W group that falls through
+W hex int above 32 bits
+W import after a type
+W import of a single class
+W interface with members
+W modifier twice
+W new as a statement
+W no package
+W operator %=
+W private constructor
+W protected
+W qualified name behind extends
+W qualified name behind new
+W qualified type name
+W resource id above 32 bits
+W semicolon at top level
+W semicolon between members
+W several init expressions in for
+W several labels on a group
+W several update expressions in for
+W several variables declared in for
+W switch without groups
+W synchronized
+X array creation as a statement
+X block not closed
+X case outside a switch
+X class body not closed
+X else without if
+X empty source
+X expression expected
+X extends list
+X import before the package
+X import without a name
+X literal as a for update
+X missing class name
+X missing semicolon
+X name as a statement
+X new of a primitive type with arguments
+X no class
+X parenthesised assignment as a statement
+X second package declaration
+X statement before the first label
+X sum as a statement
+X super alone
+X type expected in a parameter
+X unbalanced parenthesis
+ok abstract class
+ok assignment operators
+ok binary operators
+ok bodiless method and constructor
+ok calls
+ok casts
+ok class in java.lang without import
+ok class through an import
+ok comments
+ok conditional
+ok constructors
+ok empty class body
+ok field with side effect
+ok fields
+ok float literals
+ok if
+ok import of a package without classes
+ok import with a colon
+ok instanceof
+ok int literals
+ok interface
+ok locals
+ok loops
+ok method modifiers
+ok methods
+ok minimal class
+ok names
+ok native and abstract field
+ok new and arrays
+ok no line end at the end
+ok null true false this
+ok public class with extends and implements
+ok resource id
+ok return
+ok several classes
+ok statements after return
+ok string literals
+ok string with a raw TAB
+ok switch
+ok switch groups ending in return
+ok unary operators

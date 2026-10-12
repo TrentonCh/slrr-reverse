@@ -1,0 +1,8 @@
+# generated or derived from the game: never commit
+out/
+spec/out/
+analysis/*/out/
+notes/*.json
+__pycache__/
+*.pyc
+*.pickle

@@ -1,0 +1,18 @@
+check_parse: lexer.py and parser.py over every source of the corpus
+corpus D:\SLRR-test
+
+sources 3454, bytes 5068042, tokens 852211, comments 13134, AST nodes 486738
+
+ok   L1   3454 of 3454  the lexer tokenizes the source
+ok   L2   3454 of 3454  tokens, comments and white space tile the file
+ok   L3   3454 of 3454  same token stream as srclex.py
+ok   P1   3454 of 3454  the parser accepts the source
+ok   P2   3454 of 3454  every token consumed; token ranges of the nodes nest
+ok   P3   3454 of 3454  tokens regenerated from the AST = tokens read
+ok   P4   3454 of 3454  the regenerated text parses to the same AST
+ok   P5   3454 of 3454  package and top-level types = corpus index
+info N1    3067 of 3068  a source with one ; { } ( ) [ ] token blanked out is rejected (494 sources sampled)
+          still a valid program without: parts/running_gear/scripts/shocks/src/shock_absorber_Baiern_CS_front.java:50:45: ';'
+
+tokenize rate 3454 of 3454 (100.00%), parse rate 3454 of 3454 (100.00%)
+8 of 8 rules hold for every source (37.8 s)

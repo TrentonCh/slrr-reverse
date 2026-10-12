@@ -1,0 +1,6 @@
+A. strictness: 1104 damaged inputs from 8 files: TufaError raised for 1103, layout still well-formed but rejected by validate for 1, accepted 0
+   validate: system/scripts/lang/Runnable.class: MTHD static count +1
+B. compare_blobs: 34 of 34 single-byte changes located (chunk and offset)
+C. disassembler: 2921 files, 2993 blobs, 42678336 characters of text; exceptions 0, unstable 0, pool-kind mismatches 0, JSON defects 0
+D. writer from dicts with the canonical chunk list: 2921 of 2921 files identical
+OK

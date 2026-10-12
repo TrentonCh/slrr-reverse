@@ -1,0 +1,77 @@
+check_sensitivity: wrong grammars against the class files
+corpus D:\SLRR-test
+
+Real grammar: 7724 trees of 2804 consistent pairs, 1 differ (the known resource id of a missing pack)
+
+mutation            no parse     trees     pairs  what was changed
+flat                       0       360       175  all binary operators on one level, grouped left to right
+right                      0       531       252  every binary operator groups to the right
+right 1                    0        50        41  level 1 (||) groups to the right
+right 2                    0        33        19  level 2 (&&) groups to the right
+right 3                    0        43        26  level 3 (|) groups to the right
+right 4                    0         0         0  level 4 (^) groups to the right
+right 5                    0         0         0  level 5 (&) groups to the right
+right 6                    0         0         0  level 6 (== !=) groups to the right
+right 7                    0         0         0  level 7 (< > <= >= instanceof) groups to the right
+right 8                    0         0         0  level 8 (<< >> >>>) groups to the right
+right 9                    0       327       198  level 9 (+ -) groups to the right
+right 10                   0       149       126  level 10 (* / %) groups to the right
+swap 1 2                   0         1         1  neighbouring levels 1 (||) and 2 (&&) exchanged
+swap 2 3                   0         0         0  neighbouring levels 2 (&&) and 3 (|) exchanged
+swap 3 4                   0         0         0  neighbouring levels 3 (|) and 4 (^) exchanged
+swap 4 5                   0         0         0  neighbouring levels 4 (^) and 5 (&) exchanged
+swap 5 6                   0         0         0  neighbouring levels 5 (&) and 6 (== !=) exchanged
+swap 6 7                   0         0         0  neighbouring levels 6 (== !=) and 7 (< > <= >= instanceof) exchanged
+swap 7 8                   0         0         0  neighbouring levels 7 (< > <= >= instanceof) and 8 (<< >> >>>) exchanged
+swap 8 9                   0         0         0  neighbouring levels 8 (<< >> >>>) and 9 (+ -) exchanged
+swap 9 10                  0       212       153  neighbouring levels 9 (+ -) and 10 (* / %) exchanged
+else outer                 0         2         2  An else belongs to the OUTER if when an if is the direct body of an if:  if (a) if (b) x; else y;  reads as  if (a) { if (b) x; } else y;
+no name cast              53      1890        53  '(' Name ')' never starts a cast; only (int) and (float) do.
+cast before sign           0         0         0  '(' Name ')' also starts a cast when + or - follows:  (a) - b  reads as the cast of -b to a.
+loose unary                0         6         5  Prefix operators and casts take a whole product as operand: -a * b  reads as  -(a * b),  (float)a / b  as  (float)(a / b).
+loosest unary              0        75        45  Prefix operators and casts take the whole binary expression that follows:  !a && b  reads as  !(a && b),  -a + b  as  -(a + b).
+cast of primary            0        40        38  A cast applies to the first name only:  (T)a.b  reads as  ((T)a).b
+left assign                0        80        77  Assignment groups to the left:  a = b = c  reads as  (a = b) = c
+cond tight                 0         1         1  The condition of ?: is a single operand:  a < b ? c : d  reads as a < (b ? c : d)
+
+"no parse": sources the wrong grammar cannot parse at all; "trees": trees
+whose shape differs from the class file (all trees of a source that does
+not parse count); "pairs": source files with at least one such tree.
+
+Exchanging two neighbouring levels changes nothing else, so a count of 0
+there means the corpus has no expression that tells the two apart.  For
+levels that are not neighbours see the table of shared operands below.
+
+Places where a decision matters, counted in the ASTs of the consistent pairs:
+      893  assignment whose value is an assignment (a = b = c)
+      211  cast
+        8  cast as left operand of a binary operator
+      169  cast to a class
+       42  cast to a primitive type
+      107  cast whose operand has a "." "[" or "(" suffix
+      111  chain of level 1
+      292  chain of level 10
+       72  chain of level 2
+      151  chain of level 3
+     1149  chain of level 9
+        5  conditional expression
+        1  conditional whose condition is a binary expression without parentheses
+        2  if without else whose then-part is an if-else without braces
+      175  parenthesised single name
+       87  prefix operator as left operand of a binary operator
+
+Operators of two levels sharing an operand without parentheses
+(rows: the operator applied last; columns: the operator applied first):
+  outer \ inner                   1      2      3      4      5      6      7      8      9     10
+   1 ||                           -      2      .      .      1    404     86      .      .      .
+   2 &&                           .      -      .      .      1    131    294      .      .      .
+   3 |                            .      .      -      .      .      .      .      .      .      .
+   4 ^                            .      .      .      -      .      2      .      .      .      .
+   5 &                            .      .      .      .      -      .      .      .      .      .
+   6 == !=                        .      .      .      .      .      -      .      1     16     10
+   7 < > <= >= instanceof         .      .      .      .      .      .      -      .     60     36
+   8 << >> >>>                    .      .      .      .      .      .      .      -      .      .
+   9 + -                          .      .      .      .      .      .      .      .      -    384
+  10 * / %                        .      .      .      .      .      .      .      .      .      -
+
+done in 99.6 s

@@ -1,0 +1,248 @@
+corpus  D:\SLRR-test
+blobs   2993
+
+M1   holds 6660 of 6660  method ACC_STATIC bit matches the vector
+M2   holds 6660 of 6660  descriptor "(params)ret", ret empty exactly for <init>
+M3   holds 6660 of 6660  tree absent exactly on ACC_ABSTRACT rows
+M4   holds 418 of 418  ACC_NATIVE rows own an empty tree
+M5a  holds 553 of 553  locals word is 0 when the tree is empty or absent
+M5b  holds 6107 of 6107  locals word = 1 + highest local index used in the tree
+M5c  holds 6107 of 6107  locals word = max(args incl. this, 1 + highest declared index)
+M6   holds 11678 of 11678  no method/field flag bit outside 0xFF
+M7f  holds 3805 of 3805  field flags equal the modifiers of a source declaration (pairs)
+M7m  holds 5411 of 5411  method flags equal the modifiers of a source declaration (pairs)
+F1   holds 5018 of 5018  field ACC_STATIC bit matches the vector
+F2   holds 5018 of 5018  field type is a field descriptor
+F3a  holds 3117 of 3117  initialiser trees end with op 0x10 (end)
+F3b  holds 3117 of 3117  op 0x10 occurs only as the last node of an initialiser tree
+T1   holds 9772 of 9772  every tree is owned by exactly one row
+T2   holds 11972 of 11972  tree indices ascend inside each row vector
+T3   info  2931 of 2993  tree order is static inits, instance inits, static methods, instance methods
+       - parts/scripts/bodypart/Chassis.class#0
+       - parts/scripts/DynoData.class#0
+       - parts/scripts/enginepart/Block.class#0
+       - parts/scripts/enginepart/slidingenginepart/reciprocatingenginepart/Transmission.class#0
+       - parts/scripts/Part.class#0
+       - parts/scripts/rgearpart/reciprocatingrgearpart/Wheel.class#0
+       - parts/scripts/rgearpart/ShockAbsorber.class#0
+       - parts/scripts/rgearpart/Spring.class#0
+       - parts/scripts/rgearpart/Suspension.class#0
+       - parts/scripts/Set.class#0
+       - sl/Scripts/game/CareerEvent.class#0
+       - sl/Scripts/game/Catalog.class#0
+       ... 50 more
+T4   holds 6243 of 6243  trees are numbered in source order (line spans do not overlap and ascend)
+T5   holds 67 of 67  blobs of a file are in source order (line spans ascend)
+C1   holds 2993 of 2993  CLSS marker 0xFFFFFFFF and interface flag 0/1
+C2   holds 2993 of 2993  pool[0] = class name utf8, pool[1] = its class entry = CLSS name
+C3   holds 2989 of 2989  pool[2] = super name utf8, pool[3] = its class entry = CLSS super
+C4   holds 4 of 4  no superclass only for java.lang.Object and interfaces
+P1   holds 203589 of 203589  no duplicate pool entries
+P2   info  201052 of 203589  every pool entry is referenced
+       - cars/racers/Axis_data/scripts/Axis_200S.class#0 pool[7] utf8 "Ljava.game.parts.Descriptor;"
+       - cars/racers/Axis_data/scripts/Axis_200S.class#0 pool[8] utf8 "V"
+       - cars/racers/Axis_data/scripts/Axis_200S.class#0 pool[76] class java.util.Vector
+       - cars/racers/Axis_data/scripts/Axis_200XT.class#0 pool[7] utf8 "Ljava.game.parts.Descriptor;"
+       - cars/racers/Axis_data/scripts/Axis_200XT.class#0 pool[8] utf8 "V"
+       - cars/racers/Axis_data/scripts/Axis_200XT.class#0 pool[76] class java.util.Vector
+       - cars/racers/Axis_data/scripts/Axis_models.class#0 pool[5] utf8 "V"
+       - cars/racers/Axis_data/scripts/Axis_stock_exhaust_pipe.class#0 pool[42] class java.util.Vector
+       - cars/racers/Axis_data/scripts/Axis_turbo_exhaust_pipe.class#0 pool[42] class java.util.Vector
+       - cars/racers/Axis_data/scripts/Axis_ZX360.class#0 pool[7] utf8 "Ljava.game.parts.Descriptor;"
+       - cars/racers/Axis_data/scripts/Axis_ZX360.class#0 pool[8] utf8 "V"
+       - cars/racers/Axis_data/scripts/Axis_ZX360.class#0 pool[79] class java.util.Vector
+       ... 1988 more
+P3   holds 103969 of 103969  pool entries refer only to lower indices
+P4   holds 99620 of 99620  utf8 payloads are 7-bit without NUL
+P5   holds 7242 of 7242  rid pack names end in .rpk
+P6   info  7228 of 7242  the pack file of a rid entry exists in the corpus
+       - sl/Scripts/game/CareerEvents/CircuitTest.class#0 pool[107] sl\Scripts\game\CareerEvents\old_stdpack_231.rpk:0x00000008
+       - sl/Scripts/game/CareerEvents/CircuitTest.class#0 pool[108] sl\Scripts\game\CareerEvents\old_stdpack_231.rpk:0x00000004
+       - sl/Scripts/game/CareerEvents/DebugMode.class#0 pool[45] sl\Scripts\game\CareerEvents\old_stdpack_231.rpk:0x00000013
+       - sl/Scripts/game/CareerEvents/DebugMode.class#0 pool[46] sl\Scripts\game\CareerEvents\old_stdpack_231.rpk:0x00000016
+       - sl/Scripts/game/CareerEvents/DerbyTest.class#0 pool[107] sl\Scripts\game\CareerEvents\old_stdpack_231.rpk:0x00000011
+       - sl/Scripts/game/CareerEvents/DerbyTest.class#0 pool[108] sl\Scripts\game\CareerEvents\old_stdpack_231.rpk:0x00000014
+       - sl/Scripts/game/CareerEvents/DragTest.class#0 pool[85] sl\Scripts\game\CareerEvents\old_stdpack_231.rpk:0x00000018
+       - sl/Scripts/game/CareerEvents/DragTest.class#0 pool[86] sl\Scripts\game\CareerEvents\old_stdpack_231.rpk:0x00000017
+       - sl/Scripts/game/CareerEvents/DriftTest.class#0 pool[107] sl\Scripts\game\CareerEvents\old_stdpack_231.rpk:0x00000010
+       - sl/Scripts/game/CareerEvents/DriftTest.class#0 pool[108] sl\Scripts\game\CareerEvents\old_stdpack_231.rpk:0x00000006
+       - sl/Scripts/game/CareerEvents/FreerideTest.class#0 pool[38] sl\Scripts\game\CareerEvents\old_stdpack_231.rpk:0x00000012
+       - sl/Scripts/game/CareerEvents/FreerideTest.class#0 pool[39] sl\Scripts\game\CareerEvents\old_stdpack_231.rpk:0x00000015
+       ... 2 more
+N1   holds 647650 of 647650  op bytes are in the emitted set of the opcode table
+N2   holds 152652 of 152652  pool-index immediates name an entry of the expected kind
+N3   holds 596793 of 596793  node line is within 1..source lines (pairs)
+N3b  holds 647650 of 647650  node line is >= 1 (all classes)
+
+blobs_with_unreferenced_entries:
+  none                   1594
+  some                   1399
+build:
+  0x11AE1                5
+  0x24F5C                159
+  0x24F9D                2829
+cons_kind:
+  class                  10920
+  nat                    42543
+  ref                    43264
+  rid                    7242
+  utf8                   99620
+field_flags_instance:
+  0x0                    2940  -
+  0x1                    10  public
+  0x2                    3  protected
+  0x4                    9  private
+  0x10                   2  abstract
+  0x20                   13  final
+field_flags_static:
+  0x8                    337  static
+  0x9                    35  public static
+  0xC                    2  private static
+  0x28                   1583  static final
+  0x29                   83  public static final
+  0x48                   1  static native
+flag_0x02_category:
+  class_only             3
+flag_0x80_category:
+  class_only             20
+interface_count:
+  0                      2962
+  1                      28
+  2                      3
+is_interface:
+  0                      2990
+  1                      3
+locals_minus_args:
+  0                      4707
+  1                      747
+  2                      332
+  3                      94
+  4                      78
+  5                      37
+  6                      32
+  7                      17
+  8                      17
+  9                      9
+  10                     7
+  11                     6
+  12                     8
+  13                     4
+  14                     3
+  15                     1
+  17                     1
+  18                     1
+  19                     1
+  20                     1
+  21                     1
+  23                     1
+  24                     1
+  33                     1
+method_body:
+  absent                 5
+  code                   6107
+  empty                  130
+  empty native           418
+method_flags:
+  0x0                    44  -
+  0x1                    5949  public
+  0x4                    5  private
+  0x8                    3  static
+  0x9                    209  public static
+  0xC                    1  private static
+  0x11                   5  public abstract
+  0x21                   6  public final
+  0x40                   2  native
+  0x41                   321  public native
+  0x44                   2  private native
+  0x48                   16  static native
+  0x49                   73  public static native
+  0x4C                   4  private static native
+  0x81                   2  public synchronized
+  0xA1                   18  public final synchronized
+op:
+  0x4                    732
+  0x5                    413
+  0xC                    1614
+  0x10                   3117
+  0x18                   161
+  0x20                   13143
+  0x21                   8685
+  0x22                   55
+  0x23                   2989
+  0x24                   26536
+  0x28                   1693
+  0x29                   2197
+  0x2A                   3045
+  0x2B                   3890
+  0x2C                   3047
+  0x2D                   3047
+  0x1001                 33571
+  0x1002                 3945
+  0x1003                 31424
+  0x1006                 14806
+  0x1007                 136073
+  0x1008                 64878
+  0x100B                 28450
+  0x100D                 13
+  0x100E                 9190
+  0x1011                 32213
+  0x1014                 4694
+  0x1015                 8026
+  0x1016                 3
+  0x1017                 608
+  0x1019                 7959
+  0x101A                 18470
+  0x101B                 78233
+  0x1027                 40263
+  0x200A                 36473
+  0x4009                 13114
+  0x4012                 8065
+  0x401C                 817
+  0x4025                 1187
+  0x4026                 811
+return_kind:
+  F                      188
+  I                      425
+  L                      485
+  V                      2435
+  [                      10
+  ctor                   3117
+rid_local_bits:
+  0                      1
+  1                      58
+  2                      23
+  3                      103
+  4                      84
+  5                      166
+  6                      181
+  7                      550
+  8                      2874
+  9                      1508
+  10                     298
+  11                     88
+  12                     262
+  13                     54
+  14                     130
+  15                     85
+  16                     777
+rid_pack_depth:
+  1                      2134
+  2                      652
+  3                      4199
+  4                      109
+  5                      148
+unreferenced_pool_entries:
+  class                  335
+  utf8                   2202
+unreferenced_utf8_shape:
+  array type             6
+  primitive type         1442
+  type L...;             754
+utf8_control_chars:
+  0x09                   38
+  0x09,0x0A              2
+  0x0A                   132
+utf8_empty:
+  empty                  553
+
+all MUST rules hold

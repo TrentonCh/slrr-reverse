@@ -1,0 +1,1989 @@
+census: constructs of the dialect in the shipped sources
+sources parsed 3454, failures 0
+
+[array]
+       332  array.brackets after the field type   (62 files)
+              parts/scripts/bodypart/Src/Chassis.java:77: float[] ratio = new float[8];
+              parts/scripts/enginepart/SRC/Block.java:53: int[] redlineRecColors = new int[3];
+              parts/scripts/enginepart/slidingenginepart/reciprocatingenginepart/SRC/Transmission.java:39: float[] ratio = new float[8];
+        94  array.brackets after the local type   (31 files)
+              parts/engines/Baiern_Emer/scripts/src/i6_type_multi_fuel_rail.java:45: String[] fuelTypes = new String[4];
+              parts/scripts/bodypart/Src/Chassis.java:379: int[] has = new int[5];
+              parts/scripts/enginepart/airfueldeliverysystem/SRC/FuelInjectorSystem.java:83: String[] fuelTypes = new String[4];
+        21  array.brackets after the parameter type   (13 files)
+              parts/scripts/src/Part.java:91: public String installCheck( Part p, int[] slotId )
+              parts/scripts/rgearpart/reciprocatingrgearpart/SRC/Tyre.java:272: public String installCheck( Part p, int[] slotId )
+              sl/Scripts/game/src/CareerEvent.java:706: public int checkVendor( String[] base )
+
+[assign]
+         1  assign.&=   (1 files)
+              sl/Scripts/game/src/Garage.java:271: else mechanic.flags&=~Mechanic.MF_FREE_REPAIRS;
+        76  assign.*=   (27 files)
+              parts/scripts/src/Part.java:346: inter *= PRESTIGE_VALUE_MUL;
+              parts/scripts/bodypart/Src/Chassis.java:898: d.tear *= crash_badness+(random()*crash_badness_range-crash_badness_range/2.0);
+              parts/scripts/enginepart/SRC/Block.java:203: total_sliction_loss *= crank.getSlictionLoss();
+       394  assign.+=   (79 files)
+              cars/racers/Axis_data/scripts/src/Axis_VT.java:45: prevalence += vmd.prevalence;
+              cars/racers/Badge_data/scripts/src/Badge_VT.java:45: prevalence += vmd.prevalence;
+              cars/racers/Baiern_data/scripts/src/Baiern_VT.java:68: prevalence += vmd.prevalence;
+        74  assign.-=   (30 files)
+              parts/scripts/src/Part.java:606: res -= max-min;
+              parts/scripts/bodypart/Src/Chassis.java:665: C_drag -= p.drag_reduction;
+              parts/scripts/enginepart/SRC/Block.java:240: skip_end_of_update -= 1;
+         7  assign./=   (3 files)
+              parts/scripts/enginepart/slidingenginepart/reciprocatingenginepart/SRC/Camshaft.java:124: time_in_open /= 720.0;
+              parts/scripts/rgearpart/reciprocatingrgearpart/SRC/Tyre.java:110: loadcap /= rubber_rigidity;
+              sl/Scripts/game/src/Roc.java:42: c/=2;
+     44585  assign.=   (3446 files)
+              cars/racers/Axis_data/scripts/src/Axis_200S.java:13: carCategory = PACKAGE;
+              cars/racers/Axis_data/scripts/src/Axis_200XT.java:13: carCategory = PACKAGE;
+              cars/racers/Axis_data/scripts/src/Axis_F_bumper.java:13: carCategory = PACKAGE;
+      1097  assign.= used as a value   (153 files)
+              cars/racers/Axis_data/scripts/src/Axis_200S.java:142: stock_parts_list_RGear_shocks[ 0] = stock_parts_list_RGear_shocks[ 1] = parts:0x0000005Fr; // "SS_15_6100_N...
+              cars/racers/Axis_data/scripts/src/Axis_200XT.java:145: stock_parts_list_RGear_shocks[ 0] = stock_parts_list_RGear_shocks[ 1] = parts:0x00000069r; // "shock_absorb...
+              cars/racers/Axis_data/scripts/src/Axis_ZX360.java:102: stock_parts_list_RGear_shocks[ 0] = stock_parts_list_RGear_shocks[ 1] = parts:0x0000006Br; // "shock_absorb...
+         1  assign.^=   (1 files)
+              sl/Scripts/game/src/Player.java:246: if(hints & hintMask) hints ^= hintMask;
+        49  assign.as a value in argument   (10 files)
+              sl/Scripts/game/src/CarInfo.java:331: osd.hideGroup( carGroup = osd.endGroup() );
+              sl/Scripts/game/src/CarLot.java:152: osd.hideGroup( loadingGroup = osd.endGroup() );
+              sl/Scripts/game/src/Catalog.java:551: osd.hideGroup( main1Group = osd.endGroup() );
+       893  assign.as a value in assigned value   (77 files)
+              cars/racers/Axis_data/scripts/src/Axis_200S.java:142: stock_parts_list_RGear_shocks[ 0] = stock_parts_list_RGear_shocks[ 1] = parts:0x0000005Fr; // "SS_15_6100_N...
+              cars/racers/Axis_data/scripts/src/Axis_200XT.java:145: stock_parts_list_RGear_shocks[ 0] = stock_parts_list_RGear_shocks[ 1] = parts:0x00000069r; // "shock_absorb...
+              cars/racers/Axis_data/scripts/src/Axis_ZX360.java:102: stock_parts_list_RGear_shocks[ 0] = stock_parts_list_RGear_shocks[ 1] = parts:0x0000006Br; // "shock_absorb...
+       106  assign.as a value in condition   (37 files)
+              parts/engines/Baiern_Emer/scripts/src/Baiern_Devils_6SFi_3_6_block.java:56: if (tab = the_car.getSfxTable(0))
+              parts/engines/Baiern_Emer/scripts/src/Baiern_Kraftwerk_2_5_block.java:56: if (tab = the_car.getSfxTable(0))
+              parts/engines/Baiern_Emer/scripts/src/Emer_MotorSport_GT2_block.java:56: if (tab = the_car.getSfxTable(0))
+        48  assign.as a value in operand   (38 files)
+              parts/engines/Baiern_Emer/scripts/src/Baiern_GT_III_intake_manifold.java:40: if ( (unsafePart = partOnSlot(10)) && unsafePart instanceof AirFuelDeliverySystem)
+              parts/engines/Baiern_Emer/scripts/src/Baiern_Kraftwerk_2_5_intake_manifold.java:40: if ( (unsafePart = partOnSlot(10)) && unsafePart instanceof AirFuelDeliverySystem)
+              parts/engines/Baiern_Emer/scripts/src/Emer_MotorSport_GT2_intake_manifold.java:40: if ( (unsafePart = partOnSlot(10)) && unsafePart instanceof AirFuelDeliverySystem)
+         1  assign.as a value in receiver   (1 files)
+              sl/Scripts/game/src/City.java:698: if(!(pc=alertedScouts.elementAt(i)).returningTraffic)
+      5592  assign.target Field   (210 files)
+     11174  assign.target Index   (271 files)
+     28402  assign.target Name   (3446 files)
+        30  assign.|=   (12 files)
+              parts/engines/Einvagen_Duhen_Ishima_Focer/scripts/src/Duhen_D20CV_transmission_RWD_extension.java:44: the_car.drive_type |= the_car.DT_RWD;
+              parts/engines/Einvagen_Duhen_Ishima_Focer/scripts/src/Einvagen_PerPro_GTA_transmission_RWD_extension.java:43: the_car.drive_type |= the_car.DT_RWD;
+              parts/engines/Einvagen_Duhen_Ishima_Focer/scripts/src/Faktun_Group_Tran6_transmission_RWD_extension.java:44: the_car.drive_type |= the_car.DT_RWD;
+
+[binary]
+       204  binary.!=   (46 files)
+              parts/engines/Baiern_Emer/scripts/src/i6_type_multi_fuel_rail.java:73: if (default_mixture_ratio != mixture_ratio)
+              parts/scripts/src/Part.java:182: while( (slotIndex=saveGame.readInt()) != -1 )
+              parts/scripts/bodypart/Src/Chassis.java:767: if(vehicleName != oldName) setupHorn(rid_horn, sfx_horn_pitch);
+        36  binary.%   (14 files)
+              parts/scripts/rgearpart/reciprocatingrgearpart/SRC/Tyre.java:171: if ((whlID>=0) && ((whlID % 2)==1))
+              parts/scripts/rgearpart/reciprocatingrgearpart/SRC/Wheel.java:73: if (getWheelID()%2==0)
+              sl/Scripts/game/src/Bot.java:50: if(name.length() % 2)
+        35  binary.&   (13 files)
+              parts/scripts/enginepart/slidingenginepart/reciprocatingenginepart/SRC/Transmission.java:128: int fwd = the_car.drive_type & DT_FWD;
+              sl/Scripts/game/src/CareerGoalsDialog.java:51: if(progress.i & GameLogic.goals[i].flag || progress.f) res = res_badge_pos;
+              sl/Scripts/game/src/CarInfo.java:121: color = ((color & 0xFF) << 16) + 0xFF00FF00;
+       625  binary.&&   (136 files)
+              cars/racers/Duhen_data/scripts/src/Duhen_SunStrip_2_2_DVC.java:150: if (desc.power > 0.5 && desc.power < 1.3)
+              cars/racers/Einvagen_data/scripts/src/Einvagen_110_GTK.java:83: if (desc.power > 0.5 && desc.power < 1.3)
+              cars/racers/Enula_data/scripts/src/Ishima_Enula_WRY.java:165: if (desc.power > 1.1 && desc.power < 1.3)
+      1493  binary.*   (349 files)
+              cars/racers/Axis_data/scripts/src/Axis_200S.java:173: N2Oinjector.nitro_consumption = clampTo(N2Oinjector.maxconsumption*((desc.power-1.8)/0.2*0.700+0.300),N2Oin...
+              cars/racers/Axis_data/scripts/src/Axis_200XT.java:209: N2Oinjector.nitro_consumption = clampTo(N2Oinjector.maxconsumption*((desc.power-1.8)/0.2*0.700+0.300),N2Oin...
+              cars/racers/Axis_data/scripts/src/Axis_ZX360.java:136: N2Oinjector.nitro_consumption = clampTo(N2Oinjector.maxconsumption*((desc.power-1.8)/0.2*0.700+0.300),N2Oin...
+      3397  binary.+   (465 files)
+              cars/racers/Axis_data/scripts/src/Axis_200S.java:19: vehicleName = "Duhen " + vendorName + " " + modelName;
+              cars/racers/Axis_data/scripts/src/Axis_200XT.java:19: vehicleName = "Duhen " + vendorName + " " + modelName;
+              cars/racers/Axis_data/scripts/src/Axis_ZX360.java:19: vehicleName = "Duhen " + vendorName + " " + modelName;
+       843  binary.-   (270 files)
+              cars/racers/Axis_data/scripts/src/Axis_200S.java:173: N2Oinjector.nitro_consumption = clampTo(N2Oinjector.maxconsumption*((desc.power-1.8)/0.2*0.700+0.300),N2Oin...
+              cars/racers/Axis_data/scripts/src/Axis_200XT.java:209: N2Oinjector.nitro_consumption = clampTo(N2Oinjector.maxconsumption*((desc.power-1.8)/0.2*0.700+0.300),N2Oin...
+              cars/racers/Axis_data/scripts/src/Axis_ZX360.java:136: N2Oinjector.nitro_consumption = clampTo(N2Oinjector.maxconsumption*((desc.power-1.8)/0.2*0.700+0.300),N2Oin...
+       723  binary./   (271 files)
+              cars/racers/Axis_data/scripts/src/Axis_200S.java:173: N2Oinjector.nitro_consumption = clampTo(N2Oinjector.maxconsumption*((desc.power-1.8)/0.2*0.700+0.300),N2Oin...
+              cars/racers/Axis_data/scripts/src/Axis_200XT.java:209: N2Oinjector.nitro_consumption = clampTo(N2Oinjector.maxconsumption*((desc.power-1.8)/0.2*0.700+0.300),N2Oin...
+              cars/racers/Axis_data/scripts/src/Axis_ZX360.java:136: N2Oinjector.nitro_consumption = clampTo(N2Oinjector.maxconsumption*((desc.power-1.8)/0.2*0.700+0.300),N2Oin...
+       854  binary.<   (108 files)
+              cars/racers/Axis_data/scripts/src/Axis_200XT.java:136: if (desc.power < 1.3)
+              cars/racers/Badge_data/scripts/src/Badge_67.java:112: if (desc.power < 1.3)
+              cars/racers/Baiern_data/scripts/src/Baiern_CoupeSport.java:106: if (desc.power < 1.3)
+         2  binary.<<   (1 files)
+              sl/Scripts/game/src/CarInfo.java:121: color = ((color & 0xFF) << 16) + 0xFF00FF00;
+              sl/Scripts/game/src/CarInfo.java:126: color = ((color & 0xFF) << 8) + 0xFFFF0000;
+       146  binary.<=   (77 files)
+              cars/racers/Einvagen_data/scripts/src/Einvagen_FR_door.java:41: if ( optical <= 1.0 )
+              cars/racers/Einvagen_data/scripts/src/Einvagen_RL_door.java:39: if ( optical <= 1.0 )
+              cars/racers/Einvagen_data/scripts/src/Einvagen_RR_door.java:39: if ( optical <= 1.0 )
+      2106  binary.==   (222 files)
+              parts/engines/Baiern_Emer/scripts/src/Baiern_88er_crankshaft.java:42: if (the_car.make == the_car.MAKE_BAIERN)
+              parts/engines/Baiern_Emer/scripts/src/Baiern_90er_crankshaft.java:42: if (the_car.make == the_car.MAKE_BAIERN)
+              parts/engines/Baiern_Emer/scripts/src/Baiern_alternator.java:30: if (the_car.make == the_car.MAKE_BAIERN)
+       460  binary.>   (140 files)
+              cars/racers/Axis_data/scripts/src/Axis_200S.java:170: if (desc.power > 1.8)
+              cars/racers/Axis_data/scripts/src/Axis_200XT.java:206: if (desc.power > 1.8)
+              cars/racers/Axis_data/scripts/src/Axis_ZX360.java:133: if (desc.power > 1.8)
+       399  binary.>=   (103 files)
+              cars/racers/Einvagen_data/scripts/src/Einvagen_FL_door.java:30: if ( optical >= 1.0 )
+              cars/racers/Einvagen_data/scripts/src/Einvagen_FR_door.java:30: if ( optical >= 1.0 )
+              cars/racers/Einvagen_data/scripts/src/Einvagen_R_door.java:31: if ( optical >= 1.0 )
+         6  binary.>>   (2 files)
+              sl/Scripts/game/src/Catalog.java:302: currentCarPackId = player.car.getInfo( GII_TYPE ) >> 16;
+              sl/Scripts/game/src/Catalog.java:391: int packId = parts.id() >> 16;
+              sl/Scripts/game/src/Mechanic.java:724: carID = player.car.getInfo( GII_TYPE ) >> 16;
+         1  binary.^   (1 files)
+              sl/Scripts/game/src/City.java:2212: int challenger_won = !(challenger == player ^ rank == 1);
+       421  binary.|   (51 files)
+              cars/racers/Baiern_data/scripts/src/Baiern_VT.java:224: vmd=new VehicleModel( cars.racers.Baiern:0x000000FDr, VS_RRACE | VS_NRACE );
+              cars/racers/Duhen_data/scripts/src/Duhen_VT.java:245: vmd=new VehicleModel( cars.racers.Duhen:0x00000128r, VS_DRACE | VS_NRACE );
+              cars/racers/Einvagen_data/scripts/src/Einvagen_VT.java:171: vmd=new VehicleModel( cars.racers.Einvagen:0x00000006r, VS_DRACE | VS_NRACE );
+       363  binary.||   (111 files)
+              parts/engines/Callaway_Cadillac_Bugatti_V16/scripts/src/Cyclone_flywheel.java:38: if (the_car.make == the_car.MAKE_HAULER_S_HEAVEN || the_car.make == the_car.MAKE_MC || the_car.make == the_...
+              parts/engines/Dodge_BMW_Racing_V10/scripts/src/V10_flywheel.java:48: if (the_car.model == Furrano_models.MODEL_GT54 || the_car.model == Furrano_models.MODEL_GTS )
+              parts/engines/Einvagen_Duhen_Ishima_Focer/scripts/src/Duhen_139er_connecting_rods.java:40: if (the_car.model == Duhen_models.MODEL_SUNSTRIP_2_2_DVC || the_car.model == Axis_models.MODEL_200XT || the...
+
+[body]
+      5274  body.does not end with a return statement   (3451 files)
+       609  body.ends with a return statement   (267 files)
+
+[bytes]
+   5068042  bytes
+
+[call]
+      6383  call.arguments 0   (1226 files)
+     15133  call.arguments 1   (3068 files)
+       104  call.arguments 10+   (104 files)
+      2015  call.arguments 2   (229 files)
+      2410  call.arguments 3   (721 files)
+       373  call.arguments 4   (42 files)
+       682  call.arguments 5   (132 files)
+       591  call.arguments 6   (94 files)
+       310  call.arguments 7   (136 files)
+         5  call.arguments 8   (1 files)
+        11  call.arguments 9   (4 files)
+       451  call.on array element   (33 files)
+              multibot/maps/DragStrip/data/src/track_data.java:116: if(light[i]) light[i].finalize();
+              sl/Scripts/game/src/CareerEvent.java:188: if(reqText[i] && reqText[i].length()) result++;
+              sl/Scripts/game/src/CarInfo.java:155: partText[i++].changeText( part.name );
+       325  call.on call result   (57 files)
+              parts/engines/Baiern_Emer/scripts/src/i6_type_multi_fuel_rail.java:53: m.addItem( "Mixture ratio", 1, mixture_ratio, 8.0, 20.0, 49, null ).printValue(" %1.2f:1 A/F");
+              parts/scripts/src/Part.java:157: pos.x = t.nextToken().floatValue();
+              parts/scripts/src/Set.java:48: Part p = tmp.inv.items.elementAt(i).getPart();
+        63  call.on field of array element   (15 files)
+              sl/Scripts/game/src/CarMarket.java:562: cars[i].chassis.setState(getCarPos(i), getCarOri(i), new Vector3(0), new Vector3(0));
+              sl/Scripts/game/src/Catalog.java:442: decalButtons[i].rect.changeTexture( decals.elementAt( showDecals+i ) );
+              sl/Scripts/game/src/ClubInfo.java:158: name = GameLogic.speedymen[base+i].profile.getFullName();
+         6  call.on field of call result   (4 files)
+              sl/Scripts/game/src/InventoryItem_Vehicle.java:58: ip.createDefCamera(getVhc().chassis.getInfo(GameType.GII_SIZE)/100.0, 1);
+              sl/Scripts/game/src/ROCTrack.java:383: if( actRound.trigger.lastElement().trigger.id() == trgId )
+              sl/Scripts/game/src/TestTrack.java:164: if( activeTrigger == round[i].trigger.elementAt(0).trigger.id() )
+         7  call.on field of field of array element   (4 files)
+              sl/Scripts/game/src/PaintBooth.java:309: if(pick_ref == painter.paintCans.panels[i].button.phy.id())
+              sl/Scripts/game/src/VisualInventory.java:87: if( panels[i].button.phy.id() == id )
+              sl/Scripts/game/Gamemodes/src/CircuitRacing.java:341: if(collider == gBot[i].car.chassis.getInfo(GII_TYPE) && !rdTimeout)
+         1  call.on field of field of call result   (1 files)
+              sl/Scripts/game/src/Garage.java:792: osd.createButton(buttonStyleRed, 0.0, 0.815, "RESET", CMD_MOVE_PARTS_RESET).label.txt.setColor(Palette.RGB_...
+         5  call.on field of parenthesised cast   (1 files)
+              sl/Scripts/game/src/City.java:1254: pic[0] = ((Bot)GameLogic.speedymen[nrBotID1]).profile.getPhoto();
+              sl/Scripts/game/src/City.java:1323: pic[0] = ((Bot)GameLogic.speedymen[nrBotID1]).profile.getPhoto();
+              sl/Scripts/game/src/City.java:1324: pic[1] = ((Bot)GameLogic.speedymen[nrBotID2]).profile.getPhoto();
+     11903  call.on name   (629 files)
+              cars/racers/Axis_data/scripts/src/Axis_200S.java:33: exhaustSlotIDList.addElement(new Integer(39));
+              cars/racers/Axis_data/scripts/src/Axis_200XT.java:33: exhaustSlotIDList.addElement(new Integer(39));
+              cars/racers/Axis_data/scripts/src/Axis_stock_exhaust_pipe.java:23: mufflerSlotIDList.addElement(new Integer(2));
+      1343  call.on name chain   (53 files)
+              parts/scripts/src/Part.java:220: saveGame.write(drag_matrix.pos.toString());
+              parts/scripts/src/Set.java:44: if(tmp.inv.items.size())
+              parts/scripts/bodypart/Src/Chassis.java:367: for (j=0; j<ep.mufflerSlotIDList.size(); j++)
+       182  call.on new object   (26 files)
+              sl/Scripts/game/src/CarMarket.java:811: if(moneytxt.text && !init) new SfxRef(Frontend.SFX_MONEY).play();
+              sl/Scripts/game/src/Catalog.java:1120: if(moneytxt.text) new SfxRef(Frontend.SFX_MONEY).play();
+              sl/Scripts/game/src/City.java:274: fakers = new ResourceRef(cars:0x0027r).getChildNodes();
+     12886  call.on none   (3234 files)
+              cars/racers/Axis_data/scripts/src/Axis_200S.java:20: name = getName();
+              cars/racers/Axis_data/scripts/src/Axis_200XT.java:20: name = getName();
+              cars/racers/Axis_data/scripts/src/Axis_F_bumper.java:17: value = tHUF2USD(58.236);
+        44  call.on parenthesised cast   (34 files)
+              parts/running_gear/scripts/shocks/src/shock_absorber_Baiern_CS_front.java:51: ((Slider)m.gadget).changeVLabelText( Float.toString(rebound_factor*100.0, " %1.0f%%"));
+              parts/running_gear/scripts/shocks/src/shock_absorber_Baiern_GT_front.java:57: ((Slider)m.gadget).changeVLabelText( Float.toString(rebound_factor*100.0, " %1.0f%%"));
+              parts/running_gear/scripts/shocks/src/shock_absorber_Einvagen_GTA_front.java:56: ((Slider)m.gadget).changeVLabelText( Float.toString(rebound_factor*100.0, " %1.0f%%"));
+       792  call.on super   (565 files)
+              cars/racers/Axis_data/scripts/src/Axis_200S.java:165: super.addStockParts( desc );
+              cars/racers/Axis_data/scripts/src/Axis_200XT.java:201: super.addStockParts( desc );
+              cars/racers/Axis_data/scripts/src/Axis_models.java:23: super.updatevariables();
+         9  call.on this   (3 files)
+              parts/scripts/src/Part.java:778: int carID = this.id();
+              parts/scripts/enginepart/SRC/ExhaustTip.java:75: Vector3 pos = this.getPos().add(psDelta);
+              sl/Scripts/game/src/Track.java:2753: if(spec) this.giveUpRace();
+     11903  call.path of 1 identifiers before the method name   (629 files)
+              cars/racers/Axis_data/scripts/src/Axis_200S.java:33: exhaustSlotIDList.addElement(new Integer(39));
+              cars/racers/Axis_data/scripts/src/Axis_200XT.java:33: exhaustSlotIDList.addElement(new Integer(39));
+              cars/racers/Axis_data/scripts/src/Axis_stock_exhaust_pipe.java:23: mufflerSlotIDList.addElement(new Integer(2));
+      1116  call.path of 2 identifiers before the method name   (49 files)
+              parts/scripts/src/Part.java:220: saveGame.write(drag_matrix.pos.toString());
+              parts/scripts/bodypart/Src/Chassis.java:367: for (j=0; j<ep.mufflerSlotIDList.size(); j++)
+              sl/Scripts/game/src/BetDialog.java:43: maxBet = GameLogic.player.getMaxBet(rc);
+       201  call.path of 3 identifiers before the method name   (26 files)
+              parts/scripts/src/Set.java:44: if(tmp.inv.items.size())
+              parts/scripts/enginepart/slidingenginepart/reciprocatingenginepart/SRC/Camshaft.java:231: m.gadget.osd.findGadget( this, 1 ).setValue( advance );
+              parts/scripts/enginepart/slidingenginepart/reciprocatingenginepart/SRC/Transmission.java:91: if(the_car.id() == GameLogic.player.car.id())
+        26  call.path of 4 identifiers before the method name   (10 files)
+              sl/Scripts/game/src/CareerEvent.java:841: if(GameLogic.player.car.chassis.getMass() <= base)
+              sl/Scripts/game/src/GameLogic.java:559: System.print("getClass(): " + ce.getClass(ce.checkClass()) + ", mass: " + GameLogic.player.car.chassis.getM...
+              sl/Scripts/game/src/Gamemode.java:827: if(GameLogic.player.car.chassis) return GameLogic.player.car.chassis.getMaterialIndex();
+
+[cast]
+        24  cast.followed by '('   (14 files)
+              parts/scripts/enginepart/slidingenginepart/reciprocatingenginepart/SRC/Camshaft.java:169: int xthstep = (int)((advance - advance_negative_peak)/advance_minimum_step);
+              sl/Scripts/game/src/BetDialog.java:83: int value = (int)(Math.round(sld.value));
+              sl/Scripts/game/src/CarInfo.java:280: osd.createText( (int)(fval*0.01) +" km", Frontend.smallFont, Text.ALIGN_LEFT, xpos2, ypos, line++ );
+         1  cast.followed by 'null'   (1 files)
+              sl/Scripts/game/src/InventoryItem_Folder.java:24: PaintCan x = (PaintCan)null;
+       199  cast.followed by id   (61 files)
+              parts/engines/Baiern_Emer/scripts/src/i6_type_multi_fuel_rail.java:82: mixture_ratio = ((Slider)m.gadget).value;
+              parts/engines/Callaway_Cadillac_Bugatti_V16/scripts/src/Cyclone_intake_converter.java:63: return (IntakeManifold)unsafePart;
+              parts/engines/Lama_Performance_V12/scripts/src/LP_V12_intake_manifold_converter.java:58: return (IntakeManifold)unsafePart;
+         6  cast.operand is array element   (2 files)
+         5  cast.operand is call result   (4 files)
+         1  cast.operand is field of array element   (1 files)
+        80  cast.operand is name   (28 files)
+       107  cast.operand is name chain   (37 files)
+         1  cast.operand is null literal   (1 files)
+        23  cast.operand is parenthesised binary   (13 files)
+         1  cast.operand is parenthesised call   (1 files)
+       182  cast.to class   (58 files)
+              parts/engines/Baiern_Emer/scripts/src/i6_type_multi_fuel_rail.java:82: mixture_ratio = ((Slider)m.gadget).value;
+              parts/engines/Callaway_Cadillac_Bugatti_V16/scripts/src/Cyclone_intake_converter.java:63: return (IntakeManifold)unsafePart;
+              parts/engines/Lama_Performance_V12/scripts/src/LP_V12_intake_manifold_converter.java:58: return (IntakeManifold)unsafePart;
+         6  cast.to float   (4 files)
+              parts/scripts/enginepart/slidingenginepart/reciprocatingenginepart/SRC/Camshaft.java:170: advance = ((float)xthstep)*advance_minimum_step+advance_negative_peak;
+              sl/Scripts/game/src/Garage.java:1815: float delta = (float)timeBtnInterval;
+              sl/Scripts/game/src/MapDebug.java:388: float aspect = (float)Config.video_x/(float)Config.video_y;
+        36  cast.to int   (18 files)
+              parts/scripts/enginepart/slidingenginepart/reciprocatingenginepart/SRC/Camshaft.java:169: int xthstep = (int)((advance - advance_negative_peak)/advance_minimum_step);
+              sl/Scripts/game/src/BetDialog.java:83: int value = (int)(Math.round(sld.value));
+              sl/Scripts/game/src/CarInfo.java:280: osd.createText( (int)(fval*0.01) +" km", Frontend.smallFont, Text.ALIGN_LEFT, xpos2, ypos, line++ );
+
+[census]
+       558  census keys with a source file
+
+[chain]
+     83997  chain.name chains   (3450 files)
+     69189  chain.of 1 identifier   (3450 files)
+     14332  chain.of 2 identifiers   (426 files)
+              cars/racers/Axis_data/scripts/src/Axis_200S.java:170: if (desc.power > 1.8)
+              cars/racers/Axis_data/scripts/src/Axis_200XT.java:136: if (desc.power < 1.3)
+              cars/racers/Axis_data/scripts/src/Axis_VT.java:17: vmd.prevalence = 1.0;
+       454  chain.of 3 identifiers   (39 files)
+              parts/scripts/src/Part.java:197: if(file_ver >= 3) attachedPart.setSlotPos(attachedPart.getSlotID(-1), attachedPart.drag_matrix.pos, attache...
+              parts/scripts/bodypart/Src/Chassis.java:907: int t = GameLogic.CARCOLORS.length*random();
+              parts/scripts/enginepart/slidingenginepart/reciprocatingenginepart/SRC/Transmission.java:89: if(GameLogic.player.car)
+        17  chain.of 4 identifiers   (8 files)
+              sl/Scripts/game/src/CareerEvent.java:392: GameLogic.player.carlot.addCar((Vehicle)prize, GameLogic.player.carlot.curcar);
+              sl/Scripts/game/src/City.java:506: if(raceBot.car.chassis) txt += " (" + raceBot.car.chassis.vehicleName + ")";
+              sl/Scripts/game/src/Gamemode.java:827: if(GameLogic.player.car.chassis) return GameLogic.player.car.chassis.getMaterialIndex();
+         5  chain.of 5 identifiers   (2 files)
+              sl/Scripts/game/src/CareerEvent.java:688: if(GameLogic.player.car.chassis.makerName == base)
+              sl/Scripts/game/src/CareerEvent.java:712: if(GameLogic.player.car.chassis.vendorName == base[i]) return 1;
+              sl/Scripts/game/src/Vehicle.java:359: if( !pedals && GameLogic.player.car.chassis.game_version > 2.29 ) //RAXAT: FOR COMPATIBILITY
+
+[class]
+      3508  class   (3454 files)
+      3507  class.class   (3453 files)
+              cars/racers/Axis_data/scripts/src/Axis_200S.java:8: public class Axis_200S extends Axis_models
+              cars/racers/Axis_data/scripts/src/Axis_200XT.java:8: public class Axis_200XT extends Axis_models
+              cars/racers/Axis_data/scripts/src/Axis_F_bumper.java:8: public class Axis_F_bumper extends Bumper
+        12  class.constructors 0   (10 files)
+      3443  class.constructors 1   (3399 files)
+        46  class.constructors 2   (45 files)
+         7  class.constructors 3+   (7 files)
+      3469  class.extends   (3438 files)
+              cars/racers/Axis_data/scripts/src/Axis_200S.java:8: public class Axis_200S extends Axis_models
+              cars/racers/Axis_data/scripts/src/Axis_200XT.java:8: public class Axis_200XT extends Axis_models
+              cars/racers/Axis_data/scripts/src/Axis_F_bumper.java:8: public class Axis_F_bumper extends Bumper
+        19  class.implements   (19 files)
+              sl/Scripts/game/src/CarInfo.java:18: public class CarInfo extends GameType implements GameState
+              sl/Scripts/game/src/CarLot.java:10: public class CarLot extends GameType implements GameState
+              sl/Scripts/game/src/CarMarket.java:16: public class CarMarket extends Scene implements GameState, Runnable
+        16  class.implements 1 interfaces   (16 files)
+              sl/Scripts/game/src/CarInfo.java:18: public class CarInfo extends GameType implements GameState
+              sl/Scripts/game/src/CarLot.java:10: public class CarLot extends GameType implements GameState
+              sl/Scripts/game/src/Catalog.java:16: public class Catalog extends GameType implements GameState
+         3  class.implements 2 interfaces   (3 files)
+              sl/Scripts/game/src/CarMarket.java:16: public class CarMarket extends Scene implements GameState, Runnable
+              sl/Scripts/game/src/PaintBooth.java:13: public class PaintBooth extends Scene implements GameState, Callback
+              sl/Scripts/game/src/Painter.java:14: public class Painter extends GameType implements GameState, Callback
+         1  class.interface   (1 files)
+              sl/Scripts/game/src/GameState.java:10: public interface GameState
+        16  class.modifiers []   (8 files)
+              sl/Scripts/game/src/EventList.java:580: class Requirements
+              sl/Scripts/game/src/GameLogic.java:1345: class CareerGoal
+              sl/Scripts/game/src/HallOfFame.java:239: class CardData
+         2  class.modifiers [abstract public]   (2 files)
+              sl/Scripts/game/src/Scene.java:11: abstract public class Scene extends GameType
+              sl/Scripts/game/src/Track.java:17: abstract public class Track extends Scene implements GameState
+      3490  class.modifiers [public]   (3452 files)
+              cars/racers/Axis_data/scripts/src/Axis_200S.java:8: public class Axis_200S extends Axis_models
+              cars/racers/Axis_data/scripts/src/Axis_200XT.java:8: public class Axis_200XT extends Axis_models
+              cars/racers/Axis_data/scripts/src/Axis_F_bumper.java:8: public class Axis_F_bumper extends Bumper
+        39  class.no extends   (29 files)
+              parts/scripts/src/Descriptor.java:9: public class Descriptor
+              sl/Scripts/game/src/Bot.java:728: public class botCard
+              sl/Scripts/game/src/CarLot.java:518: public class CarLotData
+        11  class.without constructor   (9 files)
+              parts/scripts/src/Set.java:11: public class Set extends GameType
+              parts/scripts/src/SfxTable.java:8: public class SfxTable extends Native
+              parts/scripts/src/WheelRef.java:8: public class WheelRef extends Native
+
+[comment]
+       203  comment.block
+        36  comment.block holding //
+        99  comment.block over several lines
+     12931  comment.line
+         4  comment.line holding /*   (4 files)
+              parts/scripts/enginepart/slidingenginepart/SRC/ReciprocatingEnginePart.java:35: //*0.233; 
+              parts/scripts/rgearpart/SRC/ReciprocatingRGearPart.java:34: //*0.233; 
+              parts/scripts/rgearpart/reciprocatingrgearpart/SRC/Tyre.java:116: //*(1.0-(tyre_width-215.0)/1000.0); // tyre: rolling resistance - hungarian note: az inflation fuggvenye 
+
+[cond]
+        27  cond.all: arithmetic or bitwise operator   (12 files)
+       125  cond.all: array element   (52 files)
+       106  cond.all: assignment   (37 files)
+       251  cond.all: call   (92 files)
+      3305  cond.all: comparison   (370 files)
+       101  cond.all: instanceof   (35 files)
+         6  cond.all: int literal   (4 files)
+       736  cond.all: logical && ||   (178 files)
+      1738  cond.all: name or field   (266 files)
+       678  cond.all: negation !   (280 files)
+         5  cond.all: postfix   (4 files)
+         1  cond.do-while: comparison   (1 files)
+              sl/Scripts/game/src/GameLogic.java:309: }while( ++i < numplayers );
+         2  cond.do-while: negation !   (2 files)
+              sl/Scripts/game/src/RaceSetup.java:188: while(!track.map.getStartDirection(pStart, pFinish));
+              sl/Scripts/game/src/Valocity.java:243: }while( !map.getStartDirection( posStart, pFinish ) );
+       487  cond.for: comparison   (53 files)
+              multibot/maps/DragStrip/data/src/track_data.java:96: for(int i=0; i<4; i++) light[i] = new Light(parent, cars.racers:0x0000119Fr, 0, lightPori[i].pos, null, "ye...
+              parts/scripts/src/Part.java:228: for( slotIndex=0; slotIndex<slots; slotIndex++ )
+              parts/scripts/src/Set.java:46: for(int i=0; i<tmp.inv.items.size(); i++)
+         2  cond.for: name or field   (2 files)
+              sl/Scripts/game/src/CarMarket.java:1035: for(int i=numpos-1; i; i--)
+              sl/Scripts/game/src/Roc.java:169: for( int l=round2.length-1; l; l-- )
+        27  cond.if: arithmetic or bitwise operator   (12 files)
+              parts/scripts/enginepart/slidingenginepart/reciprocatingenginepart/SRC/Transmission.java:242: if (adjustable_gears & 1) // forward gears //
+              sl/Scripts/game/src/Bot.java:50: if(name.length() % 2)
+              sl/Scripts/game/src/Catalog.java:2741: if( ((InventoryItem_Part)item).compatibility & Catalog.CF_INSTALLABLE )
+       125  cond.if: array element   (52 files)
+              multibot/maps/DragStrip/data/src/track_data.java:116: if(light[i]) light[i].finalize();
+              parts/scripts/bodypart/Src/Chassis.java:432: if (has[2]) // the rim is put on, so the rim and the tyre can be changed //
+              parts/scripts/rgearpart/reciprocatingrgearpart/SRC/Tyre.java:252: if (render_types[minRimWidth_i])
+        92  cond.if: assignment   (35 files)
+              parts/engines/Baiern_Emer/scripts/src/Baiern_Devils_6SFi_3_6_block.java:56: if (tab = the_car.getSfxTable(0))
+              parts/engines/Baiern_Emer/scripts/src/Baiern_Kraftwerk_2_5_block.java:56: if (tab = the_car.getSfxTable(0))
+              parts/engines/Baiern_Emer/scripts/src/Emer_MotorSport_GT2_block.java:56: if (tab = the_car.getSfxTable(0))
+       250  cond.if: call   (92 files)
+              parts/scripts/src/Part.java:316: if(partOnSlot(slotID)) parts++;
+              parts/scripts/src/Set.java:44: if(tmp.inv.items.size())
+              parts/scripts/bodypart/Src/Chassis.java:246: if(System.nextGen()) setMaxSteering(getMaxSteer()); //RAXAT: v2.3.1, syncronyzed maxsteer patch
+      2802  cond.if: comparison   (364 files)
+              cars/racers/Axis_data/scripts/src/Axis_200S.java:170: if (desc.power > 1.8)
+              cars/racers/Axis_data/scripts/src/Axis_200XT.java:136: if (desc.power < 1.3)
+              cars/racers/Axis_data/scripts/src/Axis_ZX360.java:133: if (desc.power > 1.8)
+       101  cond.if: instanceof   (35 files)
+              parts/scripts/src/BodyPart.java:32: if (p instanceof BodyPart)
+              parts/scripts/src/EnginePart.java:36: if (p instanceof EnginePart)
+              parts/scripts/src/Part.java:369: if (this instanceof EnginePart)
+         1  cond.if: int literal   (1 files)
+              sl/Scripts/game/src/Track.java:1016: if (1) //RAXAT: WTF IS THIS?!
+       733  cond.if: logical && ||   (177 files)
+              cars/racers/Duhen_data/scripts/src/Duhen_SunStrip_2_2_DVC.java:150: if (desc.power > 0.5 && desc.power < 1.3)
+              cars/racers/Einvagen_data/scripts/src/Einvagen_110_GTK.java:83: if (desc.power > 0.5 && desc.power < 1.3)
+              cars/racers/Enula_data/scripts/src/Ishima_Enula_WRY.java:165: if (desc.power > 1.1 && desc.power < 1.3)
+      1727  cond.if: name or field   (266 files)
+              parts/engines/Baiern_Emer/scripts/src/Baiern_Devils_6SFi_3_6_block.java:51: if (the_car)
+              parts/engines/Baiern_Emer/scripts/src/Baiern_GT_III_intake_manifold.java:78: if (fr)
+              parts/engines/Baiern_Emer/scripts/src/Baiern_Kraftwerk_2_5_block.java:51: if (the_car)
+       672  cond.if: negation !   (280 files)
+              parts/accessories/scripts/src/canister_1.java:30: if (!p)
+              parts/accessories/scripts/src/canister_2.java:30: if (!p)
+              parts/accessories/scripts/src/canister_3.java:30: if (!p)
+        14  cond.while: assignment   (3 files)
+              sl/Scripts/game/src/CareerEvent.java:479: while( part = car.iterateParts() )
+              sl/Scripts/game/src/CarInfo.java:143: while( part = car.iterateParts() )
+              sl/Scripts/game/src/Vehicle.java:602: while( p = iterateParts() )
+         1  cond.while: call   (1 files)
+              parts/scripts/bodypart/Src/Chassis.java:932: while( partLists.size() )
+        15  cond.while: comparison   (6 files)
+              parts/scripts/src/Part.java:182: while( (slotIndex=saveGame.readInt()) != -1 )
+              sl/Scripts/game/src/CarInfo.java:180: while( i < 100 )
+              sl/Scripts/game/src/City.java:1314: while (i2 == i1)
+         5  cond.while: int literal   (3 files)
+              sl/Scripts/game/src/CarMarket.java:674: while(1)
+              sl/Scripts/game/src/GameLogic.java:721: while(1)
+              sl/Scripts/game/src/MainMenu.java:1303: while(1)
+         3  cond.while: logical && ||   (3 files)
+              parts/scripts/bodypart/Src/Chassis.java:881: while( crash_count-- && partLists.size() )
+              parts/scripts/enginepart/slidingenginepart/reciprocatingenginepart/SRC/Camshaft.java:79: while ((adv < advance_positive_peak) && (adv < advance))
+              sl/Scripts/game/src/Catalog.java:337: while( !stack.isEmpty() && step )
+         9  cond.while: name or field   (6 files)
+              sl/Scripts/game/src/CareerEvent.java:933: while(name)
+              sl/Scripts/game/src/Catalog.java:270: while( name )
+              sl/Scripts/game/src/GameLogic.java:356: while(name)
+         4  cond.while: negation !   (4 files)
+              sl/Scripts/game/src/CareerEvent.java:1083: while(!stack.isEmpty())
+              sl/Scripts/game/src/GameLogic.java:1300: while(!player.decals.isEmpty())
+              sl/Scripts/game/src/Garage.java:1980: while(!stack.isEmpty())
+         5  cond.while: postfix   (4 files)
+              parts/scripts/src/Part.java:885: while( slots-- )
+              parts/scripts/bodypart/Src/Chassis.java:268: while( wheels-- )
+              sl/Scripts/game/src/Mechanic.java:712: while( i-- )
+
+[cond-expr]
+         5  cond-expr   (3 files)
+              sl/Scripts/game/src/City.java:1648: int bool = nrTime2 < nrTime1 ? 0 : 1;
+              sl/Scripts/game/src/EventList.java:238: shieldData[1] = (resID == 0) ? null : new ResourceRef(resID);
+              sl/Scripts/game/src/Map.java:66: osdStatus = track.osdEnabled ? 1 : 0; //RAXAT: also, check if JVM supports this: osdStatus == (track.osdEna...
+
+[constructor]
+      3558  constructor   (3447 files)
+      3124  constructor.begins with super(...)   (3109 files)
+              cars/racers/Axis_data/scripts/src/Axis_200S.java:12: super( id );
+              cars/racers/Axis_data/scripts/src/Axis_200XT.java:12: super( id );
+              cars/racers/Axis_data/scripts/src/Axis_F_bumper.java:12: super( id );
+        13  constructor.begins with this(...)   (9 files)
+              sl/Scripts/game/src/Bot.java:60: this(dbId);
+              sl/Scripts/game/src/InventoryItem_Part.java:27: this( inv );
+              sl/Scripts/game/src/MapObject.java:20: this(parent, tID, "0,0,0,0,0,0", "mapObject", 0);
+        65  constructor.body ";"   (63 files)
+              parts/scripts/enginepart/slidingenginepart/reciprocatingenginepart/differential/src/Center_Differential.java:17: public Center_Differential();
+              parts/scripts/enginepart/slidingenginepart/reciprocatingenginepart/differential/src/Transaxle_Differential.java:17: public Transaxle_Differential();
+              sl/Scripts/game/src/EventTemplate.java:10: public EventTemplate();
+      3424  constructor.body "{ ... }"   (3360 files)
+              cars/racers/Axis_data/scripts/src/Axis_200S.java:10: public Axis_200S( int id )
+              cars/racers/Axis_data/scripts/src/Axis_200XT.java:10: public Axis_200XT( int id )
+              cars/racers/Axis_data/scripts/src/Axis_F_bumper.java:10: public Axis_F_bumper( int id )
+        69  constructor.body "{}"   (69 files)
+              multibot/maps/A1Ring/data/src/track_data.java:10: public track_data()
+              multibot/maps/DerbyArena/data/src/track_data.java:10: public track_data()
+              multibot/maps/DragStrip/data/src/track_data.java:10: public track_data()
+      3557  constructor.modifier public   (3446 files)
+         1  constructor.modifiers []   (1 files)
+              parts/scripts/src/DynoData.java:16: DynoData() { newNative(); }
+      3557  constructor.modifiers [public]   (3446 files)
+              cars/racers/Axis_data/scripts/src/Axis_200S.java:10: public Axis_200S( int id )
+              cars/racers/Axis_data/scripts/src/Axis_200XT.java:10: public Axis_200XT( int id )
+              cars/racers/Axis_data/scripts/src/Axis_F_bumper.java:10: public Axis_F_bumper( int id )
+       164  constructor.parameters 0   (154 files)
+              multibot/maps/A1Ring/data/src/track_data.java:10: public track_data()
+              multibot/maps/DerbyArena/data/src/track_data.java:10: public track_data()
+              multibot/maps/DragStrip/data/src/track_data.java:10: public track_data()
+      3319  constructor.parameters 1   (3316 files)
+              cars/racers/Axis_data/scripts/src/Axis_200S.java:10: public Axis_200S( int id )
+              cars/racers/Axis_data/scripts/src/Axis_200XT.java:10: public Axis_200XT( int id )
+              cars/racers/Axis_data/scripts/src/Axis_F_bumper.java:10: public Axis_F_bumper( int id )
+         1  constructor.parameters 10   (1 files)
+              sl/Scripts/game/src/RaceDialog.java:26: public RaceDialog(Controller ctrl, ResourceRef background, int rid1, int rid2, String name1, String name2, ...
+        26  constructor.parameters 2   (24 files)
+              sl/Scripts/game/src/BetDialog.java:37: public BetDialog(Controller ctrl, Racer rc)
+              sl/Scripts/game/src/CarLot.java:485: public LoadingText( Osd target, int group_ )
+              sl/Scripts/game/src/CarMarket.java:292: public CarMarket(int used, VehicleDescriptor[] carDescriptors)
+        13  constructor.parameters 3   (11 files)
+              sl/Scripts/game/src/Bot.java:58: public Bot(int dbId, int rndseed, float level)
+              sl/Scripts/game/src/City.java:3556: public NightRaceDialog(Controller ctrl, int[] rid, String[] texts)
+              sl/Scripts/game/src/EventList.java:617: public Requirements( Osd o, CareerEvent ce, int mode )
+        11  constructor.parameters 4   (9 files)
+              sl/Scripts/game/src/Catalog.java:2721: public BuyCatalogItemDialog( Controller ctrl, int myflags, InventoryItem item, int price )
+              sl/Scripts/game/src/City.java:3405: public DayRaceDialog(Controller ctrl, Bot b, int justRaced, int policeState)
+              sl/Scripts/game/src/DebugMenu.java:27: public DebugMenu(Controller ctrl, String title, String[] optionList, int additionalFlags)
+         7  constructor.parameters 5   (7 files)
+              parts/scripts/src/Descriptor.java:11: public Descriptor( int col, float opt, float pow, float w, float t)
+              sl/Scripts/game/src/City.java:3761: public ParkingCar(GameRef parent, GameRef type, Vector3 pos, Ypr ori, int colorSeed)
+              sl/Scripts/game/src/MapObject.java:29: public MapObject(ResourceRef parent, int tID, String pr, String a, int m)
+        10  constructor.parameters 6   (8 files)
+              sl/Scripts/game/src/Bot.java:78: public Bot(int dbId, int rndseed, float col, float opti, float eng, float ai)
+              sl/Scripts/game/src/Catalog.java:2319: public CatalogInventory( Catalog cat, Player player, float left, float top, float width, float height)
+              sl/Scripts/game/src/InventoryPanel.java:42: public InventoryPanel( VisualInventory inventory, int index, float top, float left, float width, float height)
+         6  constructor.parameters 7   (5 files)
+              sl/Scripts/game/src/Bot.java:736: public botCard( String nf, String ns, String nn, String vhcp, String vhcs, int r, String s )
+              sl/Scripts/game/src/Catalog.java:2515: public CatalogInventoryPanel( CatalogInventory inventory, int index, float left, float top, float width, fl...
+              sl/Scripts/game/src/MainMenu.java:723: public CarrerFileReqDialog( Controller ctrl, int myflags, String mytitle, String OKButtonText, String path,...
+         1  constructor.parameters 9   (1 files)
+              sl/Scripts/game/src/Navigator.java:71: public Navigator( float left, float top, float size, int ridtype, int ridmsh, int ridtex, int x, int z, int...
+       356  constructor.without explicit this/super call (implicit super())   (324 files)
+              cars/racers/Axis_data/scripts/src/Axis_VT.java:7: public Axis_VT( int id )
+              cars/racers/Badge_data/scripts/src/Badge_VT.java:7: public Badge_VT( int id )
+              cars/racers/Baiern_data/scripts/src/Baiern_VT.java:7: public Baiern_VT( int id )
+
+[continue]
+         1  continue.in a for loop   (1 files)
+              sl/Scripts/game/src/Catalog.java:2569: if(!whl) continue;
+
+[ctorcall]
+      3124  ctorcall.super   (3109 files)
+        13  ctorcall.this   (9 files)
+
+[exprstmt]
+         1  exprstmt.assignment &=   (1 files)
+        76  exprstmt.assignment *=   (27 files)
+       393  exprstmt.assignment +=   (79 files)
+        74  exprstmt.assignment -=   (30 files)
+         7  exprstmt.assignment /=   (3 files)
+     43446  exprstmt.assignment =   (3446 files)
+         1  exprstmt.assignment ^=   (1 files)
+        30  exprstmt.assignment |=   (12 files)
+     18022  exprstmt.call   (1918 files)
+       274  exprstmt.postfix ++   (35 files)
+        24  exprstmt.postfix --   (17 files)
+         6  exprstmt.prefix ++   (1 files)
+         1  exprstmt.prefix --   (1 files)
+      3124  exprstmt.super(...)   (3109 files)
+        13  exprstmt.this(...)   (9 files)
+
+[field]
+      3811  field   (198 files)
+      3446  field.declaration   (198 files)
+              cars/racers/Axis_data/scripts/src/Axis_models.java:9: static int MODEL_200S = 5;
+              cars/racers/Badge_data/scripts/src/Badge_models.java:9: static int MODEL_BADGE_67 = 3;
+              cars/racers/Baiern_data/scripts/src/Baiern_models.java:10: static int MODEL_COUPESPORT = 1;
+      3263  field.declarators per declaration 1   (198 files)
+              cars/racers/Axis_data/scripts/src/Axis_models.java:9: static int MODEL_200S = 5;
+              cars/racers/Badge_data/scripts/src/Badge_models.java:9: static int MODEL_BADGE_67 = 3;
+              cars/racers/Baiern_data/scripts/src/Baiern_models.java:10: static int MODEL_COUPESPORT = 1;
+         1  field.declarators per declaration 13   (1 files)
+              sl/Scripts/game/src/Catalog.java:247: int decalsGroup, parts1Group, parts2Group, parts3Group, parts4Group, parts5Group, parts6Group, parts7Group,...
+         1  field.declarators per declaration 14   (1 files)
+              sl/Scripts/game/src/Catalog.java:246: int mainGroup, main1Group, main2Group, main3Group, main4Group, main5Group, main6Group, main7Group, main8Gro...
+        96  field.declarators per declaration 2   (41 files)
+              sl/Scripts/game/src/Bot.java:731: String vhcPath, vhcSkin;
+              sl/Scripts/game/src/CareerEvent.java:56: int introFMV, outroFMV; //videos
+              sl/Scripts/game/src/CarLot.java:30: RenderRef sun, suntype;
+        47  field.declarators per declaration 3   (25 files)
+              sl/Scripts/game/src/Bot.java:23: float color, optical, engine; //randomly generated data
+              sl/Scripts/game/src/CareerEvent.java:55: int gamemode_id, carClass, drivetype; //for shields
+              sl/Scripts/game/src/CarMarket.java:77: int defGroup, browseGroup, testGroup;
+        20  field.declarators per declaration 4   (14 files)
+              sl/Scripts/game/src/Catalog.java:230: Text moneytxt, pgNumberL, pgNumberR, sectionstxt;
+              sl/Scripts/game/src/City.java:77: int oppStatusDisplayed, collision, time, prize;
+              sl/Scripts/game/src/EventList.java:73: Menu arrow_left, arrow_right, button_close, button_gorace;
+         8  field.declarators per declaration 5   (8 files)
+              sl/Scripts/game/src/CarInfo.java:55: int carGroup, engineGroup, financialGroup, recordsGroup, actGroup;
+              sl/Scripts/game/src/EventList.java:65: Rectangle upper_frame, lower_frame, trackPic, track_minimap, raceTitle;
+              sl/Scripts/game/src/Garage.java:134: int menuGroup, menuGroup2, tuneGroup, movePartsGroup, liftGroup;
+         6  field.declarators per declaration 6   (6 files)
+              sl/Scripts/game/src/GameLogic.java:161: static Hotkey hotkey0, hotkey1, hotkey2, hotkey3, hotkey4, hotkey5/*, hotkey6, hotkey7*/;
+              sl/Scripts/game/src/MainMenu.java:866: int c_garage, c_track, c_eventlist, c_catalog, c_autosave, c_ghost;
+              sl/Scripts/game/src/Painter.java:96: int paintGroup, colorsGroup, decalsGroup, brushGroup, sprayGroup, osdGroup;
+         2  field.declarators per declaration 7   (1 files)
+              sl/Scripts/game/src/City.java:114: int nrNear, nrWatching, nrPlayerPaused, nrShowRaceStart, nrShowRaceFinish, backupnrWatching, nrPrize;
+              sl/Scripts/game/src/City.java:3369: String[] str_honkin, str_goAway, str_noWay, str_seeYou, str_right, str_goRace, str_looseCops;
+         2  field.declarators per declaration 9   (2 files)
+              sl/Scripts/game/src/Garage.java:150: Text moneytxt, daytxt, timeTitleTxt, timeTxt, invLineTxt, infoline, prestigeTxt, carClassTxt, titleTxt;
+              sl/Scripts/game/src/OptionsDialog.java:66: String[] detailTextLMH, detailTextOLMH, onoffText, depthText, videoModesFSText, videoModesWNDText, soundHWT...
+         7  field.initialiser is arithmetic or bitwise operator   (5 files)
+              parts/scripts/rgearpart/reciprocatingrgearpart/SRC/Brake.java:18: float torque = force*friction*radius;
+              parts/scripts/rgearpart/reciprocatingrgearpart/brake/SRC/DiscBrake.java:27: final static float CL_FORCE_1 = 950.0*9.81*BRAKE_FORCE_FINE_TUNE;
+              sl/Scripts/game/src/City.java:23: final static float SPEED_LIMIT_SQ = SPEED_LIMIT*SPEED_LIMIT;
+         4  field.initialiser is bool literal   (3 files)
+              sl/Scripts/game/src/Garage.java:115: final static int DRIVEABLE_GARAGE = true; //RAXAT: now the garage could be driveable
+              sl/Scripts/game/src/Inventory.java:17: int wakeUpOnInstall = true;
+              sl/Scripts/game/src/ROCTrack.java:15: final static int DEBUG_MODE = false;
+       605  field.initialiser is float literal   (91 files)
+              parts/scripts/src/BodyPart.java:12: float drag_reduction = 0.0;
+              parts/scripts/src/DynoData.java:22: float bore = 0.082;
+              parts/scripts/src/Part.java:18: static float PRESTIGE_DOWNGRADE_MUL=1.08;
+      1004  field.initialiser is int literal   (141 files)
+              cars/racers/Axis_data/scripts/src/Axis_models.java:9: static int MODEL_200S = 5;
+              cars/racers/Badge_data/scripts/src/Badge_models.java:9: static int MODEL_BADGE_67 = 3;
+              cars/racers/Baiern_data/scripts/src/Baiern_models.java:10: static int MODEL_COUPESPORT = 1;
+        32  field.initialiser is name or field   (22 files)
+              parts/engines/Einvagen_Duhen_Ishima_Focer/scripts/src/Duhen_D18V_block.java:19: int setup_type = ST_INDIVIDUAL;
+              parts/engines/Einvagen_Duhen_Ishima_Focer/scripts/src/Duhen_D22V_block.java:19: int setup_type = ST_INDIVIDUAL;
+              parts/scripts/src/Part.java:68: int carCategory = COMMON; //ez lesz helyette
+       181  field.initialiser is new   (39 files)
+              parts/scripts/src/Part.java:77: Vector3 drag_own_center = new Vector3(0,0,0); //position (ha senki nem takarja)
+              parts/scripts/enginepart/SRC/ExhaustTip.java:22: Vector3 psVelocity = new Vector3( 0.0, 0.0, 3.0 ); //def. velocity
+              sl/Scripts/game/src/BetDialog.java:28: Style sld_k = new Style(0.04, 0.0525, Frontend.mediumFont, Text.ALIGN_RIGHT, new ResourceRef(Osd.RID_SLD_KN...
+        88  field.initialiser is newarray   (43 files)
+              parts/scripts/bodypart/Src/Chassis.java:77: float[] ratio = new float[8];
+              parts/scripts/enginepart/SRC/Block.java:53: int[] redlineRecColors = new int[3];
+              parts/scripts/enginepart/slidingenginepart/reciprocatingenginepart/SRC/Transmission.java:39: float[] ratio = new float[8];
+        82  field.initialiser is null literal   (8 files)
+              parts/scripts/src/BodyPart.java:11: Chassis the_car = null;
+              parts/scripts/src/EnginePart.java:11: Chassis the_car = null;
+              parts/scripts/src/Part.java:60: Ypr catalog_view_ypr= null;
+       162  field.initialiser is rid literal   (30 files)
+              parts/scripts/src/Part.java:22: final static int MF_HOLLEY = parts:0x0035r;
+              parts/scripts/bodypart/Src/Chassis.java:108: int SFX_trans_fwd =sound:0x00000007r;
+              parts/scripts/enginepart/SRC/Block.java:45: int SFX_trans_fwd = sound:0x00000007r;
+        49  field.initialiser is str literal   (19 files)
+              parts/scripts/src/DynoData.java:83: String fuelType = "";
+              parts/scripts/src/Part.java:47: String name = "<unnamed>";
+              parts/scripts/src/RGearPart.java:12: String name_prefix = "SL Tuners";
+        48  field.initialiser is unary ++   (1 files)
+              sl/Scripts/game/src/OptionsDialog.java:73: final static int CMD_DISCARD = ++cmd;
+              sl/Scripts/game/src/OptionsDialog.java:75: final static int CMD_VIDEO_OPTIONS = ++cmd;
+              sl/Scripts/game/src/OptionsDialog.java:76: final static int CMD_SOUND_OPTIONS = ++cmd;
+        75  field.initialiser is unary -   (27 files)
+              parts/engines/Einvagen_Duhen_Ishima_Focer/scripts/src/Duhen_D18V_block.java:15: static int ST_INDIVIDUAL = -1;
+              parts/engines/Einvagen_Duhen_Ishima_Focer/scripts/src/Duhen_D22V_block.java:15: static int ST_INDIVIDUAL = -1;
+              parts/scripts/src/DynoData.java:40: float time_spark_inc = -0.05;
+      2492  field.instance   (171 files)
+         2  field.modifier abstract   (1 files)
+      1123  field.modifier final   (55 files)
+         1  field.modifier native   (1 files)
+         5  field.modifier private   (3 files)
+        36  field.modifier public   (4 files)
+      1306  field.modifier static   (88 files)
+      2119  field.modifiers []   (171 files)
+              parts/engines/Einvagen_Duhen_Ishima_Focer/scripts/src/Duhen_D18V_block.java:19: int setup_type = ST_INDIVIDUAL;
+              parts/engines/Einvagen_Duhen_Ishima_Focer/scripts/src/Duhen_D22V_block.java:19: int setup_type = ST_INDIVIDUAL;
+              parts/scripts/src/BodyPart.java:11: Chassis the_car = null;
+         2  field.modifiers [abstract]   (1 files)
+              sl/Scripts/game/src/Track.java:21: abstract Vector3 posStart;
+              sl/Scripts/game/src/Track.java:22: abstract Ypr oriStart;
+        31  field.modifiers [final public static]   (2 files)
+              sl/Scripts/game/src/GameLogic.java:62: final public static int SFX_ENTERGARAGE = frontend:0x007Dr;
+              sl/Scripts/game/src/GameLogic.java:63: final public static int SFX_LEAVEGARAGE = frontend:0x007Cr;
+              sl/Scripts/game/src/Track.java:33: final public static int SFX_SMSTART = frontend:0x0A29r;
+      1079  field.modifiers [final static]   (55 files)
+              parts/scripts/src/Part.java:15: final static int COMMON = 0;
+              parts/scripts/bodypart/Src/Chassis.java:58: final static int DT_FWD = 1;
+              parts/scripts/enginepart/SRC/ExhaustTip.java:16: final static String PST_NORMAL = "exhaust_smoke";
+        13  field.modifiers [final]   (2 files)
+              sl/Scripts/game/src/CarLot.java:520: final Vector3[] CameraPos = new Vector3[10];
+              sl/Scripts/game/src/CarLot.java:521: final Ypr[] CameraOri = new Ypr[10];
+              sl/Scripts/game/src/City.java:3353: final int CMD_OPTION = 300;
+         5  field.modifiers [private]   (3 files)
+              sl/Scripts/game/src/InventoryItem_Part.java:13: private Part partXXX;
+              sl/Scripts/game/src/InventoryItem_Vehicle.java:13: private Vehicle vehicle;
+              sl/Scripts/game/src/Racer.java:40: private int money = 25000; //RAXAT: game must NOT allow other classes to modify this private int!
+         4  field.modifiers [public static]   (1 files)
+              sl/Scripts/game/src/Valocity.java:14: public static int TRAFFIC_DENSITY_MUL_RUSH_HOUR = 5;
+              sl/Scripts/game/src/Valocity.java:15: public static int TRAFFIC_DENSITY_MUL_BUSINESS_LUNCH = 3;
+              sl/Scripts/game/src/Valocity.java:16: public static int TRAFFIC_DENSITY_MUL_WEEKEND = 2;
+         1  field.modifiers [public]   (1 files)
+              parts/scripts/bodypart/Src/Chassis.java:231: public float game_version = 0.0;
+         1  field.modifiers [static native]   (1 files)
+              parts/scripts/bodypart/Src/Chassis.java:53: static native int installSet;
+       191  field.modifiers [static]   (44 files)
+              cars/racers/Axis_data/scripts/src/Axis_models.java:9: static int MODEL_200S = 5;
+              cars/racers/Badge_data/scripts/src/Badge_models.java:9: static int MODEL_BADGE_67 = 3;
+              cars/racers/Baiern_data/scripts/src/Baiern_models.java:10: static int MODEL_COUPESPORT = 1;
+      1319  field.static   (88 files)
+       987  field.type class   (80 files)
+              parts/scripts/src/BodyPart.java:11: Chassis the_car = null;
+              parts/scripts/src/DynoData.java:83: String fuelType = "";
+              parts/scripts/src/EnginePart.java:11: Chassis the_car = null;
+       181  field.type class[]   (36 files)
+              parts/scripts/enginepart/SRC/Block.java:54: String[] redlineRecTexts = new String[3];
+              sl/Scripts/game/src/Bot.java:27: static String[] botNames;
+              sl/Scripts/game/src/CareerEvent.java:52: String[] conditionText = new String[5];
+       799  field.type float   (105 files)
+              parts/scripts/src/BodyPart.java:12: float drag_reduction = 0.0;
+              parts/scripts/src/Descriptor.java:30: float optical;
+              parts/scripts/src/DynoData.java:21: float cylinders = 4;
+        28  field.type float[]   (23 files)
+              parts/scripts/bodypart/Src/Chassis.java:77: float[] ratio = new float[8];
+              parts/scripts/enginepart/slidingenginepart/reciprocatingenginepart/SRC/Transmission.java:39: float[] ratio = new float[8];
+              sl/Scripts/game/src/CareerEvent.java:68: float[] fogData = new float[2];
+      1693  field.type int   (165 files)
+              cars/racers/Axis_data/scripts/src/Axis_models.java:9: static int MODEL_200S = 5;
+              cars/racers/Badge_data/scripts/src/Badge_models.java:9: static int MODEL_BADGE_67 = 3;
+              cars/racers/Baiern_data/scripts/src/Baiern_models.java:10: static int MODEL_COUPESPORT = 1;
+       123  field.type int[]   (28 files)
+              parts/scripts/bodypart/Src/Chassis.java:124: int[] stock_parts_list_E = null;
+              parts/scripts/enginepart/SRC/Block.java:53: int[] redlineRecColors = new int[3];
+              parts/scripts/rgearpart/reciprocatingrgearpart/SRC/Tyre.java:67: int[] render_types = new int[22];
+      2337  field.with initialiser   (182 files)
+              cars/racers/Axis_data/scripts/src/Axis_models.java:9: static int MODEL_200S = 5;
+              cars/racers/Badge_data/scripts/src/Badge_models.java:9: static int MODEL_BADGE_67 = 3;
+              cars/racers/Baiern_data/scripts/src/Baiern_models.java:10: static int MODEL_COUPESPORT = 1;
+      1474  field.without initialiser   (85 files)
+
+[fieldaccess]
+       412  fieldaccess.on array element   (28 files)
+              multibot/maps/DragStrip/data/src/track_data.java:96: for(int i=0; i<4; i++) light[i] = new Light(parent, cars.racers:0x0000119Fr, 0, lightPori[i].pos, null, "ye...
+              sl/Scripts/game/src/Bot.java:877: result = card[id].rating;
+              sl/Scripts/game/src/CareerGoalsDialog.java:51: if(progress.i & GameLogic.goals[i].flag || progress.f) res = res_badge_pos;
+       102  fieldaccess.on call result   (26 files)
+              parts/scripts/bodypart/Src/Chassis.java:1209: if(partOnSlot(STEERING_WHEEL_SLOT)) return Math.rad2deg(partOnSlot(STEERING_WHEEL_SLOT).getOri().r); //stee...
+              parts/scripts/enginepart/SRC/ExhaustTip.java:79: psVelocity = new Vector3(this.getOri().y, this.getOri().p*upperRaiseDelta, this.getOri().r);
+              sl/Scripts/game/src/CareerEvent.java:867: return GameLogic.player.eventInfo.elementAt(i).number;
+        30  fieldaccess.on field of array element   (10 files)
+              sl/Scripts/game/src/CarMarket.java:1069: Dialog dialog = new NoYesDialog(player.controller, Dialog.DF_MODAL|Dialog.DF_DEFAULTBG|Dialog.DF_WIDE, "BUY...
+              sl/Scripts/game/src/GameLogic.java:966: saveGame.write(speedymen[i].profile.dbID);
+              sl/Scripts/game/src/Gamemode.java:643: nitroTanks[i] = gTrack.mapVehicle[i].chassis.tank_nitro;
+         5  fieldaccess.on field of call result   (3 files)
+              sl/Scripts/game/src/Garage.java:792: osd.createButton(buttonStyleRed, 0.0, 0.815, "RESET", CMD_MOVE_PARTS_RESET).label.txt.setColor(Palette.RGB_...
+              sl/Scripts/game/src/InventoryItem_Vehicle.java:31: return getVhc().chassis.vehicleName;
+              sl/Scripts/game/src/MainMenu.java:674: if(((modeInit && logo_streetlegal.a_finished_x && logo_redline.a_finished_x) || !modeInit) && slider.getIte...
+         1  fieldaccess.on field of field of array element   (1 files)
+              sl/Scripts/game/Gamemodes/src/CircuitRacing.java:582: gBot[i].car.chassis.tank_nitro = nitroTanks[i]; //reset nitrous
+         1  fieldaccess.on parenthesised assign   (1 files)
+              sl/Scripts/game/src/City.java:698: if(!(pc=alertedScouts.elementAt(i)).returningTraffic)
+         1  fieldaccess.on parenthesised call   (1 files)
+              sl/Scripts/game/src/Player.java:519: if((Math.remDiv(bestTimes.size(), 2)).f) System.trace("!FATAL ERROR: track data is corrupted!");
+       106  fieldaccess.on parenthesised cast   (42 files)
+              parts/engines/Baiern_Emer/scripts/src/i6_type_multi_fuel_rail.java:82: mixture_ratio = ((Slider)m.gadget).value;
+              parts/running_gear/scripts/shocks/src/shock_absorber_Baiern_CS_front.java:45: damping = ((Slider)m.gadget).value;
+              parts/running_gear/scripts/shocks/src/shock_absorber_Baiern_GT_front.java:51: damping = ((Slider)m.gadget).value;
+        37  fieldaccess.on this   (12 files)
+              parts/scripts/enginepart/SRC/ExhaustHeader.java:115: if(turbos_installed < turbo_slots && turbo_slots > 1) return this.name + " is missing a turbocharger.";
+              sl/Scripts/game/src/CarMarket.java:298: this.tradein = 1;
+              sl/Scripts/game/src/City.java:3409: this.player = GameLogic.player;
+
+[float]
+         2  float fraction digits 0
+     11847  float fraction digits 1
+        26  float fraction digits 11
+      5195  float fraction digits 2
+     20046  float fraction digits 3
+       176  float fraction digits 4
+        39  float fraction digits 5
+         8  float fraction digits 6
+         2  float fraction digits 7
+         8  float fraction digits 8
+         2  float fraction digits 9
+     16173  float integer digits 1
+         1  float integer digits 10
+         9  float integer digits 11
+      9223  float integer digits 2
+      9472  float integer digits 3
+      1207  float integer digits 4
+       385  float integer digits 5
+       838  float integer digits 6
+        41  float integer digits 7
+         2  float integer digits 8
+         1  float with a leading zero   (1 files)
+              parts/engines/MC_Prime_SuperDuty/scripts/src/MC_Prime_SuperDuty_104x123er_HC_pistons.java:25: 08.500
+        10  float with more than 9 integer digits   (4 files)
+              parts/scripts/enginepart/block/SRC/Block_Inline.java:57: 1000000000000000.0
+              parts/scripts/enginepart/block/SRC/Block_Vee.java:108: 1000000000000000.0
+              parts/scripts/rgearpart/reciprocatingrgearpart/SRC/Tyre.java:118: 50000000000.0
+       230  float.with suffix f
+
+[for]
+        42  for.init 1 expression   (12 files)
+              parts/scripts/src/Part.java:228: for( slotIndex=0; slotIndex<slots; slotIndex++ )
+              parts/scripts/bodypart/Src/Chassis.java:338: for (i=0; i<4; i++)
+              parts/scripts/enginepart/airfueldeliverysystem/SRC/IntakeManifold.java:73: for(slotIndex = 0; slotIndex < slots; slotIndex++)
+       444  for.init declaration of type int   (51 files)
+       444  for.init declaration with 1 declarator   (51 files)
+              multibot/maps/DragStrip/data/src/track_data.java:96: for(int i=0; i<4; i++) light[i] = new Light(parent, cars.racers:0x0000119Fr, 0, lightPori[i].pos, null, "ye...
+              parts/scripts/src/Part.java:390: for( int i=attachedParts.size()-1; i>=0; i-- )
+              parts/scripts/src/Set.java:46: for(int i=0; i<tmp.inv.items.size(); i++)
+        24  for.init empty   (17 files)
+              sl/Scripts/game/src/CarMarket.java:269: for(;i<result.length; i++) result[i] = GameLogic.getVehicleDescriptor(vt);
+              sl/Scripts/game/src/Gamemode.java:1446: for(;;)
+              sl/Scripts/game/src/HallOfFame.java:189: for(;;)
+        42  for.init expression is assignment   (12 files)
+       488  for.update 1 expression   (53 files)
+              multibot/maps/DragStrip/data/src/track_data.java:96: for(int i=0; i<4; i++) light[i] = new Light(parent, cars.racers:0x0000119Fr, 0, lightPori[i].pos, null, "ye...
+              parts/scripts/src/Part.java:228: for( slotIndex=0; slotIndex<slots; slotIndex++ )
+              parts/scripts/src/Set.java:46: for(int i=0; i<tmp.inv.items.size(); i++)
+        22  for.update empty   (16 files)
+              sl/Scripts/game/src/CarInfo.java:642: for( i = 0; i < 100; )
+              sl/Scripts/game/src/Gamemode.java:1446: for(;;)
+              sl/Scripts/game/src/HallOfFame.java:189: for(;;)
+         1  for.update expression is Assign +=   (1 files)
+       446  for.update expression is Postfix ++   (51 files)
+        41  for.update expression is Postfix --   (13 files)
+        21  for.without condition   (15 files)
+              sl/Scripts/game/src/Gamemode.java:1446: for(;;)
+              sl/Scripts/game/src/HallOfFame.java:189: for(;;)
+              sl/Scripts/game/src/MainMenu.java:615: for(;;)
+
+[form]
+     37121  form.float d.d   (3257 files)
+              cars/racers/Axis_data/scripts/src/Axis_200S.java:25: 2.31
+              cars/racers/Axis_data/scripts/src/Axis_200XT.java:25: 2.31
+              cars/racers/Axis_data/scripts/src/Axis_F_bumper.java:17: 58.236
+       228  form.float d.df   (27 files)
+              parts/scripts/bodypart/Src/Chassis.java:709: 0.0f
+              parts/scripts/enginepart/SRC/ExhaustTip.java:74: 0.0f
+              sl/Scripts/game/src/Bot.java:431: 400.0f
+         2  form.float df   (1 files)
+              sl/Scripts/game/src/CarMarket.java:502: 10000000f
+              sl/Scripts/game/src/CarMarket.java:793: 10000000f
+     26189  form.int decimal   (1126 files)
+              cars/racers/Axis_data/scripts/src/Axis_200S.java:24: 1
+              cars/racers/Axis_data/scripts/src/Axis_200XT.java:24: 1
+              cars/racers/Axis_data/scripts/src/Axis_models.java:9: 5
+        14  form.int hex 0X   (1 files)
+              sl/Scripts/game/src/MainMenu.java:34: 0XA003
+              sl/Scripts/game/src/MainMenu.java:35: 0XA004
+              sl/Scripts/game/src/MainMenu.java:36: 0XA005
+       464  form.int hex 0x   (38 files)
+              parts/scripts/src/DynoData.java:90: 0x80000000
+              parts/scripts/src/Part.java:21: 0x00000000
+              parts/scripts/enginepart/SRC/Block.java:70: 0xFFFFFFFF
+       670  form.rid 0x, 4 hex digits   (101 files)
+              parts/scripts/src/Part.java:22: parts:0x0035r
+              sl/Scripts/game/src/CareerEvent.java:18: sl.Scripts.game.Gamemodes.stdpack_231:0x0001r
+              sl/Scripts/game/src/CareerGoalsDialog.java:16: frontend:0xD100r
+         5  form.rid 0x, 7 hex digits   (3 files)
+              cars/racers/Codrac_data/scripts/src/Codrac_SuperSport_Turbo.java:128: parts.wheels:0x00002BAr
+              cars/racers/Stallion_data/scripts/src/Stallion_3_2.java:115: cars.racers.Stallion:0x00000DDr
+              cars/racers/Stallion_data/scripts/src/Stallion_3_5_Turbo.java:117: cars.racers.Stallion:0x00000DDr
+      9268  form.rid 0x, 8 hex digits   (659 files)
+              cars/racers/Axis_data/scripts/src/Axis_200S.java:55: parts.engines.Einvagen_Duhen_Ishima_Focer:0x0000009Br
+              cars/racers/Axis_data/scripts/src/Axis_200XT.java:55: parts.engines.Einvagen_Duhen_Ishima_Focer:0x0000009Br
+              cars/racers/Axis_data/scripts/src/Axis_VT.java:15: cars.racers.Axis:0x00000006r
+         9  form.rid 0x, 9 hex digits   (4 files)
+              cars/racers/Baiern_data/scripts/src/kit_GT_III_body.java:41: cars.racers.baiern:0x00000015Ar
+              cars/racers/Baiern_data/scripts/src/kit_GT_III_window.java:22: cars.racers.baiern:0x00000015Ar
+              cars/racers/Prime_data/scripts/src/kit_Prime_DLH_body.java:30: cars.racers.prime:0x0000000CBr
+
+[if]
+         2  if.dangling else (bound to the inner if)   (2 files)
+              parts/scripts/bodypart/Src/Chassis.java:802: if (desc.power >= stg_2_engne_kit_limit)
+              sl/Scripts/game/src/Racer.java:307: if( prestige != challenged.prestige )
+       756  if.else if chain   (137 files)
+      1812  if.with else   (291 files)
+      4718  if.without else   (640 files)
+
+[import]
+     12392  import   (3451 files)
+       871  import java.game.*
+       433  import java.game.cars.*
+      1083  import java.game.parts.*
+      1920  import java.game.parts.bodypart.*
+       500  import java.game.parts.enginepart.*
+       161  import java.game.parts.enginepart.airfueldeliverysystem.*
+        43  import java.game.parts.enginepart.airfueldeliverysystem.charger.*
+         5  import java.game.parts.enginepart.block.*
+        11  import java.game.parts.enginepart.block.block_inline.*
+        16  import java.game.parts.enginepart.block.block_vee.*
+         7  import java.game.parts.enginepart.canister.n2o.*
+        26  import java.game.parts.enginepart.slidingenginepart.*
+       241  import java.game.parts.enginepart.slidingenginepart.reciprocatingenginepart.*
+       100  import java.game.parts.enginepart.slidingenginepart.reciprocatingenginepart.camshaft.*
+         1  import java.game.parts.enginepart.slidingenginepart.reciprocatingenginepart.charger.*
+        49  import java.game.parts.enginepart.slidingenginepart.reciprocatingenginepart.cylinderhead.*
+         5  import java.game.parts.enginepart.slidingenginepart.reciprocatingenginepart.differential.*
+       343  import java.game.parts.rgearpart.*
+       213  import java.game.parts.rgearpart.reciprocatingrgearpart.*
+        50  import java.game.parts.rgearpart.reciprocatingrgearpart.brake.*
+        21  import java.game.parts.rgearpart.shockabsorber.*
+         1  import java.game.track.*
+       359  import java.io.*
+         4  import java.lang.*
+         1  import java.lang.Integer.*
+         2  import java.net.*
+        94  import java.render.*
+       181  import java.render.osd.*
+        26  import java.render.osd.dialog.*
+        62  import java.sound.*
+      2812  import java.util.*
+      2749  import java.util.resource.*
+         2  import parts:part.root.BodyPart.*
+         2  import.colon   (2 files)
+              cars/racers/Baiern_data/scripts/src/Baiern_FR_quarterpanel.java:6: import parts:part.root.BodyPart.*;
+              sl/Scripts/game/src/City.java:11: import parts:part.root.BodyPart.*;
+         4  import.java.lang explicit   (4 files)
+              parts/scripts/enginepart/slidingenginepart/reciprocatingenginepart/SRC/Differential.java:3: import java.lang.*;
+              sl/Scripts/game/src/CareerEvent.java:6: import java.lang.*;
+              sl/Scripts/game/src/Gamemode.java:4: import java.lang.*;
+        26  import.of a package without classes   (26 files)
+              cars/racers/Baiern_data/scripts/src/Baiern_FR_quarterpanel.java:6: import parts:part.root.BodyPart.*;
+              parts/running_gear/scripts/shocks/src/shock_absorber_Baiern_CS_front.java:5: import java.game.parts.rgearpart.shockabsorber.*;
+              parts/running_gear/scripts/shocks/src/shock_absorber_Baiern_GT_front.java:5: import java.game.parts.rgearpart.shockabsorber.*;
+         1  import.of the members of a class   (1 files)
+              parts/scripts/src/Part.java:3: import java.lang.Integer.*; //RAXAT: for Integer.getHex(I)
+        15  import.own package   (15 files)
+              multibot/objects/police_cars/src/siren.java:5: import java.game.parts.*;
+              parts/scripts/enginepart/SRC/AirCooler.java:11: import java.game.parts.enginepart.*;
+              parts/scripts/enginepart/SRC/AirFuelDeliverySystem.java:10: import java.game.parts.enginepart.*;
+         2  import.repeated   (2 files)
+              parts/pedals/scripts/src/pedals_tuning_9.java:7: import java.game.parts.bodypart.*;
+              parts/running_gear/scripts/RL_susp/src/Baiern_GT_RL_trailing_arm.java:5: import java.game.parts.rgearpart.*;
+     12392  import.star   (3451 files)
+              cars/racers/Axis_data/scripts/src/Axis_200S.java:3: import java.game.*;
+              cars/racers/Axis_data/scripts/src/Axis_200XT.java:3: import java.game.*;
+              cars/racers/Axis_data/scripts/src/Axis_F_bumper.java:3: import java.util.*;
+
+[incdec]
+         6  incdec.++x as statement   (1 files)
+              sl/Scripts/game/src/Track.java:539: ++boxTimer[findBox];
+              sl/Scripts/game/src/Track.java:570: ++boxTimer[holdID];
+              sl/Scripts/game/src/Track.java:1716: ++msgtimers;
+       112  incdec.++x as value   (10 files)
+              sl/Scripts/game/src/CarMarket.java:913: if(++curcar >= numpos) curcar = 0;
+              sl/Scripts/game/src/GameLogic.java:309: }while( ++i < numplayers );
+              sl/Scripts/game/src/Garage.java:1058: int ec = param.token(++tok).intValue();
+         1  incdec.--x as statement   (1 files)
+              sl/Scripts/game/src/CarMarket.java:482: --emptySpaces;
+         9  incdec.--x as value   (5 files)
+              sl/Scripts/game/src/CarMarket.java:902: if(--curcar < 0) curcar = numpos-1;
+              sl/Scripts/game/src/City.java:2643: if(!(--policeState)) //lassan elfelejtik buneinket
+              sl/Scripts/game/src/Painter.java:522: if(!(-- ((Decal)paintBrush).stickies))
+        29  incdec.postfix ++ on Field   (5 files)
+        20  incdec.postfix ++ on Index   (7 files)
+       703  incdec.postfix ++ on Name   (52 files)
+        82  incdec.postfix -- on Name   (29 files)
+         2  incdec.prefix ++ on Index   (1 files)
+       116  incdec.prefix ++ on Name   (10 files)
+         2  incdec.prefix -- on Field   (2 files)
+         3  incdec.prefix -- on Index   (1 files)
+         5  incdec.prefix -- on Name   (4 files)
+       720  incdec.x++ as statement   (52 files)
+              multibot/maps/DragStrip/data/src/track_data.java:96: for(int i=0; i<4; i++) light[i] = new Light(parent, cars.racers:0x0000119Fr, 0, lightPori[i].pos, null, "ye...
+              parts/scripts/src/Part.java:228: for( slotIndex=0; slotIndex<slots; slotIndex++ )
+              parts/scripts/src/Set.java:46: for(int i=0; i<tmp.inv.items.size(); i++)
+        32  incdec.x++ as value   (5 files)
+              sl/Scripts/game/src/CarInfo.java:155: partText[i++].changeText( part.name );
+              sl/Scripts/game/src/CarMarket.java:108: result[i++].colorIndex = Math.random()*GameLogic.CARCOLORS.length;
+              sl/Scripts/game/src/Catalog.java:2476: names[vis++].changeText( null );
+        65  incdec.x-- as statement   (27 files)
+              parts/scripts/src/Part.java:390: for( int i=attachedParts.size()-1; i>=0; i-- )
+              parts/scripts/bodypart/Src/Chassis.java:319: for( int i=attachedParts.size()-1; i>=0; i-- )
+              parts/scripts/rgearpart/reciprocatingrgearpart/SRC/Tyre.java:258: for (maxRimWidth_i=20; maxRimWidth_i>=0; maxRimWidth_i--)
+        17  incdec.x-- as value   (5 files)
+              parts/scripts/src/Part.java:885: while( slots-- )
+              parts/scripts/bodypart/Src/Chassis.java:268: while( wheels-- )
+              sl/Scripts/game/src/Mechanic.java:712: while( i-- )
+
+[index]
+         1  index.of call result   (1 files)
+              sl/Scripts/game/Gamemodes/src/HotActionCop.java:393: if(r) result = gTrack.map.alignToRoad(r)[0];
+         1  index.of field of array element   (1 files)
+              sl/Scripts/game/src/HallOfFame.java:296: for(int j=0; j<len; j++) card[i].desc[j] = tr.nextToken();
+     12782  index.of name   (275 files)
+              cars/racers/Axis_data/scripts/src/Axis_200S.java:55: stock_parts_list_E[ 0] = parts.engines.Einvagen_Duhen_Ishima_Focer:0x0000009Br; // "Duhen D18V I-4" //
+              cars/racers/Axis_data/scripts/src/Axis_200XT.java:55: stock_parts_list_E[ 0] = parts.engines.Einvagen_Duhen_Ishima_Focer:0x0000009Br; // "Duhen D18V I-4" //
+              cars/racers/Axis_data/scripts/src/Axis_ZX360.java:57: stock_parts_list_E[ 0] = parts.engines.Einvagen_Duhen_Ishima_Focer:0x0000000Ar; // "Duhen D22V I-4" //
+       178  index.of name chain   (30 files)
+              parts/scripts/bodypart/Src/Chassis.java:773: addStockParts( GameLogic.CARCOLORS[0], 2.0*Math.random(), 2.0*Math.random() );
+              parts/scripts/enginepart/slidingenginepart/reciprocatingenginepart/SRC/Transmission.java:167: the_car.ratio[i] = ratio[i];
+              sl/Scripts/game/src/CareerEvent.java:210: if(track.description[i] && track.description[i].length()) reqText[i] = track.description[i];
+
+[instanceof]
+       228  instanceof.class   (85 files)
+              parts/engines/Baiern_Emer/scripts/src/Baiern_GT_III_intake_manifold.java:40: if ( (unsafePart = partOnSlot(10)) && unsafePart instanceof AirFuelDeliverySystem)
+              parts/engines/Baiern_Emer/scripts/src/Baiern_Kraftwerk_2_5_intake_manifold.java:40: if ( (unsafePart = partOnSlot(10)) && unsafePart instanceof AirFuelDeliverySystem)
+              parts/engines/Baiern_Emer/scripts/src/Emer_MotorSport_GT2_intake_manifold.java:40: if ( (unsafePart = partOnSlot(10)) && unsafePart instanceof AirFuelDeliverySystem)
+
+[int]
+       180  int hex above 0x7FFFFFFF   (28 files)
+              parts/scripts/src/DynoData.java:90: 0x80000000
+              parts/scripts/enginepart/SRC/Block.java:70: 0xFFFFFFFF
+              sl/Scripts/game/src/CarInfo.java:121: 0xFF00FF00
+        53  int hex with 2 digits
+        44  int hex with 3 digits
+        34  int hex with 4 digits
+         1  int hex with 6 digits
+       346  int hex with 8 digits
+
+[keyword]
+         4  keyword abstract   (2 files)
+       516  keyword break   (96 files)
+       483  keyword case   (86 files)
+      3507  keyword class   (3453 files)
+         1  keyword continue   (1 files)
+         6  keyword default   (5 files)
+         3  keyword do   (3 files)
+      1812  keyword else   (291 files)
+      3469  keyword extends   (3438 files)
+         5  keyword false   (4 files)
+      1123  keyword final   (55 files)
+      1783  keyword float   (198 files)
+       510  keyword for   (55 files)
+      6530  keyword if   (644 files)
+        19  keyword implements   (19 files)
+     12392  keyword import   (3451 files)
+       228  keyword instanceof   (85 files)
+      8647  keyword int   (3428 files)
+         1  keyword interface   (1 files)
+       114  keyword native   (9 files)
+     10072  keyword new   (465 files)
+      1367  keyword null   (193 files)
+      3454  keyword package   (3454 files)
+         7  keyword private   (5 files)
+      9661  keyword public   (3454 files)
+      1250  keyword return   (269 files)
+      1378  keyword static   (96 files)
+      3916  keyword super   (3236 files)
+       133  keyword switch   (86 files)
+       284  keyword this   (56 files)
+         5  keyword true   (4 files)
+      1950  keyword void   (846 files)
+        59  keyword while   (20 files)
+
+[lines]
+    169504  lines
+
+[literal]
+        10  literal.bool   (5 files)
+     37351  literal.float   (3257 files)
+     26667  literal.int   (1127 files)
+      1367  literal.null   (193 files)
+      9952  literal.rid   (677 files)
+     13945  literal.str   (3409 files)
+
+[local]
+      3356  local   (509 files)
+      2802  local.declaration   (508 files)
+      2742  local.declarators per declaration 1   (508 files)
+              cars/racers/Axis_data/scripts/src/Axis_200S.java:172: NOSInjectorSystem N2Oinjector=addPart( parts.engines.Einvagen_Duhen_Ishima_Focer:0x00000052r, "NOS injector...
+              cars/racers/Axis_data/scripts/src/Axis_200XT.java:208: NOSInjectorSystem N2Oinjector=addPart( parts.engines.Einvagen_Duhen_Ishima_Focer:0x00000052r, "NOS injector...
+              cars/racers/Axis_data/scripts/src/Axis_VT.java:9: VehicleModel vmd;
+         1  local.declarators per declaration 11   (1 files)
+              sl/Scripts/game/src/Gamemode.java:913: float x,x0,x1,x2,y,y0,y1,y2,pA,pB,pC;
+        37  local.declarators per declaration 2   (20 files)
+              sl/Scripts/game/src/CareerEvent.java:522: int check, target;
+              sl/Scripts/game/src/CarMarket.java:90: int i, vt;
+              sl/Scripts/game/src/Catalog.java:2336: float itemWidth=0.20, itemHeight=0.15;
+        12  local.declarators per declaration 3   (8 files)
+              parts/scripts/src/Part.java:180: int slotIndex, slotID, otherSlotID;
+              sl/Scripts/game/src/Bot.java:644: int avgPrestige, carPrestige, racerPrestige;
+              sl/Scripts/game/src/CarInfo.java:235: int i, val, line;
+         5  local.declarators per declaration 4   (3 files)
+              sl/Scripts/game/src/CarMarket.java:775: float opti, engi, wear, tear;
+              sl/Scripts/game/src/Gamemode.java:855: float AC,AB,CB,AH;
+              sl/Scripts/game/Gamemodes/src/Drifting.java:445: int h,s,f,c;
+         3  local.declarators per declaration 5   (2 files)
+              parts/scripts/src/Part.java:223: int slots, slotIndex, slotID, otherSlotID, parentSlotID;
+              parts/scripts/src/Part.java:304: int slots, slotIndex, slotID, otherSlotID, parentSlotID;
+              parts/scripts/enginepart/airfueldeliverysystem/SRC/IntakeManifold.java:68: int slots, slotIndex, slotID, otherSlotID, parentSlotID;
+         2  local.declarators per declaration 7   (2 files)
+              sl/Scripts/game/src/CarInfo.java:236: float xpos, xpos2, xpos3, ypos, fval, gx, gy;
+              sl/Scripts/game/src/Garage.java:2141: float top=-0.58, row0=-0.51, row1 = 0.51, step=0.14, x, y, size=0.11;
+       444  local.in for header   (51 files)
+      1534  local.type class   (434 files)
+              cars/racers/Axis_data/scripts/src/Axis_200S.java:172: NOSInjectorSystem N2Oinjector=addPart( parts.engines.Einvagen_Duhen_Ishima_Focer:0x00000052r, "NOS injector...
+              cars/racers/Axis_data/scripts/src/Axis_200XT.java:208: NOSInjectorSystem N2Oinjector=addPart( parts.engines.Einvagen_Duhen_Ishima_Focer:0x00000052r, "NOS injector...
+              cars/racers/Axis_data/scripts/src/Axis_VT.java:9: VehicleModel vmd;
+        57  local.type class[]   (24 files)
+              parts/engines/Baiern_Emer/scripts/src/i6_type_multi_fuel_rail.java:45: String[] fuelTypes = new String[4];
+              parts/scripts/enginepart/airfueldeliverysystem/SRC/FuelInjectorSystem.java:83: String[] fuelTypes = new String[4];
+              sl/Scripts/game/src/Bot.java:496: String[] pre = new String[20];
+       450  local.type float   (132 files)
+              cars/racers/Codrac_data/scripts/src/Codrac_FL_butterfly_door.java:25: float part_random;
+              cars/racers/Codrac_data/scripts/src/Codrac_FL_scissor_door.java:25: float part_random;
+              cars/racers/Codrac_data/scripts/src/Codrac_FL_suicide_door.java:25: float part_random;
+        13  local.type float[]   (4 files)
+              sl/Scripts/game/src/CareerGoalsDialog.java:30: float[] xpos = new float[2];
+              sl/Scripts/game/src/CarInfo.java:261: float[] R = new float[wheels];
+              sl/Scripts/game/Gamemodes/src/CircuitRacing.java:816: float[] dist = new float[calcArray()];
+       834  local.type int   (204 files)
+              parts/running_gear/scripts/src/stock_suspension_FL.java:27: int wheelID = getWheelID();
+              parts/running_gear/scripts/src/stock_suspension_FR.java:27: int wheelID = getWheelID();
+              parts/running_gear/scripts/src/stock_suspension_RL.java:27: int wheelID = getWheelID();
+        24  local.type int[]   (10 files)
+              parts/scripts/bodypart/Src/Chassis.java:379: int[] has = new int[5];
+              sl/Scripts/game/src/Catalog.java:2544: int[] chkSlotId = new int[2];
+              sl/Scripts/game/src/City.java:301: int[] manID = new int[6];
+      2610  local.with initialiser   (346 files)
+       746  local.without initialiser   (269 files)
+              cars/racers/Axis_data/scripts/src/Axis_VT.java:9: VehicleModel vmd;
+              cars/racers/Badge_data/scripts/src/Badge_VT.java:9: VehicleModel vmd;
+              cars/racers/Baiern_data/scripts/src/Baiern_VT.java:9: VehicleModel vmd;
+
+[method]
+      2618  method   (864 files)
+       120  method.body ";"   (12 files)
+              parts/scripts/src/DynoData.java:12: public native void newNative();
+              parts/scripts/src/Part.java:701: public native float getMass();
+              parts/scripts/src/Set.java:58: public void build(Inventory inv);
+      2459  method.body "{ ... }"   (859 files)
+              cars/racers/Axis_data/scripts/src/Axis_200S.java:52: public void addStockParts( Descriptor desc )
+              cars/racers/Axis_data/scripts/src/Axis_200XT.java:52: public void addStockParts( Descriptor desc )
+              cars/racers/Axis_data/scripts/src/Axis_models.java:21: public void updatevariables()
+        39  method.body "{}"   (29 files)
+              parts/scripts/src/Part.java:706: public void updateDamage() {}
+              parts/scripts/enginepart/SRC/AirCooler.java:32: public void calcAirCooling()
+              parts/scripts/enginepart/SRC/Block.java:273: public void check4warnings()
+       113  method.modifier native   (9 files)
+         2  method.modifier private   (2 files)
+      2576  method.modifier public   (864 files)
+        72  method.modifier static   (21 files)
+        37  method.modifiers []   (3 files)
+              sl/Scripts/game/src/Gamemode.java:885: float getSplineDistanceSegment(Vector3 iB, Vector3 iC, Vector3 iA)
+              sl/Scripts/game/src/Track.java:1337: void createHelperBone()
+              sl/Scripts/game/Gamemodes/src/GameDebug.java:322: void F3cam()
+         1  method.modifiers [native static]   (1 files)
+              sl/Scripts/game/src/Painter.java:349: native static void doPaint(GameRef cursor, int color, int brush, int temp, float rot, float size, int flip);
+         2  method.modifiers [native]   (1 files)
+              sl/Scripts/game/src/Painter.java:350: native void paintPart(GameRef cursor, int color);
+              sl/Scripts/game/src/Painter.java:351: native void xPaint(GameRef part);
+         1  method.modifiers [private static]   (1 files)
+              sl/Scripts/game/src/GameLogic.java:622: private static VehicleType getVehicleType( int set )
+         1  method.modifiers [private]   (1 files)
+              sl/Scripts/game/src/VehicleType.java:261: private VehicleModel getVehicleModel( int set )
+       109  method.modifiers [public native]   (7 files)
+              parts/scripts/src/DynoData.java:12: public native void newNative();
+              parts/scripts/src/Part.java:701: public native float getMass();
+              parts/scripts/src/SfxTable.java:11: public native int getItems( );
+         1  method.modifiers [public static native]   (1 files)
+              sl/Scripts/game/src/GameLogic.java:521: public static native int kismajomCheck( String[] kismajomArray );
+        69  method.modifiers [public static]   (20 files)
+              parts/scripts/src/Part.java:116: public static Part createFromFile( File saveGame, GameRef world )
+              parts/scripts/src/Set.java:23: public static Set createFromFile( File saveGame )
+              sl/Scripts/game/src/CareerEvent.java:438: public static String getClass( int classId )
+      2397  method.modifiers [public]   (861 files)
+              cars/racers/Axis_data/scripts/src/Axis_200S.java:52: public void addStockParts( Descriptor desc )
+              cars/racers/Axis_data/scripts/src/Axis_200XT.java:52: public void addStockParts( Descriptor desc )
+              cars/racers/Axis_data/scripts/src/Axis_models.java:21: public void updatevariables()
+       113  method.native   (9 files)
+              parts/scripts/src/DynoData.java:12: public native void newNative();
+              parts/scripts/src/Part.java:701: public native float getMass();
+              parts/scripts/src/SfxTable.java:11: public native int getItems( );
+       111  method.native instance   (8 files)
+              parts/scripts/src/DynoData.java:12: public native void newNative();
+              parts/scripts/src/Part.java:701: public native float getMass();
+              parts/scripts/src/SfxTable.java:11: public native int getItems( );
+         2  method.native static   (2 files)
+              sl/Scripts/game/src/GameLogic.java:521: public static native int kismajomCheck( String[] kismajomArray );
+              sl/Scripts/game/src/Painter.java:349: native static void doPaint(GameRef cursor, int color, int brush, int temp, float rot, float size, int flip);
+      1360  method.parameters 0   (519 files)
+              cars/racers/Axis_data/scripts/src/Axis_models.java:21: public void updatevariables()
+              cars/racers/Badge_data/scripts/src/Badge_models.java:20: public void updatevariables()
+              cars/racers/Baiern_data/scripts/src/Baiern_models.java:26: public void updatevariables()
+       965  method.parameters 1   (547 files)
+              cars/racers/Axis_data/scripts/src/Axis_200S.java:52: public void addStockParts( Descriptor desc )
+              cars/racers/Axis_data/scripts/src/Axis_200XT.java:52: public void addStockParts( Descriptor desc )
+              cars/racers/Axis_data/scripts/src/Axis_ZX360.java:53: public void addStockParts( Descriptor desc )
+         1  method.parameters 10   (1 files)
+              parts/scripts/src/WheelRef.java:49: public native void setHub( float len, float p1x, float p1y, float p1z, float p2x, float p2y, float p2z, flo...
+       114  method.parameters 2   (61 files)
+              multibot/maps/DragStrip/data/src/track_data.java:91: public void setTrafficLight(ResourceRef parent, int status)
+              parts/engines/Einvagen_Duhen_Ishima_Focer/scripts/src/Duhen_D20CV_transmission_RWD_extension.java:38: public void fillDynoData( DynoData dd, int parentSlot ) //different in other (engine) part classes
+              parts/engines/Einvagen_Duhen_Ishima_Focer/scripts/src/Einvagen_PerPro_GTA_transmission_RWD_extension.java:37: public void fillDynoData( DynoData dd, int parentSlot ) //different in other (engine) part classes
+       155  method.parameters 3   (98 files)
+              cars/racers/Codrac_data/scripts/src/Codrac_FL_butterfly_door.java:21: public void addStockParts( int actcolor, float optical, float power )
+              cars/racers/Codrac_data/scripts/src/Codrac_FL_scissor_door.java:21: public void addStockParts( int actcolor, float optical, float power )
+              cars/racers/Codrac_data/scripts/src/Codrac_FL_suicide_door.java:21: public void addStockParts( int actcolor, float optical, float power )
+         5  method.parameters 4   (5 files)
+              sl/Scripts/game/src/Catalog.java:2325: public void initVisuals( float left, float top, float width, float height )
+              sl/Scripts/game/src/Navigator.java:324: public void changeSize( float l, float t, float w, float h )
+              sl/Scripts/game/src/Round.java:53: public void point( float x, float y, float z, int obj )
+         8  method.parameters 5   (5 files)
+              parts/scripts/src/Part.java:551: public float getRealCondition( float value, float bottom_offset, float top_offset, float tear_wear, String ...
+              parts/scripts/rgearpart/reciprocatingrgearpart/SRC/Tyre.java:299: public void SetupTyre( float W, float r, float R, float rW, int compound_type )
+              sl/Scripts/game/src/GameLogic.java:753: public static void challenge(int challenger_id, int challenged_id, int abandon, int challenger_won, int aff...
+         8  method.parameters 6   (7 files)
+              parts/scripts/src/SfxTable.java:13: public native void addItem( ResourceRef sfx, float pitch, float pmin, float pmax, float vmin, float vmax );
+              parts/scripts/src/WheelRef.java:43: public native void setInstantCenter( float Hx, float Hy, float Hz, float Lx, float Ly, float Lz );
+              parts/scripts/bodypart/Src/Chassis.java:1160: public native void setBuck( int partID, int buckid, float freq, float prob, float rpmdep, float amp );
+         2  method.parameters 7   (2 files)
+              parts/scripts/src/WheelRef.java:48: public native void setArm( float len, float px, float py, float pz, float nx, float ny, float nz );
+              sl/Scripts/game/src/Painter.java:349: native static void doPaint(GameRef cursor, int color, int brush, int temp, float rot, float size, int flip);
+       302  method.return type class   (165 files)
+              parts/accessories/scripts/src/canister_1.java:25: public String isDynoable()
+              parts/accessories/scripts/src/canister_2.java:25: public String isDynoable()
+              parts/accessories/scripts/src/canister_3.java:25: public String isDynoable()
+         1  method.return type class[]   (1 files)
+              sl/Scripts/game/src/CarMarket.java:88: public static VehicleDescriptor[] getInitialCars(int used)
+       102  method.return type float   (35 files)
+              parts/scripts/src/DynoData.java:362: public native float calcDyno( float tablesize );
+              parts/scripts/src/EnginePart.java:28: public float sparkAngleTo4cycleTime( float ang )
+              parts/scripts/src/Part.java:335: public float calcPoliceFine( float thoroughness )
+       260  method.return type int   (130 files)
+              parts/engines/Baiern_Emer/scripts/src/i6_type_multi_fuel_rail.java:34: public int isTuneable()
+              parts/engines/Lama_Performance_V12/scripts/src/LP_V12_air_filter_racing.java:31: public int isTuneable()
+              parts/engines/Lama_Performance_V12/scripts/src/LP_V12_air_filter_semi_racing.java:31: public int isTuneable()
+         3  method.return type int[]   (3 files)
+              parts/scripts/src/Part.java:723: public native int[] install_OK( GameRef dest, int slot, GameRef part, int slot2, Vector3 pos );
+              sl/Scripts/game/src/City.java:2385: public int[] calculateFineSum(int clear)
+              sl/Scripts/game/Gamemodes/src/Drifting.java:236: public int[] getBodyPartDamage()
+      1950  method.return type void   (846 files)
+              cars/racers/Axis_data/scripts/src/Axis_200S.java:52: public void addStockParts( Descriptor desc )
+              cars/racers/Axis_data/scripts/src/Axis_200XT.java:52: public void addStockParts( Descriptor desc )
+              cars/racers/Axis_data/scripts/src/Axis_models.java:21: public void updatevariables()
+
+[new]
+       513  new.arguments 0   (245 files)
+      1673  new.arguments 1   (313 files)
+         9  new.arguments 10+   (3 files)
+       534  new.arguments 2   (79 files)
+      5158  new.arguments 3   (178 files)
+       127  new.arguments 4   (24 files)
+       105  new.arguments 5   (42 files)
+        40  new.arguments 6   (15 files)
+        92  new.arguments 7   (16 files)
+         7  new.arguments 9   (7 files)
+      8258  new.object of class   (462 files)
+              cars/racers/Axis_data/scripts/src/Axis_200S.java:32: exhaustSlotIDList = new Vector();
+              cars/racers/Axis_data/scripts/src/Axis_200XT.java:32: exhaustSlotIDList = new Vector();
+              cars/racers/Axis_data/scripts/src/Axis_stock_exhaust_pipe.java:22: mufflerSlotIDList = new Vector();
+
+[newarray]
+       282  newarray.of class   (68 files)
+              multibot/maps/A1Ring/data/src/track_data.java:25: description = new String[5];
+              multibot/maps/DerbyArena/data/src/track_data.java:25: description = new String[2];
+              multibot/maps/DragStrip/data/src/track_data.java:25: description = new String[4];
+        41  newarray.of float   (26 files)
+              parts/scripts/bodypart/Src/Chassis.java:77: float[] ratio = new float[8];
+              parts/scripts/enginepart/slidingenginepart/reciprocatingenginepart/SRC/Transmission.java:39: float[] ratio = new float[8];
+              sl/Scripts/game/src/CareerEvent.java:68: float[] fogData = new float[2];
+      1491  newarray.of int   (100 files)
+              cars/racers/Axis_data/scripts/src/Axis_200S.java:54: stock_parts_list_E = new int[2];
+              cars/racers/Axis_data/scripts/src/Axis_200XT.java:54: stock_parts_list_E = new int[2];
+              cars/racers/Axis_data/scripts/src/Axis_ZX360.java:56: stock_parts_list_E = new int[2];
+        17  newarray.size is arithmetic or bitwise operator   (10 files)
+        33  newarray.size is call   (8 files)
+      1691  newarray.size is int literal   (159 files)
+        73  newarray.size is name or field   (22 files)
+      1814  newarray.sizes 1, empty brackets 0   (165 files)
+              cars/racers/Axis_data/scripts/src/Axis_200S.java:54: stock_parts_list_E = new int[2];
+              cars/racers/Axis_data/scripts/src/Axis_200XT.java:54: stock_parts_list_E = new int[2];
+              cars/racers/Axis_data/scripts/src/Axis_ZX360.java:56: stock_parts_list_E = new int[2];
+
+[node]
+     45168  node.Assign   (3446 files)
+     12114  node.Binary   (827 files)
+     11132  node.Block   (3451 files)
+       516  node.Break   (96 files)
+     28017  node.Call   (3392 files)
+       483  node.CaseLabel   (86 files)
+       224  node.Cast   (68 files)
+      3508  node.Class   (3454 files)
+         5  node.Cond   (3 files)
+         1  node.Continue   (1 files)
+      3137  node.CtorCall   (3115 files)
+      7167  node.Declarator   (608 files)
+         6  node.DefaultLabel   (5 files)
+         3  node.Do   (3 files)
+     65492  node.ExprStmt   (3451 files)
+     17602  node.Field   (431 files)
+      3446  node.FieldDecl   (198 files)
+       510  node.For   (55 files)
+      6530  node.If   (644 files)
+     12392  node.Import   (3451 files)
+     12962  node.Index   (276 files)
+       228  node.InstanceOf   (85 files)
+     89292  node.Literal   (3447 files)
+      3246  node.LocalVar   (509 files)
+      6176  node.MethodDecl   (3453 files)
+     97243  node.Name   (3450 files)
+      8258  node.New   (462 files)
+      1814  node.NewArray   (165 files)
+      5400  node.Param   (3431 files)
+      1461  node.Paren   (250 files)
+       834  node.Postfix   (54 files)
+      1250  node.Return   (269 files)
+       792  node.Super   (565 files)
+       133  node.Switch   (86 files)
+       489  node.SwitchGroup   (86 files)
+       271  node.This   (52 files)
+     25234  node.Type   (3453 files)
+     10692  node.Unary   (556 files)
+      3454  node.Unit   (3454 files)
+        56  node.While   (18 files)
+
+[note]
+         2  note.abstract-field   (1 files)
+              sl/Scripts/game/src/Track.java:21: abstract Vector3 posStart;
+              sl/Scripts/game/src/Track.java:22: abstract Ypr oriStart;
+        72  note.body-semicolon   (67 files)
+              parts/scripts/src/Part.java:703: public int setSfxLoopParams(float vol, float pitch); //RAXAT: hidden
+              parts/scripts/src/Set.java:58: public void build(Inventory inv);
+              parts/scripts/enginepart/slidingenginepart/reciprocatingenginepart/SRC/Differential.java:138: public void applyTuning();
+         1  note.empty-body-class   (1 files)
+              sl/Scripts/game/src/GameState.java:10: public interface GameState
+         2  note.import-colon   (2 files)
+              cars/racers/Baiern_data/scripts/src/Baiern_FR_quarterpanel.java:6: import parts:part.root.BodyPart.*;
+              sl/Scripts/game/src/City.java:11: import parts:part.root.BodyPart.*;
+         1  note.native-field   (1 files)
+              parts/scripts/bodypart/Src/Chassis.java:53: static native int installSet;
+      9952  note.rid-literal   (677 files)
+              cars/racers/Axis_data/scripts/src/Axis_200S.java:55: stock_parts_list_E[ 0] = parts.engines.Einvagen_Duhen_Ishima_Focer:0x0000009Br; // "Duhen D18V I-4" //
+              cars/racers/Axis_data/scripts/src/Axis_200XT.java:55: stock_parts_list_E[ 0] = parts.engines.Einvagen_Duhen_Ishima_Focer:0x0000009Br; // "Duhen D18V I-4" //
+              cars/racers/Axis_data/scripts/src/Axis_VT.java:15: vmd=new VehicleModel( cars.racers.Axis:0x00000006r, VS_DEMO );
+
+[odd]
+       106  odd.assignment as a condition   (37 files)
+              parts/engines/Baiern_Emer/scripts/src/Baiern_Devils_6SFi_3_6_block.java:56: if (tab = the_car.getSfxTable(0))
+              parts/engines/Baiern_Emer/scripts/src/Baiern_Kraftwerk_2_5_block.java:56: if (tab = the_car.getSfxTable(0))
+              parts/engines/Baiern_Emer/scripts/src/Emer_MotorSport_GT2_block.java:56: if (tab = the_car.getSfxTable(0))
+         5  odd.final field without initialiser   (4 files)
+              sl/Scripts/game/src/Catalog.java:220: final static String pageNumberPrefix;
+              sl/Scripts/game/src/GameLogic.java:116: final static String activeControlFile; //= controlSaveDir + "active_control_set";
+              sl/Scripts/game/src/Navigator.java:33: final static int lda;
+        12  odd.local declared in two groups of one switch   (4 files)
+              sl/Scripts/game/src/MainMenu.java:337: VehicleFileReqDialog d = new VehicleFileReqDialog( player.controller, Dialog.DF_MODAL|Dialog.DF_DEFAULTBG|D...
+              sl/Scripts/game/src/MapDebug.java:353: String fname = "save/cars/database/ACrow";
+              sl/Scripts/game/src/OptionsDialog.java:899: Dialog d = new YesNoDialog(player.controller, Dialog.DF_FREEZE|Dialog.DF_MODAL|Dialog.DF_DEFAULTBG|Dialog.D...
+        16  odd.local hides an outer local or parameter   (7 files)
+              parts/engines/Einvagen_Duhen_Ishima_Focer/scripts/src/Shimutshibu_RC_HIB535T4_intake_manifold.java:42: AirFuelDeliverySystem mixture_intake = unsafePart;
+              parts/scripts/bodypart/Src/Chassis.java:384: for(int i=0; i<wheels; i++)
+              sl/Scripts/game/src/CareerEvent.java:1027: Debug d = new Debug("multibot\\debugger\\src\\" + n + ".java");
+         1  odd.method declared twice with the same parameter types   (1 files)
+              parts/engines/Lama_Performance_V12/scripts/src/LP_V12_R_secondary_turbocharger_semi_racing.java:33: public void updatevariables()
+        83  odd.statement after return / break / continue in one block   (39 files)
+              parts/running_gear/scripts/shocks/src/shock_absorber_Baiern_GT_front.java:40: return (adjustable_damping && adjustable_rebound_factor);
+              parts/running_gear/scripts/shocks/src/shock_absorber_Einvagen_GTA_front.java:39: return (adjustable_damping && adjustable_rebound_factor);
+              parts/running_gear/scripts/shocks/src/shock_absorber_Einvagen_GTA_rear.java:40: return (adjustable_damping && adjustable_rebound_factor);
+
+[operator]
+       824  operator !
+       204  operator !=
+        36  operator %
+        35  operator &
+       625  operator &&
+         1  operator &=
+     54505  operator (
+     54505  operator )
+     13885  operator *
+        76  operator *=
+      3491  operator +
+       870  operator ++
+       394  operator +=
+     30455  operator ,
+     10488  operator -
+        92  operator --
+        74  operator -=
+     80412  operator .
+       723  operator /
+         7  operator /=
+       496  operator :
+     90561  operator ;
+       854  operator <
+         2  operator <<
+       146  operator <=
+     49532  operator =
+      2106  operator ==
+       460  operator >
+       399  operator >=
+         6  operator >>
+         5  operator ?
+     15191  operator [
+     15191  operator ]
+         1  operator ^
+         1  operator ^=
+     14773  operator {
+       421  operator |
+        30  operator |=
+       363  operator ||
+     14773  operator }
+         1  operator ~
+
+[package]
+       154  package java.game
+      1932  package java.game.cars
+        12  package java.game.parts
+        14  package java.game.parts.accessories
+        28  package java.game.parts.bodypart
+        15  package java.game.parts.enginepart
+         6  package java.game.parts.enginepart.airfueldeliverysystem
+         2  package java.game.parts.enginepart.airfueldeliverysystem.charger
+         2  package java.game.parts.enginepart.block
+         1  package java.game.parts.enginepart.block.block_inline
+         2  package java.game.parts.enginepart.block.block_vee
+         2  package java.game.parts.enginepart.canister.n2o
+         1  package java.game.parts.enginepart.slidingenginepart
+        10  package java.game.parts.enginepart.slidingenginepart.reciprocatingenginepart
+         3  package java.game.parts.enginepart.slidingenginepart.reciprocatingenginepart.camshaft
+         3  package java.game.parts.enginepart.slidingenginepart.reciprocatingenginepart.cylinderhead
+         2  package java.game.parts.enginepart.slidingenginepart.reciprocatingenginepart.differential
+        85  package java.game.parts.engines.Baiern_Emer
+        33  package java.game.parts.engines.Callaway_Cadillac_Bugatti_V16
+        85  package java.game.parts.engines.Dodge_BMW_Racing_V10
+       133  package java.game.parts.engines.Einvagen_Duhen_Ishima_Focer
+        99  package java.game.parts.engines.GMC_Nissan_Honda_Hyundai_Opel
+       107  package java.game.parts.engines.Lama_Performance_V12
+        89  package java.game.parts.engines.MC_Prime_SuperDuty
+        25  package java.game.parts.interior
+        27  package java.game.parts.mufflers
+        20  package java.game.parts.neons
+        20  package java.game.parts.pedals
+         6  package java.game.parts.rgearpart
+         4  package java.game.parts.rgearpart.reciprocatingrgearpart
+         2  package java.game.parts.rgearpart.reciprocatingrgearpart.brake
+         5  package java.game.parts.rgearpart.suspension
+         4  package java.game.parts.running_gear
+        50  package java.game.parts.running_gear.brakes
+        25  package java.game.parts.running_gear.fl_susp
+        25  package java.game.parts.running_gear.fr_susp
+        25  package java.game.parts.running_gear.rl_susp
+        25  package java.game.parts.running_gear.rr_susp
+        39  package java.game.parts.running_gear.scripts
+        50  package java.game.parts.running_gear.shocks
+        50  package java.game.parts.running_gear.springs
+        50  package java.game.parts.running_gear.sways
+       153  package java.game.parts.wheels.rims
+        29  package java.game.parts.wheels.tyres
+
+[param]
+      5400  param   (3431 files)
+      1040  param.type class   (505 files)
+              cars/racers/Axis_data/scripts/src/Axis_200S.java:52: public void addStockParts( Descriptor desc )
+              cars/racers/Axis_data/scripts/src/Axis_200XT.java:52: public void addStockParts( Descriptor desc )
+              cars/racers/Axis_data/scripts/src/Axis_ZX360.java:53: public void addStockParts( Descriptor desc )
+        13  param.type class[]   (7 files)
+              sl/Scripts/game/src/CareerEvent.java:706: public int checkVendor( String[] base )
+              sl/Scripts/game/src/CarMarket.java:274: public static void alterCars(int used, VehicleDescriptor[] cars, float hoursPassed)
+              sl/Scripts/game/src/City.java:3556: public NightRaceDialog(Controller ctrl, int[] rid, String[] texts)
+       417  param.type float   (108 files)
+              cars/racers/Codrac_data/scripts/src/Codrac_FL_butterfly_door.java:21: public void addStockParts( int actcolor, float optical, float power )
+              cars/racers/Codrac_data/scripts/src/Codrac_FL_scissor_door.java:21: public void addStockParts( int actcolor, float optical, float power )
+              cars/racers/Codrac_data/scripts/src/Codrac_FL_suicide_door.java:21: public void addStockParts( int actcolor, float optical, float power )
+         1  param.type float[]   (1 files)
+              sl/Scripts/game/Gamemodes/src/TimeAttack.java:627: public finishWindowTimeAttack(Gamemode gm, float[] tTime)
+      3922  param.type int   (3418 files)
+              cars/racers/Axis_data/scripts/src/Axis_200S.java:10: public Axis_200S( int id )
+              cars/racers/Axis_data/scripts/src/Axis_200XT.java:10: public Axis_200XT( int id )
+              cars/racers/Axis_data/scripts/src/Axis_F_bumper.java:10: public Axis_F_bumper( int id )
+         7  param.type int[]   (6 files)
+              parts/scripts/src/Part.java:91: public String installCheck( Part p, int[] slotId )
+              parts/scripts/rgearpart/reciprocatingrgearpart/SRC/Tyre.java:272: public String installCheck( Part p, int[] slotId )
+              sl/Scripts/game/src/City.java:3556: public NightRaceDialog(Controller ctrl, int[] rid, String[] texts)
+
+[paren]
+        55  paren.around Assign   (43 files)
+       973  paren.around Binary   (201 files)
+        10  paren.around Call   (7 files)
+       152  paren.around Cast   (48 files)
+        39  paren.around Field   (7 files)
+         2  paren.around Index   (1 files)
+        16  paren.around InstanceOf   (12 files)
+         8  paren.around Literal   (4 files)
+       175  paren.around Name   (29 files)
+        31  paren.around Unary   (14 files)
+
+[return]
+      1218  return.with value   (267 files)
+        32  return.without value   (9 files)
+
+[rid]
+      9950  rid literals of packs with a file on disk
+         2  rid literals of packs without a file on disk
+      1160  rid literals spelled in another letter case than the file
+        38  rid pack cars
+         3  rid pack cars.misc.Police
+        11  rid pack cars.racers
+       161  rid pack cars.racers.Axis
+        74  rid pack cars.racers.Badge
+        34  rid pack cars.racers.Baiern
+       117  rid pack cars.racers.Codrac
+       244  rid pack cars.racers.Coyot
+        37  rid pack cars.racers.Duhen
+        31  rid pack cars.racers.Einvagen
+        20  rid pack cars.racers.Enula
+        21  rid pack cars.racers.Focer
+       119  rid pack cars.racers.Furrano
+        62  rid pack cars.racers.Kurumma
+        24  rid pack cars.racers.MC
+       115  rid pack cars.racers.Naxas
+       168  rid pack cars.racers.Ninja
+        19  rid pack cars.racers.Nonus
+        16  rid pack cars.racers.Prime
+        94  rid pack cars.racers.Remo
+        73  rid pack cars.racers.ST9
+       146  rid pack cars.racers.Stallion
+       145  rid pack cars.racers.Sunset
+        19  rid pack cars.racers.SuperDuty
+       143  rid pack cars.racers.Teg
+       126  rid pack cars.racers.Whisper
+       152  rid pack cars.racers.Yotta
+       104  rid pack cars.racers.Zed
+       164  rid pack cars.racers.baiern
+       180  rid pack cars.racers.duhen
+       118  rid pack cars.racers.einvagen
+       143  rid pack cars.racers.enula
+       107  rid pack cars.racers.focer
+       112  rid pack cars.racers.mc
+       142  rid pack cars.racers.nonus
+        59  rid pack cars.racers.prime
+       125  rid pack cars.racers.superduty
+         8  rid pack cars.traffic.Ambulance
+         2  rid pack cars.traffic.ArmoredVan
+         4  rid pack cars.traffic.CivilVan
+         2  rid pack cars.traffic.CivilVan_2
+         2  rid pack cars.traffic.CivilVan_3
+         2  rid pack cars.traffic.Coach
+         4  rid pack cars.traffic.Erbilac
+         2  rid pack cars.traffic.Erbilac_2
+         2  rid pack cars.traffic.Erbilac_3
+         2  rid pack cars.traffic.FireEngine
+         4  rid pack cars.traffic.Peterbild
+         2  rid pack cars.traffic.Peterbild_2
+         2  rid pack cars.traffic.Peterbild_3
+         4  rid pack cars.traffic.Pickup
+         2  rid pack cars.traffic.Pickup_2
+         2  rid pack cars.traffic.Pickup_3
+         2  rid pack cars.traffic.Schoolbus
+         4  rid pack cars.traffic.Taxi
+         2  rid pack cars.traffic.Wagon
+       398  rid pack frontend
+        46  rid pack humans
+         6  rid pack maps.ROC_Track.smallmap
+         2  rid pack maps.ROC_track
+         3  rid pack maps.city
+         9  rid pack maps.city.smallmap
+        40  rid pack maps.skydome
+         2  rid pack maps.test_track
+         6  rid pack maps.test_track.smallmap
+         2  rid pack misc.carlot
+        31  rid pack misc.catalog
+         2  rid pack misc.dealer
+         2  rid pack misc.dealer2
+         8  rid pack misc.dealer3
+        14  rid pack misc.garage
+         2  rid pack misc.garage_objects
+         5  rid pack misc.paintbooth
+         1  rid pack multibot.maps.A1Ring
+         7  rid pack multibot.maps.A1Ring.t_data
+         1  rid pack multibot.maps.DerbyArena
+         4  rid pack multibot.maps.DerbyArena.t_data
+         1  rid pack multibot.maps.DragStrip
+        16  rid pack multibot.maps.DragStrip.t_data
+         1  rid pack multibot.maps.GatewayRoad
+         5  rid pack multibot.maps.GatewayRoad.t_data
+         1  rid pack multibot.maps.HockenheimGP
+         5  rid pack multibot.maps.HockenheimGP.t_data
+         1  rid pack multibot.maps.LagunaSeca
+         3  rid pack multibot.maps.LagunaSeca.t_data
+         1  rid pack multibot.maps.NationalDirtRaceway
+         4  rid pack multibot.maps.NationalDirtRaceway.t_data
+         1  rid pack multibot.maps.Norisring
+         6  rid pack multibot.maps.Norisring.t_data
+         1  rid pack multibot.maps.Nurburgring
+         5  rid pack multibot.maps.Nurburgring.t_data
+         1  rid pack multibot.maps.OranPark
+         4  rid pack multibot.maps.OranPark.t_data
+         1  rid pack multibot.maps.OultonPark
+         3  rid pack multibot.maps.OultonPark.t_data
+         2  rid pack multibot.maps.ROCTrack.t_data
+         1  rid pack multibot.maps.SPAFrankoohapsGPCircuit
+         5  rid pack multibot.maps.SPAFrankoohapsGPCircuit.t_data
+         1  rid pack multibot.maps.Sandown
+         4  rid pack multibot.maps.Sandown.t_data
+         2  rid pack multibot.maps.TestTrack.t_data
+         1  rid pack multibot.maps.UKRallyStage1
+         3  rid pack multibot.maps.UKRallyStage1.t_data
+         1  rid pack multibot.maps.UKRallyStage2
+         4  rid pack multibot.maps.UKRallyStage2.t_data
+         1  rid pack multibot.maps.UKRallyStage3
+         3  rid pack multibot.maps.UKRallyStage3.t_data
+         1  rid pack multibot.maps.Vallelunga
+         5  rid pack multibot.maps.Vallelunga.t_data
+         5  rid pack multibot.maps.ValoCity.t_data
+         1  rid pack multibot.maps.Zandvoort
+         7  rid pack multibot.maps.Zandvoort.t_data
+         6  rid pack multibot.scripts
+         3  rid pack multibot.sounds
+         1  rid pack objects
+         8  rid pack particles
+      1960  rid pack parts
+       336  rid pack parts.engines.Baiern_Emer
+        84  rid pack parts.engines.Callaway_Cadillac_Bugatti_V16
+       382  rid pack parts.engines.Dodge_BMW_Racing_V10
+       561  rid pack parts.engines.Einvagen_Duhen_Ishima_Focer
+       344  rid pack parts.engines.GMC_Nissan_Honda_Hyundai_Opel
+       270  rid pack parts.engines.Lama_Performance_V12
+       462  rid pack parts.engines.MC_Prime_SuperDuty
+        45  rid pack parts.interior
+        92  rid pack parts.mufflers
+        70  rid pack parts.pedals
+       908  rid pack parts.wheels
+        16  rid pack parts.wings
+      2501  rid pack segments 1
+      1264  rid pack segments 2
+      5949  rid pack segments 3
+       102  rid pack segments 4
+       136  rid pack segments 5
+         3  rid pack sl
+         2  rid pack sl.Scripts.game.CareerEvents.old_stdpack_231
+       118  rid pack sl.Scripts.game.CareerEvents.stdpack_231
+        16  rid pack sl.Scripts.game.Gamemodes.stdpack_231
+        41  rid pack sound
+         6  rid pack system
+       125  rid packs on disk (distinct files named)
+        12  rid packs spelled in another letter case than the file
+         1  rid packs without a file on disk
+       135  rid packs written (distinct spellings)
+        82  rid with lower-case hex digits   (47 files)
+              cars/racers/SuperDuty_data/scripts/src/Hauler_s_SuperDuty_Extra_750.java:148: parts.wheels:0x000003e7r
+              sl/Scripts/game/src/Catalog.java:1556: parts:0xF23fr
+              sl/Scripts/game/src/City.java:31: frontend:0x00b6r
+         9  rid with more than 8 hex digits   (4 files)
+              cars/racers/Baiern_data/scripts/src/kit_GT_III_body.java:41: cars.racers.baiern:0x00000015Ar
+              cars/racers/Baiern_data/scripts/src/kit_GT_III_window.java:22: cars.racers.baiern:0x00000015Ar
+              cars/racers/Prime_data/scripts/src/kit_Prime_DLH_body.java:30: cars.racers.prime:0x0000000CBr
+
+[rpk]
+       147  rpk files on disk
+
+[sources]
+      3454  sources parsed
+
+[stmt]
+         3  stmt.Block as a statement of its own   (2 files)
+              sl/Scripts/game/src/CarLot.java:504: {
+              sl/Scripts/game/src/Track.java:2496: {
+              sl/Scripts/game/src/Track.java:2506: {
+        74  stmt.Block empty   (39 files)
+              cars/racers/Einvagen_data/scripts/src/Einvagen_FR_door.java:42: {
+              cars/racers/Einvagen_data/scripts/src/Einvagen_RL_door.java:40: {
+              cars/racers/Einvagen_data/scripts/src/Einvagen_RR_door.java:40: {
+
+[string]
+     13945  string
+       760  string empty
+        35  string escape \"   (25 files)
+              parts/running_gear/scripts/src/kit_Baiern_19_DTM_wheel.java:15: "Baiern DTM 19\" wheel kit"
+              parts/running_gear/scripts/src/kit_Blossom_17_wheel.java:15: "Blossom 17\" wheel kit"
+              parts/running_gear/scripts/src/kit_Blossom_19_wheel.java:15: "Blossom 19\" wheel kit"
+       249  string escape \\   (26 files)
+              multibot/maps/A1Ring/data/src/track_data.java:39: "multibot\\maps\\A1Ring\\data\\route_1.spl"
+              multibot/maps/DragStrip/data/src/track_data.java:38: "multibot\\maps\\DragStrip\\data\\route_1.spl"
+              multibot/maps/GatewayRoad/data/src/track_data.java:37: "multibot\\maps\\GatewayRoad\\data\\route_1.spl"
+       235  string escape \n   (76 files)
+              cars/racers/Baiern_data/scripts/src/Baiern_F_bumper_3.java:16: "The front bumper of the CoupeSport GT III. It is made of carbon fiber for weight reduction. \n It also sup...
+              cars/racers/Baiern_data/scripts/src/Baiern_F_bumper_4.java:16: "The front bumper of the CoupeSport DTM. It is made of carbon fiber for weight reduction. \n It supports an...
+              cars/racers/Baiern_data/scripts/src/Baiern_R_bumper_3.java:16: "The rear bumper for the CoupeSport GT III. It's made of carbon fiber to drastically reduce weight at the r...
+         2  string escape \t   (2 files)
+              sl/Scripts/game/src/GameLogic.java:833: "\t"
+              sl/Scripts/game/src/Player.java:137: "\t"
+         8  string holding // or /*   (3 files)
+              sl/Scripts/game/src/CareerEvent.java:961: "//============================="
+              sl/Scripts/game/src/Catalog.java:269: "/*.png"
+              sl/Scripts/game/src/Track.java:2054: "//-----------------------PARENTS:"
+       760  string length 0
+     12651  string length 1-99
+       532  string length 100-999
+         2  string length 1000+
+        51  string with a raw TAB   (2 files)
+              sl/Scripts/game/src/CareerEvent.java:952: "typeof<TAB>7"
+              sl/Scripts/game/src/CareerEvent.java:953: "superid<TAB>0x00010008"
+              sl/Scripts/game/src/Track.java:716: "<TAB><TAB>"
+
+[substmt]
+         3  substmt.do body is a block   (3 files)
+              sl/Scripts/game/src/GameLogic.java:293: {
+              sl/Scripts/game/src/RaceSetup.java:185: {
+              sl/Scripts/game/src/Valocity.java:241: do{
+       571  substmt.else body is a block   (159 files)
+              cars/racers/Axis_data/scripts/src/Axis_200S.java:185: {
+              cars/racers/Axis_data/scripts/src/Axis_200XT.java:169: {
+              cars/racers/Badge_data/scripts/src/Badge_67.java:145: {
+       485  substmt.else body is a single statement   (120 files)
+              cars/racers/Baiern_data/scripts/src/Baiern_CoupeSport.java:222: else addPart( parts:0x000001C1r, "12pds canister" );
+              cars/racers/Baiern_data/scripts/src/Baiern_CoupeSport_GT_III.java:153: else addPart( parts:0x000001C1r, "12pds canister" );
+              cars/racers/Baiern_data/scripts/src/Baiern_DevilSport.java:221: else addPart( parts:0x000001C1r, "12pds canister" );
+       407  substmt.for body is a block   (52 files)
+              multibot/maps/DragStrip/data/src/track_data.java:115: {
+              parts/scripts/src/Part.java:229: {
+              parts/scripts/src/Set.java:47: {
+       103  substmt.for body is a single statement   (30 files)
+              multibot/maps/DragStrip/data/src/track_data.java:96: for(int i=0; i<4; i++) light[i] = new Light(parent, cars.racers:0x0000119Fr, 0, lightPori[i].pos, null, "ye...
+              parts/scripts/src/Part.java:492: cond*=attachedParts.elementAt(i).getCondition();
+              parts/scripts/bodypart/Src/Chassis.java:1181: for(int j=0; j<mufflers.size(); j++) mufflers.elementAt(j).createExhaustPS();
+      4108  substmt.if body is a block   (533 files)
+              cars/racers/Axis_data/scripts/src/Axis_200S.java:171: {
+              cars/racers/Axis_data/scripts/src/Axis_200XT.java:137: {
+              cars/racers/Axis_data/scripts/src/Axis_ZX360.java:134: {
+      2422  substmt.if body is a single statement   (509 files)
+              cars/racers/Badge_data/scripts/src/Badge_67.java:193: if (desc.power > 1.6) addPart( parts:0x000001BFr, "24pds canister" );
+              cars/racers/Badge_data/scripts/src/Badge_GTO.java:147: if (desc.power > 1.6) addPart( parts:0x000001BFr, "24pds canister" );
+              cars/racers/Baiern_data/scripts/src/Baiern_CoupeSport.java:221: if(desc.power > 1.8) addPart( parts:0x000001BFr, "24pds canister" );
+        49  substmt.while body is a block   (14 files)
+              parts/scripts/src/Part.java:183: {
+              parts/scripts/bodypart/Src/Chassis.java:269: {
+              sl/Scripts/game/src/CareerEvent.java:480: {
+         7  substmt.while body is a single statement   (6 files)
+              parts/scripts/src/Part.java:912: seed-=1.0;
+              parts/scripts/enginepart/slidingenginepart/reciprocatingenginepart/SRC/Camshaft.java:80: adv += advance_minimum_step;
+              sl/Scripts/game/src/City.java:1315: i2 = (int)(Math.random() * n);
+
+[switch]
+       483  switch.case label   (86 files)
+         3  switch.case value is Binary   (2 files)
+              sl/Scripts/game/src/City.java:3533: case(CMD_OPTION+1): //exit
+              sl/Scripts/game/src/City.java:3539: case(CMD_OPTION+2): //exit and race
+              sl/Scripts/game/src/OptionsDialog.java:944: case(CMD_FFB+1):
+       163  switch.case value is a name   (17 files)
+              parts/scripts/enginepart/SRC/ExhaustTip.java:49: case(PST_NORMAL):
+              sl/Scripts/game/src/BetDialog.java:71: case(CMD_OK): //OK button
+              sl/Scripts/game/src/CareerEvent.java:445: case (CAR_CLASS_E): cID = "E"; break;
+        38  switch.case value is a name (dotted)   (6 files)
+              sl/Scripts/game/src/CarMarket.java:821: case(Input.AXIS_MENU_LEFT):
+              sl/Scripts/game/src/EventList.java:224: case (CareerEvent.DRIVETYPE_FWD):
+              sl/Scripts/game/src/Garage.java:685: case(GameLogic.GM_SINGLECAR):
+       279  switch.case value is int literal   (75 files)
+              multibot/maps/DragStrip/data/src/track_data.java:95: case 0: //show up four yellow lights (under STAGE plate)
+              parts/scripts/rgearpart/reciprocatingrgearpart/SRC/Brake.java:56: case 0:
+              sl/Scripts/game/src/CareerEvent.java:359: case 1: //silver cup, 2nd place
+       209  switch.case value written in parentheses   (18 files)
+              parts/scripts/enginepart/SRC/ExhaustTip.java:49: case(PST_NORMAL):
+              sl/Scripts/game/src/BetDialog.java:71: case(CMD_OK): //OK button
+              sl/Scripts/game/src/CareerEvent.java:445: case (CAR_CLASS_E): cID = "E"; break;
+       274  switch.case value written plain   (75 files)
+              multibot/maps/DragStrip/data/src/track_data.java:95: case 0: //show up four yellow lights (under STAGE plate)
+              parts/scripts/rgearpart/reciprocatingrgearpart/SRC/Brake.java:56: case 0:
+              sl/Scripts/game/src/CareerEvent.java:359: case 1: //silver cup, 2nd place
+         6  switch.default label   (5 files)
+              parts/scripts/rgearpart/reciprocatingrgearpart/SRC/Brake.java:68: default:
+              sl/Scripts/game/src/Garage.java:693: default:
+              sl/Scripts/game/src/RaceDialog.java:114: default:
+       489  switch.group   (86 files)
+       486  switch.group ends with break   (86 files)
+        36  switch.group that declares a local   (10 files)
+              sl/Scripts/game/src/BetDialog.java:82: case(CMD_SLIDER):
+              sl/Scripts/game/src/City.java:3279: case(CMD_DEBUG):
+              sl/Scripts/game/src/EventList.java:537: case(CMD_RACE):
+       133  switch.groups 1+   (86 files)
+       489  switch.labels per group 1   (86 files)
+              multibot/maps/DragStrip/data/src/track_data.java:95: case 0: //show up four yellow lights (under STAGE plate)
+              parts/scripts/enginepart/SRC/ExhaustTip.java:49: case(PST_NORMAL):
+              parts/scripts/rgearpart/reciprocatingrgearpart/SRC/Brake.java:56: case 0:
+         3  switch.last group ends without break   (3 files)
+              sl/Scripts/game/src/Garage.java:1017: default:
+              sl/Scripts/game/src/Navigator.java:315: case(TYPE_MINIMAP_STILL):
+              sl/Scripts/game/src/RaceDialog.java:114: default:
+         1  switch.subject is call   (1 files)
+       132  switch.subject is name or field   (86 files)
+         6  switch.with default   (5 files)
+       127  switch.without default   (84 files)
+
+[this]
+       183  this.argument   (40 files)
+              parts/scripts/enginepart/SRC/ExhaustTip.java:80: psObject = new ParticleSystem(this, psRes);
+              parts/scripts/enginepart/slidingenginepart/reciprocatingenginepart/SRC/Camshaft.java:231: m.gadget.osd.findGadget( this, 1 ).setValue( advance );
+              parts/scripts/rgearpart/SRC/ShockAbsorber.java:237: m.gadget.osd.findGadget( this, 1 ).setValue( damping );
+        36  this.assigned value   (27 files)
+              parts/scripts/src/Set.java:41: tmp.set = this;
+              sl/Scripts/game/src/BetDialog.java:63: osd.globalHandler = this;
+              sl/Scripts/game/src/CareerGoalsDialog.java:23: osd.globalHandler = this;
+         5  this.operand   (3 files)
+              parts/scripts/src/Part.java:369: if (this instanceof EnginePart)
+              sl/Scripts/game/src/City.java:2461: if(GameLogic.actualState == this)
+              sl/Scripts/game/src/Track.java:2749: if(this instanceof ROCTrack)
+        46  this.receiver   (14 files)
+              parts/scripts/src/Part.java:778: int carID = this.id();
+              parts/scripts/enginepart/SRC/ExhaustHeader.java:115: if(turbos_installed < turbo_slots && turbo_slots > 1) return this.name + " is missing a turbocharger.";
+              parts/scripts/enginepart/SRC/ExhaustTip.java:75: Vector3 pos = this.getPos().add(psDelta);
+         1  this.return value   (1 files)
+              sl/Scripts/game/src/VehicleDescriptor.java:79: return this;
+
+[token]
+    852211  token
+     37351  token.float
+    232593  token.id
+     26667  token.int
+     74689  token.kw
+    457014  token.op
+      9952  token.rid
+     13945  token.str
+
+[unary]
+       824  unary.!   (288 files)
+         5  unary.! applied to unary --   (1 files)
+              sl/Scripts/game/src/Track.java:1780: if( !--msgtimers )
+              sl/Scripts/game/src/Track.java:1790: if( !--GameLogic.timeout )
+              sl/Scripts/game/src/Track.java:1849: if( !--boxTimer[0] ) hideMsgBox(0);
+        94  unary.+   (94 files)
+         1  unary.+ applied to an expression   (1 files)
+              sl/Scripts/game/src/Track.java:2294: + debugGRD_gridData.elementAt((i*2)+1).toString() + " );"
+        93  unary.+ applied to float literal   (93 files)
+              parts/engines/Baiern_Emer/scripts/src/Baiern_GT_III_exhaust_camshaft.java:30: advance_positive_peak = +15.0;
+              parts/engines/Baiern_Emer/scripts/src/Baiern_GT_III_intake_camshaft.java:30: advance_positive_peak = +15.0;
+              parts/engines/Baiern_Emer/scripts/src/Baiern_Kraftwerk_2_5_exhaust_camshaft.java:30: advance_positive_peak = +15.0;
+       118  unary.++   (10 files)
+      9645  unary.-   (427 files)
+        37  unary.- applied to an expression   (14 files)
+              parts/scripts/bodypart/Src/Chassis.java:990: m.addItem( "F-R brake balance", 1, -brake_balance, -1.0, 0.0, 51, null ).changeVLabelText( Float.toString(b...
+              parts/scripts/enginepart/slidingenginepart/reciprocatingenginepart/SRC/Differential.java:112: m.addItem("Drive distribution", 2, -drive_base, -drive_base_max, -drive_base_min, ((drive_base_max-drive_ba...
+              parts/scripts/enginepart/slidingenginepart/reciprocatingenginepart/SRC/Transmission.java:240: ratio[i]=-ratio[i];
+      9220  unary.- applied to float literal   (408 files)
+              multibot/maps/A1Ring/data/src/track_data.java:35: posStart = new Vector3( -289.138,-31.935,-276.245 );
+              multibot/maps/DerbyArena/data/src/track_data.java:32: posStart = new Vector3( 101.533,-5.052,-57.068 );
+              multibot/maps/DragStrip/data/src/track_data.java:34: posStart = new Vector3( -138.043,2.762,-244.091 );
+       388  unary.- applied to int literal   (55 files)
+              multibot/maps/TestTrack/data/src/track_data.java:34: posStart = new Vector3( -456,0.0,-584 );
+              parts/engines/Einvagen_Duhen_Ishima_Focer/scripts/src/Duhen_D18V_block.java:15: static int ST_INDIVIDUAL = -1;
+              parts/engines/Einvagen_Duhen_Ishima_Focer/scripts/src/Duhen_D22V_block.java:15: static int ST_INDIVIDUAL = -1;
+        10  unary.--   (5 files)
+         1  unary.~   (1 files)
+
+[unit]
+      3454  unit   (3454 files)
+         3  unit.imports 0   (3 files)
+       438  unit.imports 1   (438 files)
+        48  unit.imports 10   (48 files)
+        40  unit.imports 11   (40 files)
+         3  unit.imports 12   (3 files)
+         3  unit.imports 13   (3 files)
+         1  unit.imports 14   (1 files)
+       188  unit.imports 2   (188 files)
+      1782  unit.imports 3   (1782 files)
+       175  unit.imports 4   (175 files)
+       402  unit.imports 5   (402 files)
+       170  unit.imports 6   (170 files)
+       143  unit.imports 7   (143 files)
+        30  unit.imports 8   (30 files)
+        28  unit.imports 9   (28 files)
+      3454  unit.package   (3454 files)
+        39  unit.public type not named like the file   (18 files)
+              sl/Scripts/game/src/Bot.java:728: public class botCard
+              sl/Scripts/game/src/CarLot.java:480: public class LoadingText extends Thread
+              sl/Scripts/game/src/CarMarket.java:1156: public class DealerData
+        18  unit.several public types   (18 files)
+              sl/Scripts/game/src/Bot.java:728: public class botCard
+              sl/Scripts/game/src/CarLot.java:480: public class LoadingText extends Thread
+              sl/Scripts/game/src/CarMarket.java:1156: public class DealerData
+        23  unit.several top-level types   (23 files)
+              sl/Scripts/game/src/Bot.java:728: public class botCard
+              sl/Scripts/game/src/CarLot.java:480: public class LoadingText extends Thread
+              sl/Scripts/game/src/CarMarket.java:1156: public class DealerData
+      3431  unit.types 1   (3431 files)
+        10  unit.types 2   (10 files)
+         7  unit.types 3   (7 files)
+         1  unit.types 4   (1 files)
+         3  unit.types 5   (3 files)
+         1  unit.types 8   (1 files)
+         1  unit.types 9   (1 files)
+
+[constructs that occur only in sources without a class file]
+  none
+
+[resource packs named by literals]
+      38  cars                                                    cars.rpk
+       3  cars.misc.Police                                        cars\misc\Police.rpk
+      11  cars.racers                                             cars\racers.rpk
+     161  cars.racers.Axis                                        cars\racers\Axis.rpk
+      74  cars.racers.Badge                                       cars\racers\Badge.rpk
+     164  cars.racers.baiern                                      cars\racers\Baiern.rpk
+      34  cars.racers.Baiern                                      cars\racers\Baiern.rpk
+     117  cars.racers.Codrac                                      cars\racers\Codrac.rpk
+     244  cars.racers.Coyot                                       cars\racers\Coyot.rpk
+      37  cars.racers.Duhen                                       cars\racers\Duhen.rpk
+     180  cars.racers.duhen                                       cars\racers\Duhen.rpk
+     118  cars.racers.einvagen                                    cars\racers\Einvagen.rpk
+      31  cars.racers.Einvagen                                    cars\racers\Einvagen.rpk
+     143  cars.racers.enula                                       cars\racers\Enula.rpk
+      20  cars.racers.Enula                                       cars\racers\Enula.rpk
+     107  cars.racers.focer                                       cars\racers\Focer.rpk
+      21  cars.racers.Focer                                       cars\racers\Focer.rpk
+     119  cars.racers.Furrano                                     cars\racers\Furrano.rpk
+      62  cars.racers.Kurumma                                     cars\racers\Kurumma.rpk
+     112  cars.racers.mc                                          cars\racers\MC.rpk
+      24  cars.racers.MC                                          cars\racers\MC.rpk
+     115  cars.racers.Naxas                                       cars\racers\Naxas.rpk
+     168  cars.racers.Ninja                                       cars\racers\Ninja.rpk
+     142  cars.racers.nonus                                       cars\racers\Nonus.rpk
+      19  cars.racers.Nonus                                       cars\racers\Nonus.rpk
+      59  cars.racers.prime                                       cars\racers\Prime.rpk
+      16  cars.racers.Prime                                       cars\racers\Prime.rpk
+      94  cars.racers.Remo                                        cars\racers\Remo.rpk
+      73  cars.racers.ST9                                         cars\racers\ST9.rpk
+     146  cars.racers.Stallion                                    cars\racers\Stallion.rpk
+     145  cars.racers.Sunset                                      cars\racers\Sunset.rpk
+     125  cars.racers.superduty                                   cars\racers\SuperDuty.rpk
+      19  cars.racers.SuperDuty                                   cars\racers\SuperDuty.rpk
+     143  cars.racers.Teg                                         cars\racers\Teg.rpk
+     126  cars.racers.Whisper                                     cars\racers\Whisper.rpk
+     152  cars.racers.Yotta                                       cars\racers\Yotta.rpk
+     104  cars.racers.Zed                                         cars\racers\Zed.rpk
+       8  cars.traffic.Ambulance                                  cars\traffic\Ambulance.rpk
+       2  cars.traffic.ArmoredVan                                 cars\traffic\ArmoredVan.rpk
+       4  cars.traffic.CivilVan                                   cars\traffic\CivilVan.rpk
+       2  cars.traffic.CivilVan_2                                 cars\traffic\Civilvan_2.rpk
+       2  cars.traffic.CivilVan_3                                 cars\traffic\Civilvan_3.rpk
+       2  cars.traffic.Coach                                      cars\traffic\Coach.rpk
+       4  cars.traffic.Erbilac                                    cars\traffic\Erbilac.rpk
+       2  cars.traffic.Erbilac_2                                  cars\traffic\Erbilac_2.rpk
+       2  cars.traffic.Erbilac_3                                  cars\traffic\Erbilac_3.rpk
+       2  cars.traffic.FireEngine                                 cars\traffic\FireEngine.rpk
+       4  cars.traffic.Peterbild                                  cars\traffic\Peterbild.rpk
+       2  cars.traffic.Peterbild_2                                cars\traffic\Peterbild_2.rpk
+       2  cars.traffic.Peterbild_3                                cars\traffic\Peterbild_3.rpk
+       4  cars.traffic.Pickup                                     cars\traffic\Pickup.rpk
+       2  cars.traffic.Pickup_2                                   cars\traffic\Pickup_2.rpk
+       2  cars.traffic.Pickup_3                                   cars\traffic\Pickup_3.rpk
+       2  cars.traffic.Schoolbus                                  cars\traffic\Schoolbus.rpk
+       4  cars.traffic.Taxi                                       cars\traffic\Taxi.rpk
+       2  cars.traffic.Wagon                                      cars\traffic\Wagon.rpk
+     398  frontend                                                frontend.rpk
+      46  humans                                                  humans.rpk
+       3  maps.city                                               maps\city.rpk
+       9  maps.city.smallmap                                      maps\city\smallmap.rpk
+       2  maps.ROC_track                                          maps\ROC_track.rpk
+       6  maps.ROC_Track.smallmap                                 maps\ROC_track\smallmap.rpk
+      40  maps.skydome                                            maps\skydome.rpk
+       2  maps.test_track                                         maps\test_track.rpk
+       6  maps.test_track.smallmap                                maps\test_track\smallmap.rpk
+       2  misc.carlot                                             misc\carlot.rpk
+      31  misc.catalog                                            misc\catalog.rpk
+       2  misc.dealer                                             misc\dealer.rpk
+       2  misc.dealer2                                            misc\dealer2.rpk
+       8  misc.dealer3                                            misc\dealer3.rpk
+      14  misc.garage                                             misc\garage.rpk
+       2  misc.garage_objects                                     misc\garage_objects.rpk
+       5  misc.paintbooth                                         misc\paintbooth.rpk
+       1  multibot.maps.A1Ring                                    multibot\maps\A1Ring.rpk
+       7  multibot.maps.A1Ring.t_data                             multibot\maps\A1Ring\t_data.rpk
+       1  multibot.maps.DerbyArena                                multibot\maps\DerbyArena.rpk
+       4  multibot.maps.DerbyArena.t_data                         multibot\maps\DerbyArena\t_data.rpk
+       1  multibot.maps.DragStrip                                 multibot\maps\DragStrip.rpk
+      16  multibot.maps.DragStrip.t_data                          multibot\maps\DragStrip\t_data.rpk
+       1  multibot.maps.GatewayRoad                               multibot\maps\GatewayRoad.rpk
+       5  multibot.maps.GatewayRoad.t_data                        multibot\maps\GatewayRoad\t_data.rpk
+       1  multibot.maps.HockenheimGP                              multibot\maps\HockenheimGP.rpk
+       5  multibot.maps.HockenheimGP.t_data                       multibot\maps\HockenheimGP\t_data.rpk
+       1  multibot.maps.LagunaSeca                                multibot\maps\LagunaSeca.rpk
+       3  multibot.maps.LagunaSeca.t_data                         multibot\maps\LagunaSeca\t_data.rpk
+       1  multibot.maps.NationalDirtRaceway                       multibot\maps\NationalDirtRaceway.rpk
+       4  multibot.maps.NationalDirtRaceway.t_data                multibot\maps\NationalDirtRaceway\t_data.rpk
+       1  multibot.maps.Norisring                                 multibot\maps\Norisring.rpk
+       6  multibot.maps.Norisring.t_data                          multibot\maps\Norisring\t_data.rpk
+       1  multibot.maps.Nurburgring                               multibot\maps\Nurburgring.rpk
+       5  multibot.maps.Nurburgring.t_data                        multibot\maps\Nurburgring\t_data.rpk
+       1  multibot.maps.OranPark                                  multibot\maps\OranPark.rpk
+       4  multibot.maps.OranPark.t_data                           multibot\maps\OranPark\t_data.rpk
+       1  multibot.maps.OultonPark                                multibot\maps\OultonPark.rpk
+       3  multibot.maps.OultonPark.t_data                         multibot\maps\OultonPark\t_data.rpk
+       2  multibot.maps.ROCTrack.t_data                           multibot\maps\ROCTrack\t_data.rpk
+       1  multibot.maps.Sandown                                   multibot\maps\Sandown.rpk
+       4  multibot.maps.Sandown.t_data                            multibot\maps\Sandown\t_data.rpk
+       1  multibot.maps.SPAFrankoohapsGPCircuit                   multibot\maps\SPAFrankoohapsGPCircuit.rpk
+       5  multibot.maps.SPAFrankoohapsGPCircuit.t_data            multibot\maps\SPAFrankoohapsGPCircuit\t_data.rpk
+       2  multibot.maps.TestTrack.t_data                          multibot\maps\TestTrack\t_data.rpk
+       1  multibot.maps.UKRallyStage1                             multibot\maps\UKRallyStage1.rpk
+       3  multibot.maps.UKRallyStage1.t_data                      multibot\maps\UKRallyStage1\t_data.rpk
+       1  multibot.maps.UKRallyStage2                             multibot\maps\UKRallyStage2.rpk
+       4  multibot.maps.UKRallyStage2.t_data                      multibot\maps\UKRallyStage2\t_data.rpk
+       1  multibot.maps.UKRallyStage3                             multibot\maps\UKRallyStage3.rpk
+       3  multibot.maps.UKRallyStage3.t_data                      multibot\maps\UKRallyStage3\t_data.rpk
+       1  multibot.maps.Vallelunga                                multibot\maps\Vallelunga.rpk
+       5  multibot.maps.Vallelunga.t_data                         multibot\maps\Vallelunga\t_data.rpk
+       5  multibot.maps.ValoCity.t_data                           multibot\maps\ValoCity\t_data.rpk
+       1  multibot.maps.Zandvoort                                 multibot\maps\Zandvoort.rpk
+       7  multibot.maps.Zandvoort.t_data                          multibot\maps\Zandvoort\t_data.rpk
+       6  multibot.scripts                                        multibot\scripts.rpk
+       3  multibot.sounds                                         multibot\sounds.rpk
+       1  objects                                                 objects.rpk
+       8  particles                                               particles.rpk
+    1960  parts                                                   parts.rpk
+     336  parts.engines.Baiern_Emer                               parts\engines\Baiern_Emer.rpk
+      84  parts.engines.Callaway_Cadillac_Bugatti_V16             parts\engines\Callaway_Cadillac_Bugatti_V16.rpk
+     382  parts.engines.Dodge_BMW_Racing_V10                      parts\engines\Dodge_BMW_Racing_V10.rpk
+     561  parts.engines.Einvagen_Duhen_Ishima_Focer               parts\engines\Einvagen_Duhen_Ishima_Focer.rpk
+     344  parts.engines.GMC_Nissan_Honda_Hyundai_Opel             parts\engines\GMC_Nissan_Honda_Hyundai_Opel.rpk
+     270  parts.engines.Lama_Performance_V12                      parts\engines\Lama_Performance_V12.rpk
+     462  parts.engines.MC_Prime_SuperDuty                        parts\engines\MC_Prime_SuperDuty.rpk
+      45  parts.interior                                          parts\interior.rpk
+      92  parts.mufflers                                          parts\mufflers.rpk
+      70  parts.pedals                                            parts\pedals.rpk
+     908  parts.wheels                                            parts\wheels.rpk
+      16  parts.wings                                             parts\wings.rpk
+       3  sl                                                      sl.rpk
+       2  sl.Scripts.game.CareerEvents.old_stdpack_231            NO SUCH FILE
+     118  sl.Scripts.game.CareerEvents.stdpack_231                sl\Scripts\game\CareerEvents\stdpack_231.rpk
+      16  sl.Scripts.game.Gamemodes.stdpack_231                   sl\Scripts\game\Gamemodes\stdpack_231.rpk
+      41  sound                                                   sound.rpk
+       6  system                                                  system.rpk
+
+[type name resolution]
+       286  found: file
+      8269  found: import
+      6752  found: java.lang
+      1038  found: package
+     16345  type names
+     15404  type names in pair_940
+       159  type names in pair_other
+       782  type names in source_only
+         0  unknown
+         0  with candidates in more than one package
+         0  written with dots
+done in 8.1 s

@@ -1,0 +1,18 @@
+# class file	why it cannot be reproduced	build	evidence
+cars/racers/Baiern_data/scripts/Baiern_R_windshield_2.class	stale	0x24F9D	line check: 1 str node not on the source line
+cars/racers/Codrac_data/scripts/Codrac_L_taillights.class	stale	0x24F9D	line check: 2 str nodes not on the source line
+cars/racers/Coyot_data/scripts/Coyot_RL_brake_light.class	stale	0x24F9D	line check: 2 str nodes not on the source line
+cars/racers/Coyot_data/scripts/Coyot_RR_brake_light.class	stale	0x24F9D	line check: 2 str nodes not on the source line
+parts/engines/Callaway_Cadillac_Bugatti_V16/scripts/Cyclone_4speed_transmission.class	stale	0x24F9D	token census: int literal source 8 class 9; line check: 1 int node not on the source line
+parts/engines/Dodge_BMW_Racing_V10/scripts/V10_adjustable_6_speed_AWD_automatic_transmission.class	stale	0x24F9D	token census: int literal source 13 class 14; line check: 1 int node not on the source line
+parts/engines/Einvagen_Duhen_Ishima_Focer/scripts/Duhen_D20CV_manual_transmission.class	stale	0x24F9D	token census: int literal source 15 class 16; line check: 1 int node not on the source line
+parts/engines/Einvagen_Duhen_Ishima_Focer/scripts/Faktun_Group_Tran6_manual_transmission.class	stale	0x24F9D	token census: int literal source 15 class 16; line check: 1 int node not on the source line
+parts/engines/Einvagen_Duhen_Ishima_Focer/scripts/Shimutshibu_RC_T5600R1_manual_transmission.class	stale	0x24F9D	token census: int literal source 12 class 13; line check: 1 int node not on the source line
+parts/engines/GMC_Nissan_Honda_Hyundai_Opel/scripts/V6_adjustable_6_speed_RWD_automatic_transmission.class	stale	0x24F9D	token census: int literal source 13 class 14; line check: 1 int node not on the source line
+parts/engines/Lama_Performance_V12/scripts/LP_V12_transmission_street.class	stale	0x24F9D	token census: int literal source 11 class 12; line check: 1 int node not on the source line
+parts/neons/scripts/neontube_L_Aqua.class	stale	0x11AE1	token census: = source 3 class 4; line check: 2 float nodes not on the source line; line check: 6 name nodes not on the source line; line check: 1 str node not on the source line
+parts/neons/scripts/neontube_L_Blue.class	stale	0x11AE1	token census: = source 3 class 5; token census: string literal source 1 class 2; line check: 2 float nodes not on the source line; line check: 4 name nodes not on the source line; line check: 2 str nodes not on the source line
+parts/neons/scripts/neontube_R_Aqua.class	stale	0x11AE1	token census: = source 3 class 4; line check: 2 float nodes not on the source line; line check: 6 name nodes not on the source line; line check: 1 str node not on the source line
+parts/running_gear/scripts/shocks/shock_absorber_SunStrip_22_rear.class	stale	0x24F9D	line check: 1 float node not on the source line
+parts/scripts/enginepart/slidingenginepart/reciprocatingenginepart/differential/Center_Differential.class	other class version	0x24F9D	holds a ref to Chassis.getBlock:()Ljava.game.parts.Part; the shipped Chassis declares getBlock:()Ljava.game.parts.enginepart.Block;
+sl/Scripts/game/Garage.class	other class version	0x24F9D	holds a ref to NetworkEngine.httpRequestAsync, which the shipped NetworkEngine no longer declares
