@@ -1148,6 +1148,24 @@ class PartObject : public NativeObject {
   // rebind them.
   int32_t mesh_ = 0;
   int32_t render_type_ = 0;
+  // +0x7C: a handle on the texture of the type's `texture` line
+  // (type+0x10E8), copied at the create like the two above. Its id (+0x84)
+  // is what Part.getTexture returns; Part.setTexture and the `texture`
+  // command replace that texture in the part's render type and rebind the
+  // handle. 0 for a type without the line: such a part cannot be painted.
+  int32_t texture_ = 0;
+  // Fork: the lines of the part's private copy of its main render type that
+  // differ from the pack's render object: texture lines by slot (slot,
+  // texture id) and the mesh line. The exe duplicates the render type on
+  // the first Part.setTexture / setMesh that changes something
+  // (FUN_004c75a0 / FUN_004c72d0 -> FUN_004e9470) and replaces lines in the
+  // copy (FUN_00522b00); the host keeps the render object and hands these
+  // to the render instances made from the part's own handle
+  // (part_lines_to). Emptied when Part.setRenderType gives the part a
+  // render type of the pack.
+  std::vector<std::pair<int32_t, int32_t>> tex_over_;
+  bool mesh_over_set_ = false;
+  int32_t mesh_over_ = 0;
   // +0xAC: the owner of the render instances (render instance payload
   // +0x1B4 / +0x1B8): the part's own node id until an install gives it the
   // car's (FUN_004ca390: getinfo 0x3F of the car). 0 = the own node.
@@ -1260,6 +1278,26 @@ int32_t part_entry_render(const PartObject* part, const PartEntry& e) {
   return e.res_id;
 }
 
+// The replaced lines of the part's own render type go to a render instance
+// made from it (Fork, see PartObject::tex_over_).
+void part_lines_to(const PartObject* part, InvObject* r) {
+  std::vector<int32_t> slots, ids;
+  slots.reserve(part->tex_over_.size());
+  ids.reserve(part->tex_over_.size());
+  for (const auto& o : part->tex_over_) {
+    slots.push_back(o.first);
+    ids.push_back(o.second);
+  }
+  renderref_set_line_overrides(r, slots.data(), ids.data(),
+                               static_cast<int32_t>(slots.size()),
+                               part->mesh_over_set_, part->mesh_over_);
+}
+
+// FUN_004c75a0 / FUN_004c72d0 on a part or car object: Part.setTexture /
+// setMesh and the `texture` / `mesh` commands (NativeTypes_part7.inc).
+void part_set_texture(PartObject* part, int32_t id);
+void part_set_mesh(PartObject* part, int32_t id);
+
 // PE 940 FUN_004c2950 / FUN_004c1e90 / FUN_00498180, the loop over the
 // thresholds: the level is the first i with detail < t[i], else the count.
 int part_level_for(const PartTypeDesc& d, float detail) {
@@ -1336,6 +1374,12 @@ void part_make_render_instances(PartObject* part, int level) {
     const int32_t res = part_entry_render(part, e);
     InvObject* r = part_new_render_instance(part, e, res, "part_r_o", at, rot);
     if (!r) continue;
+    // The main render entry is instanced from part+0x9C (part_entry_render):
+    // from the private copy when the part has one, so with its replaced
+    // lines.
+    if (d.main_render && e.res_id == d.main_render &&
+        (!part->tex_over_.empty() || part->mesh_over_set_))
+      part_lines_to(part, r);
     PartObject::Inst inst;
     inst.r = r;
     inst.entry = static_cast<int>(i);
@@ -1389,8 +1433,10 @@ void part_init(PartObject* part, const NativeCreate& c) {
     part->slots_.push_back(e);
   }
   part->car_ = part->key_;
-  // The handles part+0x8C / +0x9C: the type's mesh and main render type
-  // (FUN_004c1f90 binds them from type+0x1104 / +0x1114).
+  // The handles part+0x7C / +0x8C / +0x9C: the type's texture, mesh and
+  // main render type (FUN_004c1f90 binds them from type+0x10F4 / +0x1104 /
+  // +0x1114).
+  part->texture_ = d.texture_id;
   part->mesh_ = d.mesh_id;
   part->render_type_ = d.main_render;
   part->owns_create_pose = true;

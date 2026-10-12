@@ -870,7 +870,7 @@ bool parse_scx_material_table(const uint8_t* data, size_t size,
       sm.diffuse = 0xFF000000u | (chan(r) << 16) | (chan(g) << 8) | chan(b);
     }
     scx_v3_material(h, kScxV3Header, 0, static_cast<uint32_t>(kScxV3Header),
-                    &sm);
+                    0u, &sm);
     sm.mat_flags |= 0x80000000u;  // C3DLow vt+0xd0(header, 0x80000000)
     sm.mat_index = static_cast<int32_t>(out->size());
     out->push_back(std::move(sm));
@@ -1066,6 +1066,19 @@ void render_d3d9_mesh_bind_slots(void* key, void* const* textures,
   }
   for (MeshSubmesh& sm : st.materials)
     if (sm.has_mat) bind(sm);
+}
+
+int32_t render_d3d9_mesh_texture_uses(void* key, void* texture_key) {
+  auto it = g_meshes.find(key);
+  if (it == g_meshes.end() || !texture_key) return 0;
+  int32_t n = 0;
+  for (const MeshSubmesh& sm : it->second.subs) {
+    if (sm.texture_key == texture_key) ++n;
+    if (sm.texture_second == texture_key) ++n;
+    if (sm.texture_env == texture_key) ++n;
+    if (sm.texture_lightmap == texture_key) ++n;
+  }
+  return n;
 }
 
 int32_t render_d3d9_mesh_slot_summary(void* key, char* buf, size_t cap) {

@@ -686,6 +686,91 @@ void game_boot_display_size(const char* game_root, int32_t* w, int32_t* h) {
               *w, *h, version, windowed, depth);
 }
 
+// Fork (M3 spec Q15): the three shadow options on the script boot path.
+// The exe's Config constructor runs loadConfig("save/game/options") before
+// the display opens, and the engine reads Config.shadows / shadow_size /
+// shadow_detail from the script instance (FUN_0047c240; FUN_00421280 makes
+// the shadow targets). The host does not run that constructor yet; it
+// takes the three values from the same file at the places loadConfig reads
+// them. The order is that of loadConfig and saveConfig in
+// system/scripts/util/Config.class (tufa_dump): after the 8 bytes of the
+// SDAT container SAVEFILEID 0xFEDCBA98, the version, video_windowed,
+// video_x, video_y, video_depth, video_gamma (float), texture_size, then
+// shadow_size (+40), shadow_detail (float, +44) and shadows (+48).
+// loadConfig reads on when the first number is SAVEFILEID and the version
+// is 12 or more (tree 144: `readInt() == SAVEFILEID`, `version >= 12`);
+// the game writes version 13.
+// Fork: a missing, older or implausible file (a size above 16384, a
+// negative number) leaves the field initialisers of Config.class: shadows
+// 2, shadow_size 256, shadow_detail 0.25. loadConfig has no such test of
+// the values.
+// SLRR_SHADOWS=<shadows>[,<size>[,<detail>]] overrides them for tests (in
+// place of the OPTIONS screen). The values go to the host's Config object
+// and to the renderer.
+static void game_boot_shadow_options(const char* game_root) {
+  int32_t shadows = 2, size = 256;
+  float detail = 0.25f;
+  std::string source = "class defaults";
+  std::string path = (game_root && game_root[0]) ? game_root : ".";
+  path += "/save/game/options";
+  uint8_t hdr[52] = {};
+  size_t got = 0;
+  if (FILE* f = std::fopen(path.c_str(), "rb")) {
+    got = std::fread(hdr, 1, sizeof(hdr), f);
+    std::fclose(f);
+    uint32_t magic = 0, version = 0;
+    int32_t f_size = 0, f_shadows = 0;
+    float f_detail = 0.f;
+    std::memcpy(&magic, hdr + 8, 4);
+    std::memcpy(&version, hdr + 12, 4);
+    std::memcpy(&f_size, hdr + 40, 4);
+    std::memcpy(&f_detail, hdr + 44, 4);
+    std::memcpy(&f_shadows, hdr + 48, 4);
+    const bool plausible = f_size >= 0 && f_size <= 16384 && f_shadows >= 0 &&
+                           f_shadows <= 16 && f_detail >= 0.f &&
+                           f_detail <= 1000.f;
+    if (got == sizeof(hdr) && std::memcmp(hdr, "SDAT", 4) == 0 &&
+        magic == 0xFEDCBA98u && version >= 12 && plausible) {
+      shadows = f_shadows;
+      size = f_size;
+      detail = f_detail;
+      source = "save/game/options";
+    } else {
+      source = "class defaults: save/game/options not usable";
+    }
+  } else {
+    source = "class defaults: no save/game/options";
+  }
+  if (const char* e = std::getenv("SLRR_SHADOWS"); e && e[0]) {
+    char* end = nullptr;
+    const long a = std::strtol(e, &end, 10);
+    if (end != e) {
+      shadows = static_cast<int32_t>(a);
+      if (*end == ',') {
+        const char* s2 = end + 1;
+        const long b = std::strtol(s2, &end, 10);
+        if (end != s2) {
+          size = static_cast<int32_t>(b);
+          if (*end == ',') {
+            const char* s3 = end + 1;
+            const float c = std::strtof(s3, &end);
+            if (end != s3) detail = c;
+          }
+        }
+      }
+      source = "SLRR_SHADOWS";
+    }
+  }
+  if (InvObject* cfg = system_config_host()) {
+    tree_field_set_int(cfg, "shadow_size", size);
+    tree_field_set_float(cfg, "shadow_detail", detail);
+    tree_field_set_int(cfg, "shadows", shadows);
+  }
+  render_d3d9_set_shadow_options(shadows, size, detail, source.c_str());
+  std::printf("[pe-boot] shadows=%d shadow_size=%d shadow_detail=%g (%s)\n",
+              shadows, size, detail, source.c_str());
+}
+
 int game_interactive_run(Jvm& jvm, const char* game_root,
                          const char* player_name, bool auto_new,
                          int32_t max_frames) {
@@ -792,6 +877,7 @@ int game_interactive_run(Jvm& jvm, const char* game_root,
           *s = JvmValue::make_int(render_d3d9_height());
       }
     }
+    game_boot_shadow_options(game_root);
     if (!jvm.find_class("java.game.Init")) jvm.load_class("java.game.Init");
     InvObject* init_obj = tree_host_new("java.game.Init");
     jvm.invoke("java.game.Init", "<init>", "(I)V",

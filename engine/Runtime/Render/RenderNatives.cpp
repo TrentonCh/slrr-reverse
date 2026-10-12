@@ -350,6 +350,18 @@ void java_render_GfxEngine_setGlobalEnvmap(InvObject* texture) {
   // race125 deepen VERIFY: InvObject* stand-in for handle; g_envmap store
   // only. PE: UnboxArg dest0=nullptr → arg0 is Native.ptr box; compare
   // *(g_GfxEngine+0x64) vs *(box+0xC); unlink/relink @ +0x48/+0x50.
+  if (native_script_boot()) {
+    // PE 940 FUN_004dc910 (registered at 0x4D6EAF): the handle at
+    // engine+0x98 is bound to the node of the ResourceRef (box+0xC); the
+    // frame function FUN_00421920 asks that node for its texture.
+    // Host: the renderer keeps the resource id and the camera pass loads
+    // the texture (renderref_envmap_texture). The legacy stand-in
+    // (g_envmap, the ADD stage of draw_meshes) is not fed on the script
+    // boot.
+    render_d3d9_set_global_envmap_id(
+        texture ? java_util_resource_ResourceRef_id(texture) : 0);
+    return;
+  }
   render_d3d9_set_global_envmap(texture);
 }
 

@@ -168,6 +168,15 @@ struct MeshVertexBlend {
   float u, v;
 };
 static_assert(sizeof(MeshVertexBlend) == 36, "blend vertex is 9 dwords");
+// The same with a second uv pair (the second texture entry of a MixTA
+// class, render_d3d9_part6.inc). FVF XYZB1 | NORMAL | TEX2.
+struct MeshVertexBlend2 {
+  float x, y, z;
+  float w;
+  float nx, ny, nz;
+  float uv[2][2];
+};
+static_assert(sizeof(MeshVertexBlend2) == 44, "blend vertex is 11 dwords");
 
 // PE 940 FUN_0051c990 / FUN_0046a2d0 / FUN_00468cd0 / FUN_00444180: a
 // section with two bones (INVO v4 section chunk type 2) of an instance
@@ -242,13 +251,17 @@ static bool two_bone_matrices(void* key, const MeshState& ms,
   return true;
 }
 
+// `two_sets`: the vertices carry the first two uv sets of the wide array
+// (the caller has set the material sources for the CPU path, whose vertex
+// then has the two colours of the wide format).
 static bool draw_two_bone_section(void* key, const MeshState& ms,
                                   const MeshSubmesh& sm,
-                                  const D3DMATRIX& world) {
+                                  const D3DMATRIX& world, bool two_sets) {
   D3DMATRIX skin_a{}, skin_b{};
   if (!two_bone_matrices(key, ms, sm, world, &skin_a, &skin_b)) return false;
   const UINT nvert = static_cast<UINT>(sm.verts.size());
   const UINT ntri = static_cast<UINT>(sm.indices.size() / 3);
+  if (sm.wide.size() != sm.verts.size()) two_sets = false;
   if (g_blend_matrices < 0) {
     D3DCAPS9 caps{};
     g_blend_matrices = SUCCEEDED(g_dev->GetDeviceCaps(&caps))
@@ -256,6 +269,33 @@ static bool draw_two_bone_section(void* key, const MeshState& ms,
                            : 0;
   }
   ++g_cam_pass_stats.two_bone_sections;
+  if (g_blend_matrices >= 2 && two_sets) {
+    static std::vector<MeshVertexBlend2> s_bv2;
+    s_bv2.resize(nvert);
+    for (UINT i = 0; i < nvert; ++i) {
+      const MeshVertexWide& v = sm.wide[i];
+      MeshVertexBlend2& o = s_bv2[i];
+      o.x = v.x;
+      o.y = v.y;
+      o.z = v.z;
+      o.w = sm.weights[i];
+      o.nx = v.nx;
+      o.ny = v.ny;
+      o.nz = v.nz;
+      std::memcpy(o.uv, v.uv, sizeof(o.uv));
+    }
+    g_dev->SetTransform(D3DTS_WORLDMATRIX(0), &skin_a);
+    g_dev->SetTransform(D3DTS_WORLDMATRIX(1), &skin_b);
+    g_dev->SetRenderState(D3DRS_VERTEXBLEND, D3DVBF_1WEIGHTS);
+    g_dev->SetFVF(D3DFVF_XYZB1 | D3DFVF_NORMAL | D3DFVF_TEX2);
+    g_dev->DrawIndexedPrimitiveUP(D3DPT_TRIANGLELIST, 0, nvert, ntri,
+                                  sm.indices.data(), D3DFMT_INDEX16,
+                                  s_bv2.data(), sizeof(MeshVertexBlend2));
+    g_dev->SetRenderState(D3DRS_VERTEXBLEND, D3DVBF_DISABLE);
+    g_dev->SetFVF(D3DFVF_XYZ | D3DFVF_NORMAL | D3DFVF_TEX1);
+    g_dev->SetTransform(D3DTS_WORLD, &world);
+    return true;
+  }
   if (g_blend_matrices >= 2) {
     static std::vector<MeshVertexBlend> s_bv;
     s_bv.resize(nvert);
@@ -312,9 +352,30 @@ static bool draw_two_bone_section(void* key, const MeshState& ms,
   D3DMATRIX ident{};
   mat_identity(&ident);
   g_dev->SetTransform(D3DTS_WORLD, &ident);
-  g_dev->DrawIndexedPrimitiveUP(D3DPT_TRIANGLELIST, 0, nvert, ntri,
-                                sm.indices.data(), D3DFMT_INDEX16, s_cv.data(),
-                                sizeof(MeshVertex));
+  if (two_sets) {
+    // The blended position and normal in the wide vertex.
+    static std::vector<MeshVertexWide> s_cw;
+    s_cw.resize(nvert);
+    for (UINT i = 0; i < nvert; ++i) {
+      MeshVertexWide& o = s_cw[i];
+      o = sm.wide[i];
+      o.x = s_cv[i].x;
+      o.y = s_cv[i].y;
+      o.z = s_cv[i].z;
+      o.nx = s_cv[i].nx;
+      o.ny = s_cv[i].ny;
+      o.nz = s_cv[i].nz;
+    }
+    g_dev->SetFVF(kFvfWide);
+    g_dev->DrawIndexedPrimitiveUP(D3DPT_TRIANGLELIST, 0, nvert, ntri,
+                                  sm.indices.data(), D3DFMT_INDEX16,
+                                  s_cw.data(), sizeof(MeshVertexWide));
+    g_dev->SetFVF(D3DFVF_XYZ | D3DFVF_NORMAL | D3DFVF_TEX1);
+  } else {
+    g_dev->DrawIndexedPrimitiveUP(D3DPT_TRIANGLELIST, 0, nvert, ntri,
+                                  sm.indices.data(), D3DFMT_INDEX16,
+                                  s_cv.data(), sizeof(MeshVertex));
+  }
   g_dev->SetTransform(D3DTS_WORLD, &world);
   return true;
 }

@@ -98,6 +98,13 @@ struct ResState {
   int32_t flare_tex_id = 0;
   int32_t swapped_tex_id = 0;
   InvObject* swapped_tex = nullptr;
+  // Fork: the lines of the render object that this render instance has
+  // replaced (renderref_set_line_overrides, Resources_part2.inc): texture
+  // lines by slot, and the mesh. PE 940: the lines of a private copy of the
+  // render type (FUN_004e9470, FUN_00522b00).
+  std::vector<std::pair<int32_t, int32_t>> line_tex;  // slot, texture id
+  bool line_mesh_set = false;
+  int32_t line_mesh = 0;
   int32_t cached = 0;
   int32_t flags = 0;  // inner+0x54 (GameRef_getFlags / ground_precache 0x80000)
   // PE RenderRef_SetBoneMatrixParentLink @ 0x0048BF50 — bone_ref parent link.

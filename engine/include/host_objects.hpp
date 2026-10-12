@@ -293,6 +293,35 @@ int32_t resref_node_flags(InvObject* o);
 // Returns 1 when the instance has its mesh now, 0 when the type is not a
 // mesh recipe (a light type), -1 when the type could not be loaded.
 int32_t renderref_materialise_pending(InvObject* instance, int32_t type_id);
+// Fork: the lines a render instance replaces in its render object (PE 940:
+// Part.setTexture / setMesh make a private copy of the part's main render
+// type, FUN_004e9470, and FUN_00522b00 replaces a line of the copy; the
+// host keeps the render object and gives the instance the difference).
+// `slots[i]` is the zero-based index of a `texture` line, `texture_ids[i]`
+// the record that line now names; `mesh_set` / `mesh_id` the mesh in place
+// of the render object's. The call replaces what the instance had (count 0
+// and mesh_set false: nothing replaced). The pending list applies the
+// lines after the clone (renderref_materialise_pending); an instance that
+// has its mesh already gets the textures bound again at once and, when the
+// mesh changed, goes back on the pending list. Script boot only.
+void renderref_set_line_overrides(InvObject* instance, const int32_t* slots,
+                                  const int32_t* texture_ids, int32_t count,
+                                  bool mesh_set, int32_t mesh_id);
+// The same without touching the instance's mesh: the lines are forgotten
+// (Part.setRenderType: the instance leaves the private copy for a render
+// type of the pack and is put on the pending list by the caller).
+void renderref_clear_line_overrides(InvObject* instance);
+// What the instance shows of a replaced texture line, for the log: the
+// renderer key of the texture of record `texture_id` as the replacements
+// use it (null when it did not load) and the number of texture entries of
+// the instance's sections that are bound to it.
+void* renderref_line_texture_key(int32_t texture_id);
+// Fork: the texture of the global envmap (PE 940 FUN_00421920: the engine
+// asks the texture node of GfxEngine.setGlobalEnvmap for its texture every
+// frame). One host handle per resource id, loaded on first use; returns the
+// renderer's texture key, or null while the texture is not there. Called
+// by the camera pass once per flushed frame. Script boot only.
+void* renderref_envmap_texture(int32_t res_id);
 // PE 940 FUN_00461980: the detail a camera gives the nodes it walks, here
 // the part and car objects below `root` (NativeTypes_part8.inc). Called by
 // the camera pass once per camera and frame, before any camera draws, with
@@ -302,6 +331,14 @@ int32_t renderref_materialise_pending(InvObject* instance, int32_t type_id);
 void native_camera_detail(void* root, const float eye[3], float cot_half_aov,
                           float lod_amp, float lod_bias, uint32_t frame);
 void native_camera_detail_end(uint32_t frame);
+// PE 940: the owner id of the render instances of a part or car object
+// (part+0xAC; FUN_004c1f90 / FUN_004c2b10 write it into payload+0x1B4 /
+// +0x1B8 of every instance they make, FUN_004ca390 again after an install:
+// the id of the car the part now sits on). `node` is the node a render
+// instance hangs under; 0 when it has no part or car object. The shadow
+// pass draws the instances of one owner as one (render_d3d9_part7.inc).
+// Script boot only.
+int32_t native_render_owner(void* node);
 // Fork: one `[render-dbg]` line per native camera (NativeTypes.cpp), printed
 // by render_d3d9_debug_dump.
 void native_camera_debug_dump(FILE* out);
@@ -343,7 +380,9 @@ bool native_part_slot_index(InvObject* self, int32_t slot_id, int32_t* index);
 //     0x4CCD10, setSlotDamage 0x4CDC30 (the pose text of a moved slot);
 //   native_part_render_type / _set_render_type: Part.getRenderType
 //     0x4CC9A0, setRenderType 0x4CD9E0;
-//   native_part_mesh / _set_mesh: Part.getMesh 0x4CC8A0, setMesh 0x4CD840.
+//   native_part_mesh / _set_mesh: Part.getMesh 0x4CC8A0, setMesh 0x4CD840;
+//   native_part_texture / _set_texture: Part.getTexture 0x4CD0D0,
+//     setTexture 0x4CE1F0.
 bool native_part_mount_slot(InvObject* self, int32_t* id);
 bool native_part_on_slot(InvObject* self, int32_t slot_id, InvObject** part);
 bool native_part_slot_id_on_slot(InvObject* self, int32_t slot_id,
@@ -363,6 +402,11 @@ bool native_part_render_type(InvObject* self, int32_t* id);
 bool native_part_set_render_type(InvObject* self, int32_t id);
 bool native_part_mesh(InvObject* self, int32_t* id);
 bool native_part_set_mesh(InvObject* self, int32_t id);
+bool native_part_texture(InvObject* self, int32_t* id);
+bool native_part_set_texture(InvObject* self, int32_t id);
+// `[render-dbg]` lines of the paint: the calls of the run and one line per
+// replaced line of a part's or car's render type (NativeTypes_part7.inc).
+void native_part_paint_dump(FILE* out);
 // The Chassis natives on the script boot: the answer of the car object of
 // the chassis (false = it has none).
 //   native_car_wheel_count: Chassis.getWheels 0x4B4280, the wheels of the cfg;

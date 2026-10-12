@@ -380,3 +380,17 @@ void native_camera_detail_end(uint32_t frame) {
     }
   }
 }
+
+// PE 940: part+0xAC, the owner id of a part's or car's render instances
+// (getinfo 0x3F). FUN_004c1f90 / FUN_004c2b10 write it into payload+0x1B4
+// / +0x1B8 of the instances they make and FUN_004ca390 again after an
+// install (the id of the car the part now sits on); the render instance
+// update FUN_00469990 files an instance under the sector of that id, and a
+// sector casts one shadow (FUN_0045c6a0).
+// Fork: the host keeps the id on the part object alone (PartObject::
+// owner_); the camera pass asks with the node an instance hangs under.
+int32_t native_render_owner(void* node) {
+  if (!node || !native_script_boot()) return 0;
+  std::shared_ptr<PartObject> p = part_of(static_cast<InvObject*>(node));
+  return (p && !p->gone_) ? part_owner_id(p.get()) : 0;
+}

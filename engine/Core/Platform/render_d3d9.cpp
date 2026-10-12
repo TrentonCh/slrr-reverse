@@ -34,3 +34,5 @@
 #include "render_d3d9_part3.inc"
 #include "render_d3d9_part4.inc"
 #include "render_d3d9_part5.inc"
+#include "render_d3d9_part6.inc"
+#include "render_d3d9_part7.inc"

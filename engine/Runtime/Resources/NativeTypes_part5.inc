@@ -1252,7 +1252,10 @@ bool part_cmd_filter(PartObject* me, const char* text) {
 
 // vt+0x38 FUN_004c4400. Events 1 and 4 (damage), 0x80 and 0x10000 are not
 // ported; of the commands (event 0x10) `install`, `remove`, `add_part`,
-// `rem_part` and `filter` are.
+// `rem_part`, `filter`, `texture` and `mesh` are. Not ported and left to
+// the generic chain: `repair` (which also puts the cfg mesh back,
+// FUN_004c72d0 with type+0x10F8), `cancel`, `flap_toggle`, `colorscheme`,
+// `paint`, `decal`, `bigdecal` (the paint booth).
 bool PartObject::event(int32_t type, const char* text) {
   if (type != 0x10) return false;
   char word[1025];
@@ -1275,6 +1278,22 @@ bool PartObject::event(int32_t type, const char* text) {
     return true;
   }
   if (word_is(word, "filter")) return part_cmd_filter(this, text);
+  if (word_is(word, "texture")) {
+    // "%*s %d": FUN_0047f200(id, 7), a handle on the texture record, then
+    // FUN_004c75a0 when part+0x84 != 0: what Part.setTexture does.
+    int32_t id = 0;
+    engine_sscanf(text, "%*s %d", &id);
+    part_set_texture(this, id);
+    return true;
+  }
+  if (word_is(word, "mesh")) {
+    // "%*s %d": FUN_0047f200(id, 5), then FUN_004c72d0 when part+0x94 != 0:
+    // what Part.setMesh does.
+    int32_t id = 0;
+    engine_sscanf(text, "%*s %d", &id);
+    part_set_mesh(this, id);
+    return true;
+  }
   return false;
 }
 

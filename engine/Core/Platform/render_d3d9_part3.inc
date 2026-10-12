@@ -259,7 +259,9 @@ void render_d3d9_debug_dump(FILE* out) {
   native_camera_debug_dump(out);  // one line per native camera
   native_part_debug_dump(out);    // the native parts that are drawn
   render_d3d9_bone_debug_dump(out);
+  render_d3d9_lit_debug_dump(out);  // the class programs of the lit groups
   render_d3d9_scene_light_debug_dump(out);
+  render_d3d9_shadow_debug_dump(out);  // the projected shadows
   render_d3d9_ground_debug_dump(out);  // one line per ground mesh
   // Fork: the object sections of the last flushed frame that went through
   // rg_horizon and material mode 3, and every bind of the engine default
@@ -1459,6 +1461,21 @@ bool scx_shader_white_diffuse(uint32_t shader) {
   }
 }
 
+// PE 940 material vt+8 (the stream description): the classes that list a
+// second texture entry as texcoord set 1 beside the primary as set 0 are
+// the MixTA classes: FUN_0042c560 (CMaterial_MixTA), FUN_0042c6a0
+// (MixTASpecular), FUN_0042c710 (MixTASpheremap, MixTASpecularSpheremap,
+// ..Masked). By the shader id the factory FUN_0042bff0 takes.
+bool scx_shader_two_sets(uint32_t shader) {
+  switch (shader & 0xffffffu) {
+    case 0x01: case 0x19: case 0x05: case 0x09: case 0x11: case 0x21:
+    case 0x0d: case 0x25: case 0x15:
+      return true;
+    default:
+      return false;
+  }
+}
+
 void scx_v4_material(const uint8_t* data, size_t size, uint32_t off,
                      uint32_t end, MeshSubmesh* sm) {
   if (!sm || end > size || off + 0x14 > end) return;
@@ -1474,6 +1491,12 @@ void scx_v4_material(const uint8_t* data, size_t size, uint32_t off,
     float xf[4] = {1.f, 1.f, 0.f, 0.f};  // scaleU, scaleV, offsetU, offsetV
   };
   TexEntry tex_primary, tex_second, tex_env, tex_lightmap;
+  // For the class programs of the lit groups (render_d3d9_part6.inc): the
+  // colour entries 0 / 1 / 2 and the float entries 0x1000000 (specular
+  // power) and 0x1000001 (env factor). FUN_0043f2e0 gives a class entry the
+  // FIRST chunk entry with its id.
+  uint32_t lit_col[3] = {0, 0, 0}, lit_col_seen = 0, lit_f_seen = 0;
+  float lit_f[2] = {0.f, 0.f};
   uint32_t p = off + 0x14;
   for (uint32_t i = 0; i < count; ++i) {
     uint32_t head = 0;
@@ -1492,6 +1515,13 @@ void scx_v4_material(const uint8_t* data, size_t size, uint32_t off,
     if (p + len > end) return;
     uint32_t v = 0;
     read_u32(data, size, p + 4, &v);
+    if (type == 0 && id <= 2 && !(lit_col_seen & (1u << id))) {
+      lit_col_seen |= 1u << id;
+      lit_col[id] = v;
+    } else if (type == 1 && id <= 1 && !(lit_f_seen & (1u << id))) {
+      lit_f_seen |= 1u << id;
+      std::memcpy(&lit_f[id], &v, 4);
+    }
     if (type == 0 && id == 0) diffuse = v;
     else if (type == 0 && id == 2) emissive = v;
     else if (type == 5 && id == 0) alpha_ref = v;
@@ -1516,6 +1546,35 @@ void scx_v4_material(const uint8_t* data, size_t size, uint32_t off,
   sm->mat_diffuse = scx_shader_white_diffuse(shader) ? 0xFFFFFFFFu : diffuse;
   sm->mat_emissive = emissive;
   sm->mat_alpha_ref = alpha_ref;
+  // FUN_00441140: a colour entry keeps the packed dword and four floats,
+  // byte x DAT_00593e24 (1 / 255). An entry the chunk does not have keeps
+  // the default of the class constructor (MeshSubmesh).
+  // Fork: a float entry that is not a finite number keeps the default.
+  {
+    auto unit = [](uint32_t c, int shift) {
+      return static_cast<float>((c >> shift) & 0xffu) * 0.003921568859368563f;
+    };
+    if (lit_col_seen & 1u) {
+      sm->col0[0] = unit(lit_col[0], 16);
+      sm->col0[1] = unit(lit_col[0], 8);
+      sm->col0[2] = unit(lit_col[0], 0);
+      sm->col0[3] = unit(lit_col[0], 24);
+      sm->col0_packed = lit_col[0];
+    }
+    if (lit_col_seen & 2u) {
+      sm->col1[0] = unit(lit_col[1], 16);
+      sm->col1[1] = unit(lit_col[1], 8);
+      sm->col1[2] = unit(lit_col[1], 0);
+    }
+    if (lit_col_seen & 4u) {
+      sm->col2[0] = unit(lit_col[2], 16);
+      sm->col2[1] = unit(lit_col[2], 8);
+      sm->col2[2] = unit(lit_col[2], 0);
+    }
+    auto finite = [](float f) { return f == f && std::fabs(f) < 1.0e6f; };
+    if ((lit_f_seen & 1u) && finite(lit_f[0])) sm->power = lit_f[0];
+    if ((lit_f_seen & 2u) && finite(lit_f[1])) sm->env_factor = lit_f[1];
+  }
   auto keep = [](const TexEntry& e, int16_t* slot, int16_t* chan,
                  uint8_t* addr, float* xf) {
     if (!e.seen) return;
@@ -1545,7 +1604,10 @@ void scx_v4_material(const uint8_t* data, size_t size, uint32_t off,
 // opacity), +0x14..+0x1C specular RGB, +0x20 specular level, +0x24
 // shininess, +0x28 flags, +0x2C / +0x30 / +0x32 / +0x34 / +0x38 map indices
 // (int16, -1 = none), +0x5C..+0x64 illumination RGB (colour id 2).
-// Create flags: prelit (0x80000000) when flags & 2 or the +0x38 map exists;
+// Create flags: the caller's (`caller_flags`: FUN_0042ba10(header, flags);
+// the v1..v3 loader FUN_00451b00 passes 0x80000000 for a mesh whose path
+// contains "objects\meshes", the ground loader FUN_00451130 always), and
+// prelit (0x80000000) when flags & 2 or the +0x38 map exists;
 // transparent when flags & 1 or opacity < 0.99 (DAT_005947ac): 0x40000000,
 // or 0x20000000 (alpha test, reference 0x38) when flags & 0x800.
 // Shader id handed to the factory FUN_0042bff0:
@@ -1562,7 +1624,7 @@ void scx_v4_material(const uint8_t* data, size_t size, uint32_t off,
 // (opaque white Diffuse, see scx_shader_white_diffuse); fade.SCX (flags
 // 0x100) is shader 3, CMaterial_ColorMixTex.
 void scx_v3_material(const uint8_t* data, size_t size, size_t base,
-                     uint32_t hsz, MeshSubmesh* sm) {
+                     uint32_t hsz, uint32_t caller_flags, MeshSubmesh* sm) {
   if (!sm || hsz < 0x68u || base + 0x68 > size) return;
   float d[4] = {1, 1, 1, 1}, sp[3] = {0, 0, 0}, e[3] = {0, 0, 0};
   float spec_level = 0.f, shininess = 0.f;
@@ -1587,7 +1649,7 @@ void scx_v3_material(const uint8_t* data, size_t size, size_t base,
   };
   const bool textured = map2c != -1 || map34 != -1;
   if (map34 == -1) f28 &= 0xffffefbfu;
-  uint32_t mf = 0;
+  uint32_t mf = caller_flags;
   if ((f28 & 2u) != 0 || map38 != -1) mf |= 0x80000000u;
   if ((f28 & 1u) != 0 || d[3] < 0.99f)
     mf |= (f28 & 0x800u) ? 0x20000000u : 0x40000000u;
@@ -1614,6 +1676,32 @@ void scx_v3_material(const uint8_t* data, size_t size, size_t base,
           : (chan(d[3]) << 24) | (chan(d[0]) << 16) | (chan(d[1]) << 8) | chan(d[2]);
   sm->mat_emissive = 0xFF000000u | (chan(e[0]) << 16) | (chan(e[1]) << 8) | chan(e[2]);
   sm->mat_alpha_ref = 0x38;
+  // The entries as the class programs of the lit groups read them
+  // (render_d3d9_part6.inc), FUN_0042ba10: colour 0 = the diffuse rgba,
+  // colour 1 = level x specular colour, colour 2 = the illumination, float
+  // 0x1000000 = the shininess, and with an env map (+0x32) float 0x1000001
+  // = (spec.g + spec.r + spec.b) x DAT_00593700 (1 / 6, without the level).
+  // FUN_004411c0 keeps the floats and packs (int)(x x 255) per channel.
+  // Fork: a value that is not a finite number reads 0.
+  {
+    auto fin = [](float c) {
+      return (c == c && std::fabs(c) < 1.0e6f) ? c : 0.f;
+    };
+    auto pack = [](float c) {
+      return static_cast<uint32_t>(static_cast<int32_t>(c * 255.f));
+    };
+    for (int k = 0; k < 4; ++k) sm->col0[k] = fin(d[k]);
+    sm->col0_packed = (((((pack(sm->col0[3]) << 8) | pack(sm->col0[0])) << 8) |
+                        pack(sm->col0[1]))
+                       << 8) |
+                      pack(sm->col0[2]);
+    for (int k = 0; k < 3; ++k) {
+      sm->col1[k] = fin(spec_level * sp[k]);
+      sm->col2[k] = fin(e[k]);
+    }
+    sm->power = fin(shininess);
+    if (map32 != -1) sm->env_factor = fin((sp[1] + sp[0] + sp[2]) * 0.16666667f);
+  }
   // The texture entries FUN_0042ba10 makes from the header, by slot into
   // the render object's texture list: +0x2C primary (uv channel = the short
   // at +0x46), +0x34 second (uv channel +0x48), +0x32 sphere / env map,
@@ -2062,9 +2150,16 @@ bool parse_scx_v4(const uint8_t* data, size_t size, MeshState& out) {
     // (no primary, second or lightmap entry of the install has it).
     // The array is made when the block has a colour or more than one uv
     // set, or the material has a lightmap entry.
+    // Build 940 boot: also when the second entry is on another channel or
+    // has another uv transform than the primary; the MixTA classes sample
+    // it through texcoord set 1 (render_d3d9_part6.inc).
+    const bool second_own_set =
+        boot940 && sm.has_mat && sm.slot_second != -1 &&
+        (sm.chan_second != sm.chan_primary ||
+         std::memcmp(sm.uvx_second, sm.uvx_primary, sizeof(sm.uvx_second)) != 0);
     const bool want_wide =
         walk_ok && ((vflags & 0x180u) != 0 || uv_sets > 1 ||
-                    (sm.has_mat && sm.slot_lightmap != -1));
+                    (sm.has_mat && sm.slot_lightmap != -1) || second_own_set);
     struct StageUv {
       bool on = false;
       int off = -1;  // offset of the pair in the vertex, -1 = (0, 0)
@@ -2189,7 +2284,10 @@ bool parse_scx_v4(const uint8_t* data, size_t size, MeshState& out) {
 //   +0x8C verts stride 64 (pos+n+uv in first 32), then u32 tri_count +
 //   tri_count×3 uint32 indices. Phase 2.54: loop subsequent mat blocks.
 // Fonts use hdr=0x38 — skip.
-bool parse_scx_v3(const uint8_t* data, size_t size, MeshState& out) {
+// `caller_flags`: the create flags FUN_00451b00 gives every material of the
+// mesh (0x80000000 when the mesh path contains "objects\meshes", else 0).
+bool parse_scx_v3(const uint8_t* data, size_t size, MeshState& out,
+                  uint32_t caller_flags) {
   if (!data || size < 0xA0) return false;
   if (std::memcmp(data, "INVO", 4) != 0) return false;
   uint32_t ver = 0, hdr0 = 0;
@@ -2264,7 +2362,7 @@ bool parse_scx_v3(const uint8_t* data, size_t size, MeshState& out) {
     // by scx_v3_material (primary +0x2C on the channel at +0x46, second
     // +0x34 on +0x48, env +0x32, lightmap +0x38 on channel 1), so a render
     // object binds a v3 mesh by slot like a v4 one.
-    scx_v3_material(data, size, mat_base, hsz, &sm);
+    scx_v3_material(data, size, mat_base, hsz, caller_flags, &sm);
 
     // PE 940 v1..v3 loader FUN_00451b00: every block becomes a stream of
     // format 0x15003f. From the 64-byte version 3 vertex: position +0,
@@ -2311,6 +2409,66 @@ bool parse_scx_v3(const uint8_t* data, size_t size, MeshState& out) {
       }
     }
 
+    // PE 940 FUN_00451b00, the texcoord sets (Build 940 boot only): set i =
+    // uv[channel of the entry the class lists as stage i], with uv0 at +24,
+    // uv1 at +32 and uv2 at +52 of the 64-byte vertex. The one set of
+    // MeshVertex is the primary entry's (channel = the short at +0x46 of
+    // the header). A class that lists the second entry too
+    // (scx_shader_two_sets) with that entry on another channel gets the
+    // wide array: set 0 primary, set 1 second, set 2 uv1 (the lightmap
+    // channel); the channels of the entries then name those sets, as for a
+    // v4 block. Colours as the comment above has them.
+    // Fork: a channel that is not 0, 1 or 2 reads (0, 0).
+    if (render_boot940() && sm.has_mat) {
+      auto chan_off = [](int ch) {
+        return ch == 0 ? 24 : (ch == 1 ? 32 : (ch == 2 ? 52 : -1));
+      };
+      const int off_p = chan_off(sm.chan_primary);
+      if (sm.chan_primary != 0 && off_p >= 0) {
+        for (uint32_t vi = 0; vi < vcount; ++vi)
+          std::memcpy(&sm.verts[vi].u,
+                      data + vstart + static_cast<size_t>(vi) * kStride + off_p,
+                      8);
+      }
+      if (scx_shader_two_sets(static_cast<uint32_t>(sm.mat_shader)) &&
+          sm.slot_second != -1 && sm.chan_second != sm.chan_primary) {
+        const int off_s = chan_off(sm.chan_second);
+        const bool prelit = (sm.mat_flags & 0x80000000u) != 0;
+        uint32_t f28 = 0;
+        std::memcpy(&f28, data + mat_base + 0x28, 4);
+        sm.wide.resize(vcount);
+        for (uint32_t vi = 0; vi < vcount; ++vi) {
+          const uint8_t* p = data + vstart + static_cast<size_t>(vi) * kStride;
+          const MeshVertex& v = sm.verts[vi];
+          MeshVertexWide& w = sm.wide[vi];
+          w.x = v.x;
+          w.y = v.y;
+          w.z = v.z;
+          w.nx = v.nx;
+          w.ny = v.ny;
+          w.nz = v.nz;
+          uint32_t c = 0, c60 = 0;
+          std::memcpy(&c, p + 40, 4);
+          std::memcpy(&c60, p + 60, 4);
+          if (!prelit) {
+            w.diffuse = c | 0xFF000000u;
+            w.specular = 0;
+          } else {
+            w.diffuse = 0xFF808080u;
+            w.specular = (f28 & 4u) ? c60 : (c | 0xFF000000u);
+          }
+          w.uv[0][0] = v.u;
+          w.uv[0][1] = v.v;
+          w.uv[1][0] = w.uv[1][1] = 0.f;
+          if (off_s >= 0) std::memcpy(w.uv[1], p + off_s, 8);
+          std::memcpy(w.uv[2], p + 32, 8);
+        }
+        sm.chan_primary = 0;
+        sm.chan_second = 1;
+        if (sm.slot_lightmap != -1) sm.chan_lightmap = 2;
+      }
+    }
+
     sm.indices.resize(static_cast<size_t>(icount));
     bool idx_ok = true;
     for (uint64_t i = 0; i < icount; ++i) {
@@ -2340,7 +2498,8 @@ bool parse_scx_v3(const uint8_t* data, size_t size, MeshState& out) {
 }  // namespace
 
 bool render_d3d9_mesh_create_from_memory(void* key, const uint8_t* data,
-                                         size_t size, const char* label) {
+                                         size_t size, const char* label,
+                                         uint32_t v3_create_flags) {
   if (!key || !data || size < 16) return false;
   {
     auto it = g_meshes.find(key);
@@ -2349,10 +2508,12 @@ bool render_d3d9_mesh_create_from_memory(void* key, const uint8_t* data,
   g_mesh_geom_src.erase(key);  // Fork: own geometry from now on
   MeshState st;
   st.label = label ? label : "";
-  if (!parse_scx_v4(data, size, st) && !parse_scx_v3(data, size, st)) {
+  if (!parse_scx_v4(data, size, st) &&
+      !parse_scx_v3(data, size, st, v3_create_flags)) {
     g_meshes.erase(key);
     return false;
   }
+  st.geom_rev = ++g_mesh_geom_rev;
   bind_mesh_textures(key, st);
   {
     auto old = g_meshes.find(key);
@@ -2362,7 +2523,8 @@ bool render_d3d9_mesh_create_from_memory(void* key, const uint8_t* data,
   return true;
 }
 
-bool render_d3d9_mesh_create_from_file(void* key, const char* path) {
+bool render_d3d9_mesh_create_from_file(void* key, const char* path,
+                                       uint32_t v3_create_flags) {
   if (!key || !path || !path[0]) return false;
   FILE* f = std::fopen(path, "rb");
   if (!f) {
@@ -2388,7 +2550,7 @@ bool render_d3d9_mesh_create_from_file(void* key, const char* path) {
   std::string resolved = rpak_resolve_path(path);
   if (!resolved.empty()) label = resolved;
   return render_d3d9_mesh_create_from_memory(key, buf.data(), buf.size(),
-                                             label.c_str());
+                                             label.c_str(), v3_create_flags);
 }
 
 bool render_d3d9_mesh_create_skydome(void* key, float radius) {
@@ -2492,6 +2654,11 @@ int32_t render_d3d9_mesh_pending_type(void* key) {
   return it == g_mesh_pending.end() ? 0 : it->second.type_id;
 }
 
+bool render_d3d9_mesh_pending_waiting(void* key) {
+  auto it = g_mesh_pending.find(key);
+  return it != g_mesh_pending.end() && it->second.state == 0;
+}
+
 namespace {
 void scale_mesh_state(MeshState& st, float sx, float sy, float sz);
 }  // namespace
@@ -2553,6 +2720,9 @@ void scale_mesh_state(MeshState& st, float sx, float sy, float sz) {
       st.bmax[i] = bmax[i];
     }
   }
+  // Other vertices from now on: the static copies made for the old ones
+  // (shadow_geom, render_d3d9_part7.inc) are not this mesh's any more.
+  st.geom_rev = ++g_mesh_geom_rev;
 }
 }  // namespace
 

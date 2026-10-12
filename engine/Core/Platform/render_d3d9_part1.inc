@@ -308,6 +308,9 @@ IDirect3DBaseTexture9* texture_d3d_base(const TextureState& st) {
 // render_d3d9_part4.inc; released with the device.
 IDirect3DBaseTexture9* default_texture();
 void default_texture_release();
+// The shadow target and ramp (render_d3d9_part7.inc), released with the
+// device.
+void shadow_release();
 
 #ifdef _WIN32
 // Soft PE envmap stage1 bind (setGlobalEnvmap@47C220 = store only).
@@ -564,8 +567,8 @@ struct MeshSubmesh {
   // Address bits of each entry (in-memory entry dword [2], v4 file entry
   // +0x0C): 1 = wrap U, 2 = wrap V. FUN_0043d990 sets D3DTADDRESS_CLAMP on
   // an axis whose bit is clear when it binds the entry; the frame default
-  // is WRAP. 3 for a v3 material: the bits FUN_0042ba10 gives its entries
-  // were not read (M2 spec Q14).
+  // is WRAP. 3 for a v3 material: FUN_00441330, which makes the entries of
+  // FUN_0042ba10, writes 3.
   uint8_t addr_primary = 3;
   uint8_t addr_second = 3;
   uint8_t addr_env = 3;
@@ -601,6 +604,16 @@ struct MeshSubmesh {
   int32_t bone_mode = 0;
   std::vector<int32_t> bone_idx;
   std::vector<float> weights;
+  // The file's colour and float entries as the class programs of the lit
+  // groups read them (render_d3d9_part6.inc): colour id 0 (r, g, b, a) and
+  // its packed dword, id 1 (specular), id 2, float 0x1000000 (power), float
+  // 0x1000001 (env factor). Defaults = the class constructors'.
+  float col0[4] = {1.f, 1.f, 1.f, 1.f};
+  uint32_t col0_packed = 0xFFFFFFFFu;
+  float col1[3] = {1.f, 1.f, 1.f};
+  float col2[3] = {0.f, 0.f, 0.f};
+  float power = 16.f;
+  float env_factor = 0.5f;
 };
 
 // PE 940 mesh bone (0xA4 bytes at mesh+0x120, count mesh+0x11C), read from
@@ -646,9 +659,13 @@ struct MeshState {
   // every other mesh, which is then drawn rigid whatever its section
   // chunks say (FUN_00465e40 / FUN_00469990: RI+0xD0 == 0).
   std::vector<MeshBone> bones;
+  // Fork: stamp of the section geometry, new when a mesh file is parsed or
+  // its vertices are scaled, copied by a clone; 0 = none (shadow_geom).
+  uint32_t geom_rev = 0;
 };
 std::unordered_map<void*, MeshState> g_meshes;
 uint32_t g_mesh_seq = 0;
+uint32_t g_mesh_geom_rev = 0;
 // Fork: copy -> the mesh it shows (render_d3d9_mesh_set_geometry_source).
 std::unordered_map<void*, void*> g_mesh_geom_src;
 // PE 940 render type `flags` (typeof-14 rsd line -> payload+0x34 ->
@@ -1211,6 +1228,7 @@ void render_d3d9_close() {
   drain_vb_slots_force();
   drain_ib_slots_force();
   default_texture_release();
+  shadow_release();
   if (g_dev) {
     g_dev->Release();
     g_dev = nullptr;
@@ -1761,7 +1779,13 @@ static bool render_boot940() {
 static void camera_offer_detail(void* cam_key);
 static bool draw_two_bone_section(void* key, const MeshState& ms,
                                   const MeshSubmesh& sm,
-                                  const D3DMATRIX& world);
+                                  const D3DMATRIX& world,
+                                  bool two_sets = false);
+// Fragment 6: the class programs of the lit groups (Build 940 boot).
+static void lit_frame_begin();
+static bool draw_lit_section(void* key, const MeshState& ms,
+                             const MeshSubmesh& sm, const D3DMATRIX& world,
+                             bool transparent, bool no_zwrite);
 
 // rg_ground of a camera pass (render_d3d9_part4.inc): the sections of the
 // ground meshes the camera sees, drawn in material mode 3.
@@ -1796,6 +1820,15 @@ struct CamLights {
 static void collect_camera_lights(void* root, CamLights* out);
 static void apply_camera_lights(const CamLights& lights);
 static void end_camera_lights();
+
+// Fragment 7: the projected shadows of a camera pass (FUN_00460ba0, after
+// the opaque groups). Build 940 boot only.
+static void* g_pass_cam = nullptr;  // the camera whose pass is drawn
+static void shadow_frame_begin();
+static void draw_camera_shadows(const std::vector<void*>& members,
+                                const std::vector<GroundSec>& ground,
+                                const D3DMATRIX& cam_world,
+                                const CamLights& lights);
 
 // Host stand-in scene light (one directional light + ambient), shared by the
 // legacy queue draw and the lit groups of the camera pass.
@@ -1919,8 +1952,8 @@ static void apply_scene_light() {
 // Fork: the transparent queue is filled in creation order (the exe
 // fills the group's entry array in tree-walk order); a section without a
 // parsed material keeps the legacy rule (heuristic diffuse, blend only with
-// a DXT3/DXT5 texture); CULL_NONE for every section (the exe's default cull
-// mode was not read, 0x02000000 = two-sided is therefore not consulted).
+// a DXT3/DXT5 texture); CULL_NONE for every section drawn here (the exe
+// culls: the class programs of render_d3d9_part6.inc and mode 3 do too).
 static void draw_camera_instances(const std::vector<void*>& members,
                                   const D3DMATRIX& cam_world,
                                   const CamLights& lights) {
@@ -2088,6 +2121,11 @@ static void draw_camera_instances(const std::vector<void*>& members,
     for (int r = 0; r < 3; ++r)
       for (int c = 0; c < 3; ++c) world.m[r][c] *= ms.unit;
     g_dev->SetTransform(D3DTS_WORLD, &world);
+    // Build 940 boot: a section of a lit group goes through the program
+    // of its material class (render_d3d9_part6.inc).
+    if (boot940 && has_mat && !prelit && sec.sub >= 0 &&
+        draw_lit_section(sec.key, ms, *sm, world, transparent, no_zwrite))
+      return;
 
     IDirect3DBaseTexture9* tex = nullptr;
     if (sm && sm->texture_key) {
@@ -2310,6 +2348,7 @@ static void draw_camera_instances(const std::vector<void*>& members,
     for (const Sec& s : opaque_prelit)
       if (!s.mode3) draw_section(s, false, true);
     for (const Sec& s : opaque_lit) draw_section(s, false, false);
+    draw_camera_shadows(members, ground, cam_world, lights);
     for (const Sec& s : trans_prelit) {
       if (s.mode3)
         draw_object_prelit_transparent({s.key, s.ms, s.sub});
@@ -2485,6 +2524,8 @@ void draw_viewport_cameras() {
   if (render_boot940()) {
     for (const Pass& pc : passes) camera_offer_detail(pc.cam);
     native_camera_detail_end(g_cam_pass_frame);
+    lit_frame_begin();  // the global envmap of the frame
+    shadow_frame_begin();
   }
   for (const Pass& pc : passes) {
     void* cam_key = pc.cam;
@@ -2654,6 +2695,7 @@ void draw_viewport_cameras() {
         std::fprintf(stderr, "[render]   ndc %p view=(%g,%g,%g) ndc=(%g,%g)\n", members[i], vx, vy, vz, nx, ny);
       }
     }
+    g_pass_cam = cam_key;
     draw_camera_instances(members, cam_world, lights);
     draw_camera_text_section(texts);  // rg_text_section: after every mesh group
     g_fold_own_bone0 = false;

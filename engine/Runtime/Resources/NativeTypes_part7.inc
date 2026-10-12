@@ -17,7 +17,8 @@
 // slotIDOnSlot 0x4CE770, getWheelID 0x4CD2E0, setSlotPos 0x4CDDC0,
 // disableSlot 0x4CE4A0, isSlotDisabled 0x4CE660, getSlotDamage 0x4CCD10,
 // setSlotDamage 0x4CDC30, getRenderType 0x4CC9A0, setRenderType 0x4CD9E0 ->
-// FUN_004c7470, getMesh 0x4CC8A0, setMesh 0x4CD840 -> FUN_004c72d0;
+// FUN_004c7470, getMesh 0x4CC8A0, setMesh 0x4CD840 -> FUN_004c72d0,
+// getTexture 0x4CD0D0, setTexture 0x4CE1F0 -> FUN_004c75a0;
 // Chassis.getWheels 0x4B4280, getMass 0x4B2B90, getMaxSteer 0x4B3110,
 // setMaxSteer 0x4B5030, setAckermann 0x4B47B0, forceUpdate 0x4B5890 ->
 // FUN_004aebf0; WheelRef.setRadius 0x4B6E50, setRestLen 0x4B6EF0, setMinLen
@@ -233,6 +234,314 @@ bool native_part_set_slot_damage(InvObject* self, int32_t index,
 }
 
 // ---------------------------------------------------------------------------
+// Part: paint (the texture line and the mesh line of the main render type)
+// ---------------------------------------------------------------------------
+namespace {
+
+// What Part.setTexture / setMesh and the `texture` / `mesh` commands came to
+// in this run (native_part_paint_dump).
+struct PaintStats {
+  int tex_calls = 0, tex_replaced = 0, tex_no_slot = 0, tex_same = 0;
+  int tex_no_line = 0, tex_no_record = 0;
+  int mesh_calls = 0, mesh_replaced = 0, mesh_no_slot = 0, mesh_same = 0;
+  int mesh_no_line = 0, mesh_no_record = 0;
+  int dropped = 0;
+};
+PaintStats g_paint;
+
+// The render instance FUN_004c75a0, FUN_004c72d0 and FUN_004c7470 switch to
+// another render type: the first one whose entry names the type's main
+// render type (entry+0x50 == type+0x1110).
+PartObject::Inst* part_main_instance(PartObject* p) {
+  const PartTypeDesc& d = *p->type_;
+  if (!d.main_render) return nullptr;
+  for (PartObject::Inst& i : p->insts_)
+    if (i.r && d.entries[static_cast<size_t>(i.entry)].res_id == d.main_render)
+      return &i;
+  return nullptr;
+}
+
+// Texture line `slot` of the part's render type as the part has it.
+int32_t part_texture_line(const PartObject* p, const RenderObjectDesc* desc,
+                          size_t slot) {
+  for (const auto& o : p->tex_over_)
+    if (o.first == static_cast<int32_t>(slot)) return o.second;
+  return desc->textures[slot];
+}
+
+// The record an id names, when it is of pack type `restype` (7 texture, 5
+// mesh).
+bool part_names_record(int32_t id, int restype) {
+  const RpakEntry* e = id ? rpak_find_entry(id) : nullptr;
+  return e && e->restype == restype;
+}
+
+// PE 940 FUN_004c75a0(type, part, texture handle), behind the test its
+// three callers make first (Part.setTexture 0x4CE1F0, the `texture` command
+// of a part in FUN_004c4400 and of a car in FUN_004a2e60): part+0x84 != 0.
+//   - nothing unless the id differs from part+0x84 and the type has a cfg
+//     `texture` line (type+0x10F0);
+//   - while the part still uses the type's main render type (part+0xA4 ==
+//     type+0x1110) that render type is duplicated into part+0x9C
+//     (FUN_004e9470 -> FUN_0051ee30: a new node with the payload of the
+//     old one) and the first render instance whose entry names the main
+//     render type is switched to the copy (FUN_0051e090);
+//   - the data object of part+0x9C replaces the old texture by the new one
+//     (vt+8 FUN_00522b00: the FIRST texture line whose id is part+0x84)
+//     and marks its template for a rebind (FUN_0046f2d0);
+//   - part+0x7C is bound to the new texture: Part.getTexture answers its
+//     id from now on, whether a line was found or not.
+// Host: the part keeps the lines of that copy which differ from the pack's
+// render object (tex_over_) and gives them to the render instance of the
+// main entry (renderref_set_line_overrides); nothing is copied.
+// Fork: Part.getRenderType keeps answering the id of the pack's render
+//   type; in the exe part+0xA4 is the id of the copy from here on (a node
+//   id of the script-made allocator, FUN_00518a40).
+// Fork: after Part.setRenderType the part uses a render type of the pack
+//   again and the exe replaces the line in THAT shared object, for every
+//   instance made from it; the host replaces it for this part only.
+// Fork: (M3 spec Q14) an id that names no texture record is ignored and the
+//   part keeps its texture. The exe binds an empty handle there: the line
+//   loses its texture and part+0x84 becomes 0. The ids concerned are 0 and
+//   the unsaved resources of a car file (a painted skin in a side file
+//   `<car>.<n>`), for which the host's File.readResID answers 0.
+// Not ported: FUN_004e9450, which releases a replaced runtime texture (id
+//   0xFFFFxxxx, the private texture the `paint` command draws into).
+void part_set_texture(PartObject* p, int32_t id) {
+  ++g_paint.tex_calls;
+  const PartTypeDesc& d = *p->type_;
+  if (!p->texture_ || !d.texture_id) {
+    ++g_paint.tex_no_line;
+    return;
+  }
+  if (p->texture_ == id) {
+    ++g_paint.tex_same;
+    return;
+  }
+  if (!part_names_record(id, 7)) {
+    ++g_paint.tex_no_record;
+    if (native_type_log())
+      std::fprintf(stderr,
+                   "[native-type] Part.setTexture(0x%08X) on '%s': not a "
+                   "texture record, ignored (the part keeps 0x%08X)\n",
+                   static_cast<unsigned>(id), car_type_alias(d.type_id),
+                   static_cast<unsigned>(p->texture_));
+    return;
+  }
+  const RenderObjectDesc* desc = render_object_desc(p->render_type_);
+  int slot = -1;
+  if (desc->found)
+    for (size_t i = 0; i < desc->textures.size() && slot < 0; ++i)
+      if (part_texture_line(p, desc, i) == p->texture_)
+        slot = static_cast<int>(i);
+  if (slot >= 0) {
+    for (size_t k = p->tex_over_.size(); k-- > 0;)
+      if (p->tex_over_[k].first == slot)
+        p->tex_over_.erase(p->tex_over_.begin() +
+                           static_cast<std::ptrdiff_t>(k));
+    if (desc->textures[static_cast<size_t>(slot)] != id)
+      p->tex_over_.emplace_back(slot, id);
+    ++g_paint.tex_replaced;
+    if (PartObject::Inst* i = part_main_instance(p)) part_lines_to(p, i->r);
+  } else {
+    ++g_paint.tex_no_slot;
+    if (native_type_log())
+      std::fprintf(stderr,
+                   "[native-type] Part.setTexture(0x%08X) on '%s': render "
+                   "type 0x%08X has no texture line 0x%08X (%zu line(s)); "
+                   "only the handle changes\n",
+                   static_cast<unsigned>(id), car_type_alias(d.type_id),
+                   static_cast<unsigned>(p->render_type_),
+                   static_cast<unsigned>(p->texture_), desc->textures.size());
+  }
+  p->texture_ = id;
+}
+
+// PE 940 FUN_004c72d0(type, part, mesh handle), behind the test of its
+// callers (Part.setMesh 0x4CD840, the `mesh` command of a part and of a
+// car): part+0x94 != 0. The same shape as FUN_004c75a0 with the cfg `mesh`
+// line (type+0x1100) and the handle part+0x8C: the private copy of the main
+// render type, in which FUN_00522b00 replaces the mesh when the render
+// object's mesh is the part's old one (it tests the mesh line first, then
+// the texture lines, which a mesh id never matches), and part+0x8C bound to
+// the new mesh: Part.getMesh answers its id.
+// Host: the mesh line of the copy is mesh_over_; the render instance of
+// the main entry is made again from that mesh (the pending list).
+// Fork: (M3 spec Q14) an id that names no mesh record is ignored, as for a
+//   texture: the unsaved resources of a car file are bent panels here.
+// The Forks of part_set_texture hold here too.
+void part_set_mesh(PartObject* p, int32_t id) {
+  ++g_paint.mesh_calls;
+  const PartTypeDesc& d = *p->type_;
+  if (!p->mesh_ || !d.mesh_id) {
+    ++g_paint.mesh_no_line;
+    return;
+  }
+  if (p->mesh_ == id) {
+    ++g_paint.mesh_same;
+    return;
+  }
+  if (!part_names_record(id, 5)) {
+    ++g_paint.mesh_no_record;
+    if (native_type_log())
+      std::fprintf(stderr,
+                   "[native-type] Part.setMesh(0x%08X) on '%s': not a mesh "
+                   "record, ignored (the part keeps 0x%08X)\n",
+                   static_cast<unsigned>(id), car_type_alias(d.type_id),
+                   static_cast<unsigned>(p->mesh_));
+    return;
+  }
+  const RenderObjectDesc* desc = render_object_desc(p->render_type_);
+  const int32_t line = p->mesh_over_set_ ? p->mesh_over_ : desc->mesh_id;
+  if (desc->found && line == p->mesh_) {
+    p->mesh_over_set_ = desc->mesh_id != id;
+    p->mesh_over_ = p->mesh_over_set_ ? id : 0;
+    ++g_paint.mesh_replaced;
+    if (PartObject::Inst* i = part_main_instance(p)) part_lines_to(p, i->r);
+  } else {
+    ++g_paint.mesh_no_slot;
+    if (native_type_log())
+      std::fprintf(stderr,
+                   "[native-type] Part.setMesh(0x%08X) on '%s': the mesh of "
+                   "render type 0x%08X is 0x%08X, not the part's 0x%08X; only "
+                   "the handle changes\n",
+                   static_cast<unsigned>(id), car_type_alias(d.type_id),
+                   static_cast<unsigned>(p->render_type_),
+                   static_cast<unsigned>(line),
+                   static_cast<unsigned>(p->mesh_));
+  }
+  p->mesh_ = id;
+}
+
+}  // namespace
+
+// PE 940 Part.getTexture 0x4CD0D0 = part+0x84, the id of the texture handle
+// part+0x7C.
+bool native_part_texture(InvObject* self, int32_t* id) {
+  std::shared_ptr<PartObject> p = part_of(self);
+  if (!p) return false;
+  *id = p->texture_;
+  return true;
+}
+
+// PE 940 Part.setTexture 0x4CE1F0: a handle on the typeof-7 record `id`
+// (FUN_0051fa40(id, 7, 0)) and, when part+0x84 != 0, FUN_004c75a0(type,
+// part, handle). The native answers 1 whatever happened.
+bool native_part_set_texture(InvObject* self, int32_t id) {
+  std::shared_ptr<PartObject> p = part_of(self);
+  if (!p) return false;
+  part_set_texture(p.get(), id);
+  return true;
+}
+
+// `[render-dbg]`: what the paint calls of the run came to, then one line
+// per replaced line of a part's or car's render type: the cfg texture
+// (type+0x10E8), the current one (part+0x84), the render type, the slot,
+// the line of the pack's render object and what replaced it, and whether
+// the render instance of the main entry shows it (has_mesh: the instance
+// was made; loaded: the texture is there; bound: texture entries of its
+// sections that use it).
+void native_part_paint_dump(FILE* out) {
+  if (!out || !native_script_boot()) return;
+  std::vector<std::shared_ptr<NativeObject>> objs;
+  {
+    std::lock_guard<std::mutex> lock(g_nt_mu);
+    for (const auto& kv : g_objects) {
+      if (!kv.second || (kv.second->type_index != kNativePart &&
+                         kv.second->type_index != kNativeCar))
+        continue;
+      bool seen = false;
+      for (const auto& o : objs)
+        if (o == kv.second) seen = true;
+      if (!seen) objs.push_back(kv.second);
+    }
+  }
+  size_t with_tex = 0, with_mesh = 0;
+  for (const auto& o : objs) {
+    const PartObject* p = static_cast<const PartObject*>(o.get());
+    if (!p->tex_over_.empty()) ++with_tex;
+    if (p->mesh_over_set_) ++with_mesh;
+  }
+  const PaintStats& s = g_paint;
+  std::fprintf(out,
+               "[render-dbg] paint: %zu part(s) with a replaced texture line, "
+               "%zu with a replaced mesh line; texture: %d call(s) = %d "
+               "replaced a line + %d found no line with the current id + %d "
+               "same id + %d type without a cfg texture line + %d id without "
+               "a texture record (ignored); mesh: %d call(s) = %d replaced "
+               "the mesh line + %d render type has another mesh + %d same id "
+               "+ %d type without a cfg mesh line + %d id without a mesh "
+               "record (ignored); %d part(s) left their lines by "
+               "setRenderType\n",
+               with_tex, with_mesh, s.tex_calls, s.tex_replaced, s.tex_no_slot,
+               s.tex_same, s.tex_no_line, s.tex_no_record, s.mesh_calls,
+               s.mesh_replaced, s.mesh_no_slot, s.mesh_same, s.mesh_no_line,
+               s.mesh_no_record, s.dropped);
+  for (const auto& o : objs) {
+    PartObject* p = static_cast<PartObject*>(o.get());
+    if (p->tex_over_.empty() && !p->mesh_over_set_) continue;
+    const PartTypeDesc& d = *p->type_;
+    const RenderObjectDesc* desc = render_object_desc(p->render_type_);
+    const PartObject::Inst* mi = part_main_instance(p);
+    const bool has_mesh = mi && render_d3d9_mesh_ready(mi->r) &&
+                          !render_d3d9_mesh_pending_waiting(mi->r);
+    const unsigned car =
+        (p->car_ && p->car_ != p->key_)
+            ? static_cast<unsigned>(part_node_id(p->car_))
+            : 0u;
+    char inst[24];
+    if (mi)
+      std::snprintf(inst, sizeof inst, "%p", static_cast<void*>(mi->r));
+    else
+      std::snprintf(inst, sizeof inst, "-");
+    for (const auto& ov : p->tex_over_) {
+      const RpakEntry* te = rpak_find_entry(ov.second);
+      // The texture is asked for only where an instance shows it: a part
+      // no camera has seen has loaded nothing.
+      void* key = has_mesh ? renderref_line_texture_key(ov.second) : nullptr;
+      const char* label = key ? render_d3d9_texture_label(key) : "";
+      const char* base = label;
+      for (const char* c = label; *c; ++c)
+        if (*c == '/' || *c == '\\') base = c + 1;
+      const size_t slot = static_cast<size_t>(ov.first);
+      std::fprintf(out,
+                   "[render-dbg]   paint %p node=0x%08X '%s' car=0x%08X "
+                   "cfg_texture=0x%08X texture=0x%08X render=0x%08X slot=%d "
+                   "was=0x%08X now=0x%08X '%s' instance=%s has_mesh=%d "
+                   "loaded=%d bound=%d file='%s'\n",
+                   static_cast<void*>(p->key_),
+                   static_cast<unsigned>(part_node_id(p->key_)),
+                   car_type_alias(d.type_id), car,
+                   static_cast<unsigned>(d.texture_id),
+                   static_cast<unsigned>(p->texture_),
+                   static_cast<unsigned>(p->render_type_), ov.first,
+                   static_cast<unsigned>(
+                       slot < desc->textures.size() ? desc->textures[slot] : 0),
+                   static_cast<unsigned>(ov.second),
+                   te ? te->name.c_str() : "", inst, has_mesh ? 1 : 0,
+                   key ? 1 : 0,
+                   key ? render_d3d9_mesh_texture_uses(mi->r, key) : 0, base);
+    }
+    if (p->mesh_over_set_) {
+      const RpakEntry* me = rpak_find_entry(p->mesh_over_);
+      std::fprintf(out,
+                   "[render-dbg]   paint %p node=0x%08X '%s' car=0x%08X "
+                   "cfg_mesh=0x%08X mesh=0x%08X render=0x%08X mesh_was=0x%08X "
+                   "mesh_now=0x%08X '%s' instance=%s has_mesh=%d\n",
+                   static_cast<void*>(p->key_),
+                   static_cast<unsigned>(part_node_id(p->key_)),
+                   car_type_alias(d.type_id), car,
+                   static_cast<unsigned>(d.mesh_id),
+                   static_cast<unsigned>(p->mesh_),
+                   static_cast<unsigned>(p->render_type_),
+                   static_cast<unsigned>(desc->mesh_id),
+                   static_cast<unsigned>(p->mesh_over_),
+                   me ? me->name.c_str() : "", inst, has_mesh ? 1 : 0);
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Part: mesh and render type
 // ---------------------------------------------------------------------------
 // PE 940 Part.getRenderType 0x4CC9A0 = part+0xA4, Part.getMesh 0x4CC8A0 =
@@ -268,6 +577,13 @@ bool native_part_mesh(InvObject* self, int32_t* id) {
 // instance keeps its host object: it is put back on the pending list with
 // the new type, which a camera's walk loads (the exe requests it there
 // too).
+// A part with a private copy of its render type (Part.setTexture / setMesh)
+// leaves the copy here: part+0x9C is bound to the render type of the pack
+// and the instance is made from that, so the replaced lines are gone.
+// Fork: the test above compares with the id of the pack's render type the
+// part was last given; with a private copy the exe has the id of the copy
+// in part+0xA4, so that setRenderType(the type's own main render type) on a
+// painted part takes the paint off there and does nothing here.
 bool native_part_set_render_type(InvObject* self, int32_t id) {
   std::shared_ptr<PartObject> p = part_of(self);
   if (!p) return false;
@@ -290,30 +606,29 @@ bool native_part_set_render_type(InvObject* self, int32_t id) {
       std::lock_guard<std::mutex> lock(g_mu);
       R(i.r).type_id = id;
     }
+    renderref_clear_line_overrides(i.r);
     render_d3d9_mesh_set_pending_type(i.r, id);
     i.res_id = id;
     break;
+  }
+  if (!p->tex_over_.empty() || p->mesh_over_set_) {
+    p->tex_over_.clear();
+    p->mesh_over_set_ = false;
+    p->mesh_over_ = 0;
+    ++g_paint.dropped;
   }
   p->mesh_ = desc->mesh_id;
   p->render_type_ = id;
   return true;
 }
 
-// PE 940 Part.setMesh 0x4CD840: a handle on the typeof-5 record `id`, and,
-// when part+0x94 != 0, FUN_004c72d0(type, part, handle): nothing unless the
-// type has a cfg `mesh` line (type+0x1100) and the id differs from
-// part+0x94; then the mesh part+0x8C is replaced by the new one in a private
-// copy of the main render type (FUN_004e9470, render object vt+8) and
-// part+0x8C is bound to the new mesh.
-// Fork: only the handle changes (Part.getMesh, and with it the mesh id of a
-// saved car); the render instance keeps the mesh of its render object. The
-// copy and the replacement belong to the paint work (Part.setTexture has
-// the same shape).
+// PE 940 Part.setMesh 0x4CD840: a handle on the typeof-5 record `id`
+// (FUN_0051fa40(id, 5, 0)) and, when part+0x94 != 0, FUN_004c72d0(type,
+// part, handle) (part_set_mesh). The native answers 1 whatever happened.
 bool native_part_set_mesh(InvObject* self, int32_t id) {
   std::shared_ptr<PartObject> p = part_of(self);
   if (!p) return false;
-  if (!p->mesh_ || p->mesh_ == id || !p->type_->mesh_id) return true;
-  p->mesh_ = id;
+  part_set_mesh(p.get(), id);
   return true;
 }
 

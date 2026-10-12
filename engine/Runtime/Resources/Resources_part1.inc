@@ -137,6 +137,28 @@ static uint32_t mesh_type_flags(const std::vector<uint8_t>& blob) {
   return 0;
 }
 
+// PE 940 FUN_00451b00, the loader of an INVO v1..v3 mesh: every material is
+// created with the caller flag 0x80000000 (prelit) when the path of the mesh
+// contains "objects\meshes" (FUN_005693a0 -> FUN_00528300, a case-sensitive
+// search), else with 0. The path is the text of the record's `sourcefile`
+// line as it stands there (FUN_00525670 copies it to payload+0x0C,
+// FUN_00455e80 to mesh+0x28). 893 mesh records of the install have such a
+// line, all in objects.rpk and under multibot\; 8 of their files are v1..v3.
+static uint32_t mesh_record_v3_create_flags(const std::vector<uint8_t>& blob) {
+  const std::string text(blob.begin(), blob.end());
+  for (size_t pos = 0; pos < text.size();) {
+    size_t eol = text.find_first_of("\r\n", pos);
+    if (eol == std::string::npos) eol = text.size();
+    size_t at = pos;
+    while (at < eol && (text[at] == ' ' || text[at] == '\t')) ++at;
+    if (text.compare(at, 10, "sourcefile") == 0 &&
+        text.find("objects\\meshes", at) < eol)
+      return 0x80000000u;
+    pos = eol + 1;
+  }
+  return 0;
+}
+
 bool load_mesh_from_res_id(InvObject* self, int32_t mesh_id) {
   if (!self || !mesh_id) return false;
   std::vector<uint8_t> mblob;
@@ -152,7 +174,10 @@ bool load_mesh_from_res_id(InvObject* self, int32_t mesh_id) {
     std::string resolved = resolve_city_visual_scx(src);
     if (resolved.empty()) resolved = rpak_resolve_path(src.c_str());
     if (resolved.empty()) resolved = src;
-    if (render_d3d9_mesh_create_from_file(self, resolved.c_str())) {
+    // Script boot only: the flags of mesh_record_v3_create_flags.
+    const uint32_t v3_flags =
+        native_script_boot() ? mesh_record_v3_create_flags(mblob) : 0u;
+    if (render_d3d9_mesh_create_from_file(self, resolved.c_str(), v3_flags)) {
       // PE 940 FUN_004515e0: the skeleton is read before the mesh file
       // when the type record says so. Script boot only.
       if (native_script_boot() && (mesh_type_flags(mblob) & 8u) != 0) {
@@ -192,10 +217,16 @@ InvObject* make_bound_ref(int32_t res_id);
 // Fork: a mesh none of whose sections has a parsed material (an INVO
 // layout the host's material reader refuses) keeps the old rule, the last
 // texture line on section 0.
+// `mesh_id` other than 0: that mesh in place of the render object's `mesh`
+// line (the mesh line of a private copy, FUN_00522b00; see
+// renderref_set_line_overrides).
 bool render_object_bind_mesh(InvObject* self, int32_t id,
-                             const RenderObjectDesc* desc) {
-  if (!self || !desc || !desc->found || !desc->mesh_id) return false;
-  if (!load_mesh_from_res_id(self, desc->mesh_id)) return false;
+                             const RenderObjectDesc* desc,
+                             int32_t mesh_id = 0) {
+  if (!self || !desc || !desc->found) return false;
+  if (!mesh_id) mesh_id = desc->mesh_id;
+  if (!mesh_id) return false;
+  if (!load_mesh_from_res_id(self, mesh_id)) return false;
   // Render type flags (RT_object template+0x18, FUN_0046e1a0): the colour
   // mode, the horizon bit and the slot-copy bit of everything made from it.
   render_d3d9_mesh_set_type_flags(self, desc->flags);
@@ -233,7 +264,7 @@ bool render_object_bind_mesh(InvObject* self, int32_t id,
                    "(primary/second/lightmap slot, material flags, wide "
                    "vertices):%s\n",
                    static_cast<unsigned>(id), e ? e->name.c_str() : "",
-                   desc->flags, static_cast<unsigned>(desc->mesh_id),
+                   desc->flags, static_cast<unsigned>(mesh_id),
                    render_d3d9_mesh_submesh_count(self), parsed, keys.size(),
                    missing, missing ? ":" : "", missing_slots.c_str(),
                    summary);

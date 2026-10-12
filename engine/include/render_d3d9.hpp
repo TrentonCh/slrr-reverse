@@ -390,6 +390,29 @@ bool render_d3d9_texture_apply_luma_alpha(void* key);
 // TEXCOORDINDEX=TCI_CAMERASPACEREFLECTIONVECTOR=0x30000 @ PE 4E7718).
 void render_d3d9_set_global_envmap(void* key);
 void* render_d3d9_global_envmap();
+// PE 940 GfxEngine.setGlobalEnvmap (FUN_004dc910) on the script boot: the
+// resource id of the texture the script passes (0 = none). The camera pass
+// asks for its texture once a frame (renderref_envmap_texture) and the
+// class programs of the lit groups bind it for an env entry without a
+// texture of its own (render_d3d9_part6.inc). The legacy path keeps
+// render_d3d9_set_global_envmap.
+void render_d3d9_set_global_envmap_id(int32_t res_id);
+// Fork: `[render-dbg]` lines: the global envmap and the sections the class
+// programs of the lit groups drew in the last flushed frame.
+void render_d3d9_lit_debug_dump(FILE* out);
+// PE 940 Config.shadows / shadow_size / shadow_detail as the engine holds
+// them (DAT_005da018, DAT_005da01c, DAT_005e8ca4; FUN_0047c240 reads them
+// from the Config script instance, FUN_00421280 makes the shadow targets):
+// the projected shadows of a camera pass (render_d3d9_part7.inc) run when
+// `shadows` and `size` are not 0, into a target of size x size, for the
+// owners whose detail is not below `detail`. Until the call the values are
+// the field initialisers of Config.class (2, 256, 0.25). `source` names
+// where the values come from, for the log. Build 940 boot only.
+void render_d3d9_set_shadow_options(int32_t shadows, int32_t size,
+                                    float detail, const char* source);
+// Fork: `[render-dbg]` lines: the shadow options and the owners the shadow
+// pass drew in the last flushed frame.
+void render_d3d9_shadow_debug_dump(FILE* out);
 
 // OSD 2D blit queue (host stand-in for Rectangle RenderRef instances).
 // Coords match Osd.createRectangle: center (x,y), size (w,h) in ~[-1,1] space
@@ -490,9 +513,15 @@ void* render_d3d9_mesh_ib_d3d(void* key);  // IDirect3DIndexBuffer9* or null
 // Format: magic "INVO", version 4, directory of (offset,type) chunks.
 // Submesh pattern: mat(1) → meta(4) → verts(5) → indices(0).
 // Vertex = pos3 + normal3 + uv2 (32 bytes). Indices = uint16 triangles.
-bool render_d3d9_mesh_create_from_file(void* key, const char* path);
+// `v3_create_flags`: the create flags the loader gives every material of an
+// INVO v1..v3 mesh (PE 940 FUN_00451b00 -> FUN_0042ba10(header, flags):
+// 0x80000000, prelit, for a mesh whose path contains "objects\meshes").
+// An INVO v4 mesh does not read them (its loader FUN_00452960 passes 0).
+bool render_d3d9_mesh_create_from_file(void* key, const char* path,
+                                       uint32_t v3_create_flags = 0);
 bool render_d3d9_mesh_create_from_memory(void* key, const uint8_t* data,
-                                         size_t size, const char* label);
+                                         size_t size, const char* label,
+                                         uint32_t v3_create_flags = 0);
 // Phase 2.39 — procedural sphere (INVO v3 skydome.SCX not yet parsed).
 bool render_d3d9_mesh_create_skydome(void* key, float radius);
 // PE Resource_cloneNative @ 0x00545230 — independent mesh (changeResource unique).
@@ -530,6 +559,11 @@ void render_d3d9_mesh_set_pending_type(void* key, int32_t type_id);
 // The recorded type id; it stays after the type turned out not to be a mesh
 // recipe (a typeof-13 light type: kept for the light pass). 0 = none.
 int32_t render_d3d9_mesh_pending_type(void* key);
+// True while the instance still waits for a camera. False without an entry
+// and for an entry that was asked for and is parked: the type is no mesh
+// recipe, or it could not be loaded (an instance that had a mesh before
+// keeps showing that one).
+bool render_d3d9_mesh_pending_waiting(void* key);
 // ---- Ground meshes (PE 940 RT_ground / RI_ground, render object flags
 // 0x800) ----
 // A vertex of the exe's ground stream (FUN_004547a0 format 0x15003f):
@@ -570,6 +604,9 @@ bool render_d3d9_mesh_ground_add_section(void* key, uint32_t material,
 // way are skipped by the file-name heuristic of mesh creation and cloning.
 void render_d3d9_mesh_bind_slots(void* key, void* const* textures,
                                  int32_t count);
+// Fork: the number of texture entries (primary, second, env, lightmap) of
+// the sections of a mesh that are bound to `texture_key` (log lines).
+int32_t render_d3d9_mesh_texture_uses(void* key, void* texture_key);
 // Fork: one `[render-dbg]` line per ground mesh.
 void render_d3d9_ground_debug_dump(FILE* out);
 // Fork: the sections of a mesh as text for a log line, one item per

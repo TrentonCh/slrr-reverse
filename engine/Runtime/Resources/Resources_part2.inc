@@ -1758,6 +1758,164 @@ void java_util_resource_ResourceRef_duplicate(InvObject* self, InvObject* src) {
   gameref_on_res_bound(self);
 }
 
+// ---- Replaced lines of a render instance (Part.setTexture / setMesh) ----
+// PE 940 FUN_004c75a0 / FUN_004c72d0: the part's main render type is
+// duplicated once (FUN_004e9470 -> FUN_0051ee30: a new node with the
+// payload of the old one), the render instance is switched to the copy
+// (FUN_0051e090) and the copy's data object replaces one line
+// (FUN_00522b00: the mesh, or the first texture line with the old id) and
+// marks its template for a rebind (FUN_0046f2d0), after which FUN_00441c40
+// binds every texture entry of every section by slot again.
+// Fork: the host makes no copy of the render object. The instance keeps
+// the replaced lines (ResState::line_tex / line_mesh) and they are applied
+// to its own mesh: the texture keys of the render object with the replaced
+// slots exchanged, bound by slot (render_d3d9_mesh_bind_slots).
+namespace {
+
+struct LineOverrides {
+  std::vector<std::pair<int32_t, int32_t>> tex;
+  bool mesh_set = false;
+  int32_t mesh = 0;
+};
+
+LineOverrides line_overrides_of(InvObject* instance) {
+  LineOverrides o;
+  std::lock_guard<std::mutex> lock(g_mu);
+  auto it = g_res.find(instance);
+  if (it == g_res.end()) return o;
+  o.tex = it->second.line_tex;
+  o.mesh_set = it->second.line_mesh_set;
+  o.mesh = it->second.line_mesh;
+  return o;
+}
+
+// One host handle per texture record that a replaced line names, bound and
+// loaded on first use, as a render object does for its own lines
+// (render_object_textures). A texture that does not load is not asked for
+// again. Main thread.
+InvObject* line_texture(int32_t texture_id) {
+  if (!texture_id) return nullptr;
+  struct Tex {
+    InvObject* ref = nullptr;
+    bool tried = false;
+  };
+  static std::unordered_map<int32_t, Tex> s_tex;
+  Tex& t = s_tex[texture_id];
+  if (!t.ref) {
+    t.ref = resref_new();
+    if (t.ref) java_util_resource_ResourceRef_set(t.ref, texture_id);
+  }
+  if (t.ref && !t.tried && !render_d3d9_texture_ready(t.ref)) {
+    t.tried = true;
+    java_util_resource_ResourceRef_load(t.ref);
+    if (native_type_log()) {
+      const RpakEntry* e = rpak_find_entry(texture_id);
+      std::fprintf(stderr,
+                   "[native-type] replaced texture line: texture 0x%08X '%s' "
+                   "%s\n",
+                   static_cast<unsigned>(texture_id),
+                   e ? e->name.c_str() : "",
+                   render_d3d9_texture_ready(t.ref) ? "loaded" : "NOT LOADED");
+    }
+  }
+  return (t.ref && render_d3d9_texture_ready(t.ref)) ? t.ref : nullptr;
+}
+
+// FUN_0046f2d0 -> FUN_00441c40 on the instance's own sections: every
+// texture entry takes the texture of its slot, the replaced lines from
+// `tex`, every other from the render object. A replaced line whose texture
+// did not load is unbound (the engine default texture).
+void line_bind_textures(InvObject* instance, int32_t type_id,
+                        const std::vector<std::pair<int32_t, int32_t>>& tex) {
+  const RenderObjectDesc* desc = render_object_desc(type_id);
+  if (!desc->found) return;
+  std::vector<void*> keys = render_object_texture_keys(type_id, nullptr, nullptr);
+  std::vector<int32_t> ids = desc->textures;
+  for (const auto& o : tex) {
+    if (o.first < 0 || static_cast<size_t>(o.first) >= keys.size()) continue;
+    keys[static_cast<size_t>(o.first)] = line_texture(o.second);
+    ids[static_cast<size_t>(o.first)] = o.second;
+  }
+  render_d3d9_mesh_bind_slots(instance, keys.empty() ? nullptr : keys.data(),
+                              static_cast<int32_t>(keys.size()));
+  // The rule of render_object_bind_mesh for a mesh without a parsed
+  // material: the last texture line on section 0.
+  if (render_d3d9_mesh_slot_summary(instance, nullptr, 0) == 0) {
+    for (size_t i = keys.size(); i-- > 0;) {
+      if (!ids[i]) continue;
+      if (keys[i]) render_d3d9_mesh_set_texture(instance, keys[i]);
+      break;
+    }
+  }
+}
+
+// The handle that stands for a render object with another mesh line: the
+// mesh `mesh_id` with the render object's flags and textures. One per
+// (render object, mesh), like the handle of a render type below.
+InvObject* line_mesh_variant(int32_t type_id, int32_t mesh_id) {
+  static std::unordered_map<uint64_t, InvObject*> s_variants;  // main thread
+  const uint64_t k = (static_cast<uint64_t>(static_cast<uint32_t>(type_id)) << 32) |
+                     static_cast<uint32_t>(mesh_id);
+  auto it = s_variants.find(k);
+  if (it != s_variants.end()) return it->second;
+  InvObject* v = make_bound_ref(type_id);
+  if (v) render_object_bind_mesh(v, type_id, render_object_desc(type_id), mesh_id);
+  s_variants[k] = v;
+  return v;
+}
+
+}  // namespace
+
+void renderref_set_line_overrides(InvObject* instance, const int32_t* slots,
+                                  const int32_t* texture_ids, int32_t count,
+                                  bool mesh_set, int32_t mesh_id) {
+  if (!instance || !native_script_boot()) return;
+  std::vector<std::pair<int32_t, int32_t>> tex;
+  for (int32_t i = 0; i < count; ++i)
+    if (slots && texture_ids) tex.emplace_back(slots[i], texture_ids[i]);
+  bool mesh_changed = false;
+  int32_t type_id = 0;
+  {
+    std::lock_guard<std::mutex> lock(g_mu);
+    auto it = g_res.find(instance);
+    if (it == g_res.end()) return;
+    ResState& r = it->second;
+    mesh_changed = r.line_mesh_set != mesh_set ||
+                   (mesh_set && r.line_mesh != mesh_id);
+    r.line_tex = tex;
+    r.line_mesh_set = mesh_set;
+    r.line_mesh = mesh_set ? mesh_id : 0;
+    type_id = r.type_id;
+  }
+  // An instance that waits on the pending list gets its lines when a camera
+  // sees it; one that never got a mesh has nothing to bind.
+  // An entry that is parked there does not wait: it stays after a mesh
+  // line named a mesh that could not be loaded (the instance then keeps
+  // the mesh it had). Such an instance is asked for again when the mesh
+  // line changes, and takes its texture lines at once otherwise.
+  if (!render_d3d9_mesh_ready(instance) ||
+      render_d3d9_mesh_pending_waiting(instance) || !type_id)
+    return;
+  if (mesh_changed)
+    render_d3d9_mesh_set_pending_type(instance, type_id);
+  else
+    line_bind_textures(instance, type_id, tex);
+}
+
+void renderref_clear_line_overrides(InvObject* instance) {
+  if (!instance) return;
+  std::lock_guard<std::mutex> lock(g_mu);
+  auto it = g_res.find(instance);
+  if (it == g_res.end()) return;
+  it->second.line_tex.clear();
+  it->second.line_mesh_set = false;
+  it->second.line_mesh = 0;
+}
+
+void* renderref_line_texture_key(int32_t texture_id) {
+  return native_script_boot() ? line_texture(texture_id) : nullptr;
+}
+
 // PE 940 type-3 builder FUN_00462b40 -> FUN_0046d890: a render instance's
 // render type is requested when a camera walk first meets the instance.
 // Host: the camera pass (draw_viewport_cameras) calls this for an instance
@@ -1812,16 +1970,28 @@ int32_t renderref_materialise_pending(InvObject* instance, int32_t type_id) {
   }
   if (made != 0 && !ground_class) {
     static std::unordered_map<int32_t, InvObject*> s_types;  // main thread
-    InvObject*& type = s_types[type_id];
-    if (!type) type = make_bound_ref(type_id);
-    if (type && !render_d3d9_mesh_ready(type))
-      java_util_resource_ResourceRef_load(type);
+    // The lines this instance replaces (Part.setTexture / setMesh): with
+    // another mesh line the instance is made from the handle of that
+    // variant, and the replaced texture lines are bound after the clone.
+    const LineOverrides lines = line_overrides_of(instance);
+    InvObject* type = nullptr;
+    if (restype == 14 && lines.mesh_set) {
+      type = line_mesh_variant(type_id, lines.mesh);
+    } else {
+      InvObject*& shared = s_types[type_id];
+      if (!shared) shared = make_bound_ref(type_id);
+      if (shared && !render_d3d9_mesh_ready(shared))
+        java_util_resource_ResourceRef_load(shared);
+      type = shared;
+    }
     if (type && render_d3d9_mesh_ready(type)) {
       // What RenderRef.create does for a type that is loaded.
       render_d3d9_mesh_clone(instance, type);
       render_d3d9_mesh_set_geometry_source(instance, type);
       render_d3d9_mesh_set_type_flags(instance,
                                       render_d3d9_mesh_type_flags(type));
+      if (restype == 14 && !lines.tex.empty())
+        line_bind_textures(instance, type_id, lines.tex);
       made = 1;
     }
   }
@@ -1837,6 +2007,36 @@ int32_t renderref_materialise_pending(InvObject* instance, int32_t type_id) {
                                                         : "not an object template, no mesh")
                                       : "NOT LOADED");
   return made;
+}
+
+// PE 940 FUN_00421920 (the engine's frame function): the node of the global
+// envmap (engine+0xA4, set by GfxEngine.setGlobalEnvmap FUN_004dc910) is
+// requested (FUN_0051f4f0) and, once it has an instance with a texture,
+// that texture goes to C3DLow (vt+0x128, C3DLow+0x39C) for the frame.
+// Host: one handle per resource id, bound and loaded like the handle of a
+// render type (renderref_materialise_pending).
+// Fork: loaded at once on first use (the exe requests it and draws with
+// the default texture until it is in); a texture that does not load is not
+// asked for again.
+void* renderref_envmap_texture(int32_t res_id) {
+  if (!res_id || !native_script_boot()) return nullptr;
+  struct Env {
+    InvObject* ref = nullptr;
+    bool tried = false;
+  };
+  static std::unordered_map<int32_t, Env> s_envmaps;  // main thread
+  Env& e = s_envmaps[res_id];
+  if (!e.ref) e.ref = make_bound_ref(res_id);
+  if (e.ref && !e.tried && !render_d3d9_texture_ready(e.ref)) {
+    e.tried = true;
+    java_util_resource_ResourceRef_load(e.ref);
+    if (native_type_log())
+      std::fprintf(stderr,
+                   "[native-type] global envmap 0x%08X: %s\n",
+                   static_cast<unsigned>(res_id),
+                   render_d3d9_texture_ready(e.ref) ? "loaded" : "NOT LOADED");
+  }
+  return (e.ref && render_d3d9_texture_ready(e.ref)) ? e.ref : nullptr;
 }
 
 // ---- RenderRef ----

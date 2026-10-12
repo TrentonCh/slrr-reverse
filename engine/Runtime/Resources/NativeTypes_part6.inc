@@ -937,6 +937,30 @@ bool CarObject::event(int32_t type, const char* text) {
     return true;
   }
   if (is("filter")) return part_cmd_filter(this, text);
+  if (is("texture")) {
+    // "%*s %d %d": texture id, recurse. A handle on the texture record
+    // (FUN_00488930), FUN_004c75a0 on the car when car+0x84 != 0, and with
+    // a non-zero second number the same string to every part on the list
+    // car+0xDC (FUN_0047d550(part, 0, 0x10, text, 0)); the part's handler
+    // reads the id from it.
+    int32_t id = 0, recurse = 0;
+    engine_sscanf(text, "%*s %d %d", &id, &recurse);
+    part_set_texture(this, id);
+    if (recurse) {
+      const std::vector<InvObject*> listed = attached_;
+      for (InvObject* node : listed)
+        if (std::shared_ptr<PartObject> part = part_of(node))
+          if (part.get() != this) part->event(0x10, text);
+    }
+    return true;
+  }
+  if (is("mesh")) {
+    // "%*s %d": FUN_004c72d0 on the car when car+0x94 != 0.
+    int32_t id = 0;
+    engine_sscanf(text, "%*s %d", &id);
+    part_set_mesh(this, id);
+    return true;
+  }
 
   // Taken and stored. Fork: not acted on (each needs the drive train, the
   // seats or the lamp, wing and flap records of the car object):
@@ -983,9 +1007,9 @@ bool CarObject::event(int32_t type, const char* text) {
                is("autopilot_off") || is("ai_cheat"))) {
     // Left to the host's generic command chain as before (the driving
     // milestone): render, hide, activate, deactivate, next, prev, osd,
-    // corpse, setvel, sethorn, setpitch, addroll, texture, mesh, decal,
-    // paint, bigdecal, repair, cancel, pickup; and any word the exe's
-    // handler does not know.
+    // corpse, setvel, sethorn, setpitch, addroll, decal, paint, bigdecal,
+    // repair, cancel, pickup; and any word the exe's handler does not
+    // know.
     return false;
   }
   ++stored_.taken;
@@ -1451,4 +1475,5 @@ void native_part_debug_dump(FILE* out) {
                    on);
   }
   native_part_install_dump(out);
+  native_part_paint_dump(out);
 }

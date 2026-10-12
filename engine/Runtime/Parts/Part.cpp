@@ -173,6 +173,12 @@ int32_t java_game_parts_Part_getTexture(InvObject* self) {
   // race124 deepen: size 0xc7; NO Mighty; second hop 0x20000000.
   // race125 deepen: twin table getMesh+0x94 / getRenderType+0xA4;
   // sub_5447D0 (310+ xrefs) still unnamed; TREE part_texture unchanged.
+  {
+    // PE 940 0x4CD0D0: part+0x84, the id of the texture handle of the game
+    // object (0 for a type without a cfg `texture` line).
+    int32_t id = 0;
+    if (self && native_part_texture(self, &id)) return id;
+  }
   return self ? tree_field_get_int(self, "part_texture") : 0;
 }
 
@@ -190,6 +196,8 @@ int32_t java_game_parts_Part_setTexture(InvObject* self, int32_t ID) {
   // PE @ 0x00469B80 size 0x13f (319). Unbox this+I; dual walk; Bind type=7;
   // ALWAYS eax=1. Host TREE part_texture (Bind/rebind OOS).
   if (!self) return 1;  // PE always 1 at epilogue
+  // PE 940 0x4CE1F0 -> FUN_004c75a0 on the game object.
+  if (native_part_set_texture(self, ID)) return 1;
   if (native_ptr_get(self) && !part_soft_phys_mid(self, /*dual=*/true))
     return 1;
   tree_field_set_int(self, "part_texture", ID);
