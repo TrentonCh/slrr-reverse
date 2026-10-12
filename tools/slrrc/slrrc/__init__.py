@@ -12,9 +12,10 @@ Modules (the C++ port has the same ones with the same function names):
     decl        pool steps 1 to 3 (seed, types, names), FILD / MTHD / CLSS rows
     emit        the emitter: AST of a method or field initialiser -> node list
                 with symbolic operands
-    floatlit    the float literal conversions A to D
-    packs       PackNames (the pool spelling of a pack) and the table of the
-                shipped pools
+    floatlit    the float literal conversion of the exe (B) and the three
+                of earlier builds (A, C, D)
+    packs       PackNames (the pack and the id a resource id compiles to),
+                the pack table of the resource engine, its replay
     write       the writer: pool steps 4 and 5 over the finished trees
                 (resolve, emit), node encoding, chunks, the file
     dump        text forms of tokens, AST, trees and classes (tests,
@@ -34,10 +35,14 @@ and the first three steps of its pool; emit_trees() adds the trees, node for
 node, with operands that name pool content; compile_source() adds the last
 two steps of the pool and the bytes.
 
-Two things are state of the game's exe that no source holds, and both stay
-open until the exe has been read (notes/compiler_spec.md 1.4): the float
-literal conversion (Options.float_mode: four conversions occur, A is the
-default) and the spelling of pack names (the PackNames a host passes in).
+Two things no source holds, and both were read in the Build 940 exe
+(notes/exe_reads.md).  The float literal conversion: the exe has one, setting
+B of floatlit, and that is the default of Options.float_mode; A, C and D
+reproduce shipped class files that earlier builds of the compiler wrote.  The
+pack names: the pool spells a pack as it was first registered in the pack
+table of the session, so the PackNames a host passes in is that table
+(packs.PackTable), and a compilation is not a function of its source and the
+install alone.
 
 The core (everything above the line in the list) does no file access and
 keeps no global state: the source comes in as text, other classes through a
@@ -79,16 +84,20 @@ from . import scanner
 from . import write
 from .diag import Diagnostics, E_LEX, E_LIMIT, E_SYNTAX
 
-VERSION = '0.4'                 # part of every cache entry: a change of the
+VERSION = '0.5'                 # part of every cache entry: a change of the
 #                                 output of any source needs a new one
+#                                 (0.5: the float default is B, ".5" is 0.0,
+#                                 the id of a resource id follows the engine)
 
 BUILD_940 = 0x24F9D
 
 
 class Options(object):
     """build: the build number written into the file header.
-    float_mode: the float literal conversion, 'A' (default), 'B', 'C' or 'D'
-    (notes/compiler_spec.md 2.8; which one the game uses is an open question).
+    float_mode: the float literal conversion.  'B' (the default) is the one
+    the Build 940 exe contains and the one for every new compilation; 'A',
+    'C' and 'D' exist to reproduce shipped class files of earlier builds
+    (floatlit, notes/exe_reads.md 1).
     strict: constructs no shipped source uses are errors instead of warnings."""
     __slots__ = ('build', 'float_mode', 'strict')
 

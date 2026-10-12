@@ -5,7 +5,9 @@ baseline.
     python -I tests/run_tests.py m1 m2 m3          the front half (about 25 s)
     python -I tests/run_tests.py m4                the trees (about 25 s)
     python -I tests/run_tests.py m5 m6             whole files; the sources without a
-                                                   class through the command line (40 s)
+                                                   class through the command line (50 s)
+    python -I tests/run_tests.py m9                the two rules read in the exe: the float
+                                                   conversion, the pack table (15 s)
     python -I tests/run_tests.py                   every milestone that is built
     python -I tests/run_tests.py extra extra4 extra5
                                                    the checks outside the milestones: front
@@ -32,12 +34,16 @@ What the front half must print:
 
 and the trees:
 
-    M4 trees         7568/7570 node for node (float setting per file; 7396/7570 with setting A alone); older builds 154/154; stale 3/18; equal to the spike 3454/3454 sources
+    M4 trees         7568/7570 node for node (float setting per file; 7251/7570 with setting B, the conversion of the exe, alone; 7396/7570 with setting A alone); older builds 154/154; stale 3/18; equal to the spike 3454/3454 sources; pack table replay 126/126 spellings of the shipped pools, 9058/9058 rid nodes, 2/2 for the pack without a file
 
 the files, and the sources without a class file:
 
-    M5 files         2649/2651 byte-identical (float setting per file; 2561/2651 with setting A alone); older builds 153/153; stale 0/15; CONS exact 2703/2705 classes; equal to the spike 3454/3454 sources
-    M6 source-only   635/635 compiled through the cache (635 classes, 771 trees, 32644 nodes, 693847 bytes); hashes 635/635 equal to the baseline; strict reader 635/635; layout rules hold; stack simulation holds (21523 nodes); structure 767/767 trees; siblings 522/522; manifest 635/635 entries; driver checks 22/22
+    M5 files         2649/2651 byte-identical (float setting per file; 2434/2651 with setting B, the conversion of the exe, alone; 2561/2651 with setting A alone); written by the Build 940 exe 136/136 under B; older builds 153/153; stale 0/15; CONS exact 2703/2705 classes; equal to the spike 3454/3454 sources
+    M6 source-only   635/635 compiled through the cache (635 classes, 771 trees, 32644 nodes, 693847 bytes); hashes 635/635 equal to the baseline (float setting B; under setting A 10 files differ, 33 literals); strict reader 635/635; layout rules hold; stack simulation holds (21523 nodes); structure 767/767 trees; siblings 522/522; manifest 635/635 entries; driver checks 23/23
+
+and the two rules that were read in the exe (notes/exe_reads.md):
+
+    M9 exe rules     floats: 136/136 class files the exe wrote byte-identical under B (90 under A), B equals the exact model on 15954/15954 literal texts; packs: 126/126 spellings of the shipped pools, 9058/9058 rid nodes, 9952/9952 literals the same in any order of compilation (119 and 123 spellings without the scans); checks 25/25
 """
 import os
 import sys
@@ -54,6 +60,7 @@ TESTS = [
     ('m4', 't4_trees'),
     ('m5', 't5_files'),
     ('m6', 't6_source_only'),
+    ('m9', 't9_exe'),
     ('extra', 't_extra'),
     ('extra4', 't_extra4'),
     ('extra5', 't_extra5'),

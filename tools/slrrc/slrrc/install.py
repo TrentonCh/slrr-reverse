@@ -7,8 +7,23 @@ laid out like an install of the game:
     Install             the tree: its class files, its sources, its packs
     InstallProvider     classes.ClassProvider: what the classes of the tree
                         declare
-    install_packs()     packs.PackNames: the table of the shipped pools over
-                        the pack files of the tree
+    DiskPackFiles       packs.PackFiles: which pack files can be opened, and
+                        the external reference table at the head of each
+    install_packs()     packs.PackNames: the pack table of a session of the
+                        game, replayed over the pack files of the tree
+
+PACK NAMES.  How a class file spells the pack of a resource id is state of
+the session that compiles it: the first spelling under which the pack was
+registered in the pack table of the resource engine (packs.py).  A command
+line has no session, so install_packs() replays the start of one: the game
+registers system.rpk, the constructor of GameLogic scans six directories and
+every directory of multibot\\maps for packs (packs.session_940), and then the
+sources are compiled, in the order of the run.  A pack in a scanned directory is therefore spelled as the
+directory listing spells its file, any other pack as the first source of the
+run that names it writes it (or as the external reference table of a pack
+loaded earlier does), and a pack without a file compiles to system.rpk id 0.
+For the shipped sources the order of the run changes nothing: every source
+spells a pack outside the scanned directories in the same way.
 
 LAYOUT OF A TREE.  A class file is X/Name.class; its source, when there is
 one, is X/src/Name.java (the directory is spelled src, Src or SRC).  Packs are
@@ -48,6 +63,7 @@ Reading is all this module does to a tree: it never writes, creates,
 renames or deletes anything in it.
 """
 import os
+import struct
 
 from . import classes
 from . import classfile
@@ -58,6 +74,10 @@ SOURCE_DIR = 'src'              # compared without regard to case
 SOURCE_EXT = '.java'
 CLASS_EXT = '.class'
 PACK_EXT = '.rpk'
+PACK_MAGIC = b'RPAK'            # a pack file: "RPAK", u32 0x200, u32 n1, u32 n2,
+PACK_HEAD = 16                  # then n1 + n2 records of PACK_RECORD bytes
+PACK_RECORD = 0x40              # {u16, u16, name, u32}: an external reference
+PACK_NAME_AT = 4
 
 
 def lower(text):
@@ -295,10 +315,71 @@ class InstallProvider(classes.ClassProvider):
         return self.classes.get(fqn)
 
 
+def external_names(head, records):
+    """The names of the external reference table of a pack file.  head: its
+    first PACK_HEAD bytes; records: the bytes behind them (as many as the
+    caller could read).  [] for a file that does not start with "RPAK"."""
+    if len(head) < PACK_HEAD or head[:4] != PACK_MAGIC:
+        return []
+    counts = struct.unpack_from('<II', head, 8)
+    out = []
+    at = 0
+    k = 0
+    while k < counts[0] + counts[1] and at + PACK_RECORD <= len(records):
+        name = records[at + PACK_NAME_AT:at + PACK_RECORD]
+        end = 0
+        while end < len(name) and name[end] != 0:
+            end += 1
+        out.append(name[:end].decode('latin-1'))
+        at += PACK_RECORD
+        k += 1
+    return out
+
+
+class DiskPackFiles(packs.PackFiles):
+    """The pack files of a tree on disk.  listing: its *.rpk files as
+    relative paths in the spelling of the directory listing
+    (Install.pack_files).  A pack "can be opened" when the listing has it;
+    its table is read from the head of the file, once."""
+
+    def __init__(self, root, listing):
+        self.root = root
+        self.listed = {}            # packs.file_key -> the path as listed
+        for p in listing:
+            key = packs.file_key(p)
+            if key not in self.listed:
+                self.listed[key] = p
+        self.tables = {}            # packs.file_key -> [external reference names]
+
+    def externals(self, name):
+        key = packs.file_key(name)
+        if key in self.tables:
+            return self.tables[key]
+        listed = self.listed.get(key)
+        if listed is None:
+            return None
+        try:
+            with open(os.path.join(self.root, listed.replace('\\', os.sep)), 'rb') as f:
+                head = f.read(PACK_HEAD)
+                records = b''
+                if len(head) == PACK_HEAD and head[:4] == PACK_MAGIC:
+                    counts = struct.unpack_from('<II', head, 8)
+                    # never more than the file can hold
+                    size = os.fstat(f.fileno()).st_size
+                    n = min(counts[0] + counts[1], (size - PACK_HEAD) // PACK_RECORD)
+                    records = f.read(n * PACK_RECORD)
+        except OSError:
+            return None                 # it cannot be opened; asked again the next time
+        names = external_names(head, records)
+        self.tables[key] = names
+        return names
+
+
 def install_packs(install):
-    """The PackNames of a tree: the one spelling each pack has in the shipped
-    pools (packs.TABLE_940), over the pack files the tree has.  A pack
-    without a file has no name; a pack with a file that the table does not
-    know is spelled as the directory lists it.  Where the game itself takes
-    the spelling from is an open question (notes/compiler_spec.md 1.4)."""
-    return packs.TablePackNames(packs.TABLE_940, install.pack_files)
+    """The PackNames of a tree: the pack table of a session of the game as
+    it stands when the scripts are compiled, replayed over the pack files of
+    the tree (packs.session_940: system.rpk, then the pack scans of the
+    constructor of GameLogic).  The table has state: one call gives the table
+    of one run, and the sources of the run are compiled against it in turn."""
+    return packs.session_940(DiskPackFiles(install.root, install.pack_files),
+                             install.pack_files)

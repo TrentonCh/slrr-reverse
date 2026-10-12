@@ -17,6 +17,17 @@ only; **unknown** = said outright. A number in this document is printed by a
 script named next to it; `python -I spec\run_spec.py` regenerates all of them
 (about 2 minutes) and fails when one differs.
 
+**Update, milestone M9 (same day).** The two points this plan left to the exe
+were read there: the float literal conversion and the source of pack names.
+`exe_reads.md` holds the reads; sections 1.3, 1.4 (items 1 and 2), 2.6, 2.8,
+3 (M9) and 5 below are rewritten to what was found, and say so. In one line
+each: Build 940 has one float conversion, setting B, so B is the default and
+A, C, D remain only to reproduce shipped files of earlier builds; a pack is
+spelled as it was first registered in the pack table of the resource engine,
+so the compiler replays that table and the 126-entry table is a test oracle.
+Everything else in this document is as it was written before M9, including
+the numbers of section 0, which are those of setting A.
+
 ## 0. Result in brief
 
 - **The five proof pipelines reproduce.** `lib\run_all.py`,
@@ -151,7 +162,7 @@ refer to the note named in the last column.
 | | int literal: value modulo 2^32, hex with all 32 bits | proven | 25,940 of 25,940 | `grammar.md` 2.4 |
 | | string literal: text after `\" \\ \n \t` | proven | 12,753 of 12,753 | `grammar.md` 2.6 |
 | | resource id: one token, local id = hex value | proven | 9,055 of 9,055 | `grammar.md` 2.7 |
-| | float literal: bit pattern | **open** | four conversions occur; chosen per compilation (1.4 item 1) | `foundation.md` 7.1, `spec\float_models.py` |
+| | float literal: bit pattern | **read in the exe (M9)**: one conversion, setting B; 215 shipped files come from earlier x87 forms (A, C, D), which one per file is not explained | the 136 class files the exe wrote: 136 of 136 under B; 2,434 of 2,651 under B alone, 2,649 with the setting per file (1.4 item 1) | `exe_reads.md` 1, `foundation.md` 7.1, `spec\float_models.py` |
 | | other escapes, character literals, exponents | unknown | 0 uses | `grammar.md` 12 |
 | **Parsing** | grammar of `grammar.md` 3; precedence, casts, dangling else | proven | 3,454 of 3,454 parse; 7,727 of 7,742 tree shapes (the 15 others: 14 stale, 1 pack without file); wrong grammars lose 1 to 1,890 trees | `grammar.md` 10 |
 | | precedence of `\|` `^` `&` against most levels; `(Name) - x` | undetermined | never adjacent without parentheses | `grammar.md` 6.1, 6.3 |
@@ -183,7 +194,7 @@ refer to the note named in the last column.
 | **Lines** | line of the token the scanner had reached at reduction; `END(statement)` with the LALR(1) lookahead of the JLS grammar | proven | 590,101 of 590,101 nodes | `statements.md` 8 |
 | | 14 of the 31 kinds of node, where two candidate tokens always stand on one line | undetermined | 0 nodes affected in the pairs and in the 635 | `statements.md` 8.1 |
 | **File layout** | chunk order, no padding, one blob per class | proven | 2,921 of 2,921 files round-trip | `foundation.md` 3 |
-| **Pack names** | pool spelling of the pack of a resource id | observed rule, source unknown | one spelling per pack in all pools; table reproduces 9,058 of 9,058 nodes | 1.4 item 2 |
+| **Pack names** | pool spelling of the pack of a resource id | **read in the exe (M9)**: the name of the pack's record in the resource engine, which is the spelling of its first registration in the session | the replayed table: 126 of 126 spellings, 9,058 of 9,058 nodes, any order of compilation; 119 or 123 spellings without the scans | `exe_reads.md` 2, 1.4 item 2 |
 | **Whole files** | all of the above together | proven by the spike | 2,649 of 2,651 | 1.2 |
 
 ### 1.4 The unknowns, most blocking first
@@ -195,8 +206,8 @@ it (`spec\spike_check.py`, `spec\expected_totals.py`). The groups are the
 
 | # | Unknown | Oracle pairs | All pairs | Source only | Effect |
 | ---: | --- | --- | --- | --- | --- |
-| 1 | Float literal conversion: which of four conversions the exe uses, and what selects it | touches 2,514; **blocks 88** under the best single setting, 0 when chosen per file | touches 2,682 | touches 575 (1,817 literals) | byte identity only; the values differ by at most 3 units in the last place |
-| 2 | Spelling of pack names in rid entries | touches 596; blocks 68 as written, **5** as on disk, 0 with the table | touches 599 | touches 78 (889 literals; 17 sources write another letter case, none names a missing pack) | byte identity; function only if the host compares pack names case-sensitively |
+| 1 | ~~Float literal conversion: which of four conversions the exe uses, and what selects it~~ **settled by M9**: the exe uses B. Left over: which of the earlier forms A, C, D each of 215 shipped files was compiled with | touches 2,514; under B alone 2,434 of 2,651 identical, 0 blocked when chosen per file | touches 2,682 | touches 575 (1,817 literals; B is what the game computes for them: 33 literals in 10 sources differ from A) | none for new compilations; the leftover concerns the oracle test only |
+| 2 | ~~Spelling of pack names in rid entries~~ **settled by M9**: the first registration in the pack table of the session. Left over: which session compiled the shipped classes | touches 596; blocks 68 as written, 5 as on disk, **0 with the replayed table** | touches 599 | touches 78 (889 literals; 17 sources write another letter case, none names a missing pack) | byte identity; the game looks packs up without regard to case |
 | 3 | The class versions the compiler sees: output depends on the declarations of other classes at compile time | **blocks 2** (`Center_Differential`, `Garage`); 5 name a dialog class that ships in two versions, 18 a class name defined by several files (none blocked) | same | 0 | not reproducible from the install; in general a compiled class is not a function of its source alone |
 | 4 | How the exe finds classes outside the classpath | touches 128 (plus 70 that name a class of their own off-classpath directory) | 129 | 1 | not a byte question (the corpus database answers it); the host needs an index of every `scripts` directory or the loaded classes |
 | 5 | Classes without a class file that other sources name | 1 | 1 | 3 (4 classes, depth at most 2) | compile order: the host must be able to declare a class from its source before compiling its user |
@@ -227,20 +238,39 @@ reproduces some file:
 
 A then B then C then D covers 2,426, 2,486, 2,508, 2,514 files. All 153
 older-build files follow A. The integer part wraps modulo 2^32 in all four.
-The reading that fits (inferred, not read in the exe): the result depends on
-the precision state of the x87 unit of the compiling thread (A against C is
-the same code under 24-bit and 53-bit precision; Direct3D switches a thread
-to 24 bits when a device is created without the FPU-preserve flag), and on
-top of that on at least two code variants (dividing the scale, multiplying
-it). No single piece of code under three precision states reproduces more
-than 2,464 files, two reproduce 2,511.
-The files that need B or D sit in `sl\Scripts`, `parts\scripts`,
-`multibot\maps` and `parts\engines`, which suggests other compile sessions or
-another build of the exe with the same build number. The scanner's float
-action in the exe has to be read to say which variant Build 940 contains;
-nothing in the corpus can. Until then the compiler implements A as its
-conversion (plain single-precision arithmetic, the largest group, the only
-one the older builds show) and keeps B, C, D selectable for the oracle test.
+
+*What M9 found (`exe_reads.md` 1).* The scanner converts a float token with
+the engine's own `sscanf("%f")`; its routine at 0x527530 is scalar SSE single
+precision (`MULSS`, `MULSS`, `ADDSS` with the constant 0.1f): **setting B**.
+There is no x87 arithmetic on the path, so the precision state that Direct3D
+changes cannot alter a bit, and there is one code path for a class compiled
+on demand and for `System.compileAll`. The reading above ("depends on the
+precision state of the x87 unit") was right about the past and wrong about
+this exe: A, C and D are the same routine in x87 arithmetic, which the 2005
+build has (A = 24-bit precision control, D = 53 or 64 bits with the values in
+registers, C = 53 or 64 bits with the values stored to float), and the
+shipped files that need them were written by earlier builds of the compiler
+(inferred; those builds are not at hand).
+
+The corpus proves it independently. 136 of the 2,651 class files were written
+by the Build 940 exe itself, on the first run after the download (it gives a
+class the DOS time stamp of its source; `tests\baseline\m5_exe940.tsv`). All
+136 are byte-identical under B, with no per-file choice; 46 of them are
+reproduced by neither A nor C. "The files that need B or D sit in
+`sl\Scripts`, `parts\scripts`, `multibot\maps` and `parts\engines`" was the
+list of classes that first run loaded and recompiled.
+
+So the compiler's conversion is **B**, for every new compilation, and
+"byte-identical to the exe" is a property a compiler can have for floats
+after all. A, C, D stay selectable for the oracle test. Under B alone 2,434 of the
+2,651 files are identical; the 217 others are 215 shipped files of an x87
+form (A 22, AC 150, ACD 14, AD 1, C 12, CD 10, D 6 by the settings that
+reproduce them) and the 2 files of item 3. **Not explained:** which of the
+three forms each of the 215 was compiled with; nothing in a file or in the
+install records it, so `tests\baseline\m5_float.tsv` stays as the per-file
+table and no rule is made up. Two details of the routine that a decimal
+reader would not have: a literal without a digit before the point (`.5`) is
+0.0, and only the first 1,024 fraction digits are read.
 
 **2. Pack names.** `spec\rid_packs.py`: of 9,058 rid nodes the pool spells the
 pack as the source does in 8,037, as the file on disk in 9,046. The 12 others
@@ -254,6 +284,36 @@ that session, from the directory listing or from a script. The compiler
 therefore asks its host for the canonical name (interface `PackNames`, 2.6);
 the test harness uses the 126-entry table, a pack without a file becomes
 `system.rpk` id 0 (observed once, Build 940).
+
+*What M9 found (`exe_reads.md` 2).* The guess was right, and the table is now
+known. At parse time the pack is the written path (dots to backslashes,
+`.rpk`, the letter case of the source). When a class is written, every
+resource id is resolved through the resource engine (0x5189E0), and the pool
+gets the name of the engine's record of the pack and the low 16 bits of the
+global id (0x54B170). A lookup by name is find-or-add (0x518940) under
+`_stricmp`; a new record keeps the name as first given. So the spelling is
+that of the first registration in the session: `system.rpk` at start,
+`System.openLib` with the script's string (`System.rpkScan` is a script
+method that calls it with "directory as written + file name as listed"), the
+external reference table of each pack on first load, a resource id node that
+executes, a data file, and the compiler itself. A pack whose file cannot be
+opened resolves to global id 0, which is record 0, `system.rpk`, id 0.
+
+Replaying "start of the game, the `rpkScan` calls of the constructor of
+`GameLogic`, then the sources" over the install reproduces 126 of 126
+spellings and 9,058 of 9,058 nodes, in any order of compilation
+(`tests\t9_exe.py`). It explains both odd groups: 9 packs under `cars\racers\`
+are written in lower case by 84 sources and pooled in the case of the listing
+(that directory is scanned), and the 3 packs pooled against the disk lie in
+directories nothing scans. Without the scans only 119 or 123 spellings come
+out, depending on the order. The compiler therefore carries the engine's
+table behind `PackNames` (`packs.PackTable`), the command line and the tests
+replay it (`packs.session_940`), and the 126-entry table is a test oracle
+(`tests\pack_oracle.py`). **Not explained:** which session and order of
+compilation produced the shipped classes; only the table it left can be read
+off the pools. For the host: its pack registry does not keep the first
+spelling of a pack, so its provider needs a table of its own, fed at the same
+events as the exe's (`exe_reads.md` 2.5).
 
 **3. Class versions.** A method ref carries the descriptor of the method found
 at compile time. `Center_Differential` holds `Chassis.getBlock:()L...Part;`
@@ -417,12 +477,16 @@ struct ClassProvider {            // the classes the compiler can see besides th
   virtual const ClassInfo* find(std::string_view fqn) = 0;       // may load or declare the class
   virtual ~ClassProvider() = default;
 };
-struct PackNames {                // canonical file name of a pack, false when it has no file
+struct PackNames {                // the pack table of the session (M9; packs.py)
+  // the name the pack was first registered with; false when it has no file
   virtual bool canonical(std::string_view written_path, std::string* file_name) = 0;
+  // the k-th external reference of the pack, for an id with a high word (no shipped source has one)
+  virtual PackWhy external(std::string_view written_path, uint32_t k, std::string* file_name);
   virtual ~PackNames() = default;
 };
 enum class FloatMode : uint8_t { DivSingle /*A*/, MulSingle /*B*/, DivDoubleSum /*C*/, DivDouble /*D*/ };
-struct Options { uint32_t build = 0x24F9D; FloatMode float_mode = FloatMode::DivSingle; bool strict = false; };
+// MulSingle is the conversion of the Build 940 exe (M9); the three others reproduce shipped files of earlier builds
+struct Options { uint32_t build = 0x24F9D; FloatMode float_mode = FloatMode::MulSingle; bool strict = false; };
 struct Diagnostic { bool error; uint32_t line, column; const char* code; std::string text; };
 struct Result {
   bool ok;
@@ -504,7 +568,11 @@ because the models already had them; a rewrite has to keep them):
 Implemented with explicit IEEE operations so that it does not depend on the
 x87 state of the host (the engine is built for SSE2; the file must be compiled
 with the default `/fp:precise`). `ip` is the integer part accumulated in a
-32-bit unsigned integer, `d` each fraction digit:
+32-bit unsigned integer, `d` each fraction digit. B is the routine of the
+Build 940 exe (0x527530, M9) and the default; A, C, D are x87 forms of the
+same routine and exist for the oracle test. In all four a literal without a
+digit before the point is 0.0 and at most 1,024 fraction digits are read
+(`exe_reads.md` 1.3):
 
 ```c
 /* A */ float  v = (float)ip,  s = 1.0f;          s = s / 10.0f;  v = v + (float)d * s;
@@ -613,12 +681,12 @@ again, through the same scripts with `--impl cpp`, for the C++ compiler (M7).
 | M1 | Tokenise | `tests\t1_lex.py` | `M1 tokenise 3454/3454 sources, 852211 tokens` (the end marker of each source not counted) | `lib\check_parse.py` L1 to L3 |
 | M2 | Parse | `tests\t2_parse.py` | `M2 parse 3454/3454 sources` (tokens regenerated from the AST equal for all) | `lib\check_parse.py` P1 to P5 |
 | M3 | Declarations and pool prefix, from the source alone | `tests\t3_decl.py` | `M3 declarations 2651/2651 oracle pairs` (2,705 classes; CLSS 2,705, FILD 238, MTHD 2,701 chunks; 31,141 prefix entries) | `spec\decl_expected.py` |
-| M4 | Trees | `tests\t4_trees.py` | `M4 trees 7568/7570 node for node` with the float setting chosen per file; `7396/7570` with setting A | spike |
-| M5 | Whole files | `tests\t5_files.py` | `M5 files 2649/2651 byte-identical` (per-file float setting; 2,561 with A alone); older builds `153/153`; stale `0/15`; pool (CONS) exact for 2,703 of 2,705 classes | spike |
+| M4 | Trees | `tests\t4_trees.py` | `M4 trees 7568/7570 node for node` with the float setting chosen per file; `7251/7570` with setting B (the exe) alone, `7396/7570` with setting A; since M9 also `pack table replay 126/126 spellings of the shipped pools, 9058/9058 rid nodes` | spike |
+| M5 | Whole files | `tests\t5_files.py` | `M5 files 2649/2651 byte-identical` (per-file float setting; 2,434 with B alone, 2,561 with A alone); since M9 `written by the Build 940 exe 136/136 under B`; older builds `153/153`; stale `0/15`; pool (CONS) exact for 2,703 of 2,705 classes | spike |
 | M6 | The 635 through the cache | `tests\t6_source_only.py`, host self-test | `M6 source-only 635/635 compiled`, hashes equal to the baseline, layout rules and stack simulation hold, statement and expression structure 767 / 767 trees, sibling check 522 / 522; host: `635/635 cache files loaded` | compiled and checked: spike (`spec\spike_source_only.py`); loaded: not tested |
 | M7 | C++ compiler equal to the reference | `tests\t7_cpp.py` | `M7 cpp 3454/3454 sources equal to the reference` (tokens, AST dump, rows, trees, bytes); M1 to M5 headlines with `--impl cpp` | - |
 | M8 | In the engine, on demand | host self-test, saved career | `635/635 compiled and loaded`; the career whose car has the class-less rim `rim_MT_Mescaline_15_0_15_ET__100_LOD_CATALOG_GARAGE` leaves the main menu | - |
-| M9 | The exe confirms or corrects | `tests\t5_files.py --float exe` | one float rule: `2649/2651` without a per-file choice, or the state it depends on written down | - |
+| M9 | The exe confirms or corrects | `tests\t9_exe.py` (and the M4, M5, M6 headlines) | **done.** One float rule, B: `136/136 class files the exe wrote byte-identical under B`, without a per-file choice; `2434/2651` of all oracle files under B alone, and what the others depend on written down (earlier x87 forms of the routine, `exe_reads.md` 1.4, 1.7). One pack rule: `126/126 spellings of the shipped pools, 9058/9058 rid nodes` from the replayed pack table | `exe_reads.md` |
 
 Order and reasons:
 
@@ -644,6 +712,10 @@ Order and reasons:
   action; where the compiler gets a pack's name; how it looks up a class by
   simple name; the yacc tables (the LALR(1) reading of the line rule). It can
   run at any time and changes only the float default and three fallbacks.
+  *Done for the first two (`exe_reads.md`): the float default is B, 10 of the
+  635 cache files changed with it, and the pack names come from the replayed
+  pack table. The class lookup by simple name and the yacc tables were not
+  part of that read and stay as they are in 1.4 (items 4, 8) and section 5.*
 
 **Regressions.** `tests\baseline\` stores, per milestone, the sorted list of
 passing items: `m1.pass` and `m2.pass` (source paths), `m3.pass` (class
@@ -660,7 +732,11 @@ and prints the headlines. The seed of the baseline is the spike's output:
 `spike_pass_source_only.txt` (635), `spike_source_only.sha256`,
 `spike_float_modes.tsv` (the 2,802 identical files of both sets with the first
 float setting that reproduces each: 136 without a float literal, A 2,578,
-B 60, C 22, D 6).
+B 60, C 22, D 6). Since M9 the baseline also holds `m5_exe940.tsv` (the 136
+class files the Build 940 exe wrote, which must be identical under B),
+`m5_exe940.pass`, `m9.pass`, and `m6_float_a.sha256` (the hashes setting A
+gives for the 10 cache files that changed when the default became B; `m6`
+checks that A still gives them).
 
 For the 635 there is no shipped class, so a regression there is any change of
 a hash; a wanted change (for example a new float default) is re-baselined on
@@ -800,6 +876,23 @@ to depend on the FPU state of the moment, "byte-identical to the exe" is not
 a property a compiler can have for floats, and the criterion becomes
 "byte-identical under one of the documented settings", which is what the
 tests measure today.
+*M9: the scanner was read and the risk is gone. The exe depends on no FPU
+state (SSE arithmetic, default rounding); "byte-identical to the exe" is
+exact and is tested on the 136 class files the exe wrote. The criterion
+"byte-identical under one of the documented settings" remains only for the
+215 shipped files that earlier builds wrote. What a port can still get wrong
+is in `floatlit.py`: a fused multiply-add, x87 code generation, or a library
+conversion in place of the loop; its self test catches each.*
+
+**The pack table is state of a session** (new with M9). The pool spelling of
+a pack depends on who registered it first, so a compiled class is not a
+function of its source and the install alone. For the shipped sources it
+makes no difference (every order of compilation gives the same 9,952
+answers). For a mod that writes a pack outside the scanned directories in
+another letter case, the command line and a running game can spell it
+differently; both forms load, because the engine looks packs up without
+regard to case. The host has to build its own table to be byte-identical
+with the exe in such a case (`exe_reads.md` 2.5).
 
 **Dependence on other classes.** A compiled class embeds what other classes
 declared at compile time. Consequences: the oracle test needs a provider that
@@ -889,3 +982,5 @@ The parser accepts them (with a note); the exe's emission is unknown. In
 | a call whose name is also a local in scope | compiled as a call (the local is ignored), `W_UNVERIFIED` | `Texture.<init>(I)` suggests the exe emits the local instead; one case, no source |
 | arguments `true` / `false`, `(x)`, `!x`, `new T[n]`, `instanceof` in the method-ref decision | `true` / `false` count as typed (int), the others as untyped: the call ends in the bare name | the bare name is always correct at run time |
 | value method that does not end in `return`; void method that ends in `return;` | implicit return for constructors and void methods regardless of the last statement, none for value methods | the reading that needs no flow analysis (`statements.md` 2.2) |
+| float literal without a digit before the point (`.5`) | 0.0, `W_UNVERIFIED` | read in the exe (M9): the routine stops at the point and the result was preset to 0.0 (`exe_reads.md` 1.3) |
+| resource id whose low 16 bits are 0; resource id with a high word | `system.rpk` id 0; the pack's external reference of that number, or `system.rpk` id 0 when it has none; `W_UNVERIFIED` | read in the exe (M9): the id mapping of the resource engine (`exe_reads.md` 2.3) |

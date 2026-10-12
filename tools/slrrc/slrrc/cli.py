@@ -31,7 +31,8 @@ records for every output
     output, size, sha256                 the class file, relative to CACHE
     source, source_size, source_sha256   the source, relative to the root
     compiler, build, float, strict       how it was compiled
-    pack_table                           the version of the pack name table
+    pack_table                           the version of the pack table replay
+                                         (packs.SESSION_940_VERSION)
     classes                              the classes in the file
     compiled_against                     every class the compiler looked at
                                          outside the source: its name and the
@@ -42,15 +43,18 @@ records for every output
                                          the package of the source first)
     packs                                every pack a resource id names, as
                                          written and as spelled in the pool
+                                         (null: the pack has no file)
     warnings                             number of warnings
 
 An output is a function of exactly these things, so a host can tell from the
-manifest whether an entry is still valid.  The head of the manifest names the
-tree, the pack table and, under "origins", the file each of those classes was
-read from in the run that looked at it last.  A run into a directory that has
-a manifest keeps the entries of other outputs.  Files are written through a
-temporary file and a rename; the manifest has no time stamp, so two runs over
-the same tree give the same bytes.
+manifest whether an entry is still valid.  (The pool spelling of a pack is
+state of the pack table of the run, install.py; the entry records the
+spelling the output was written with.)  The head of the manifest names the
+tree, the pack table replay with its scan list and, under "origins", the file
+each of those classes was read from in the run that looked at it last.  A run
+into a directory that has a manifest keeps the entries of other outputs.
+Files are written through a temporary file and a rename; the manifest has no
+time stamp, so two runs over the same tree give the same bytes.
 
 THE CACHE STAYS CONSISTENT WHEN A RUN FAILS.  An entry of the manifest always
 describes the class file that is there:
@@ -72,9 +76,10 @@ dump (--dump) written to a file or a pipe is bytes, one byte per character of
 the source and LF line ends, whatever the locale: it is the format another
 implementation is compared with.
 
-FLOAT LITERALS.  Four conversions occur in the shipped classes and which one
-the game uses is an open question (notes/compiler_spec.md 1.4).  --float
-selects one; A is the default.  --compare --float auto tries A, B, C, D in
+FLOAT LITERALS.  The Build 940 exe has one conversion, setting B
+(floatlit.py, notes/exe_reads.md 1), and that is the default of --float.  A,
+C and D reproduce shipped class files that earlier builds of the compiler
+wrote; they are for --compare.  --compare --float auto tries B, A, C, D in
 this order and reports the first that reproduces each class file.
 
 NESTING.  The limit of the dialect is parser.MAX_DEPTH; the command line
@@ -120,9 +125,21 @@ def declaration_hash(info):
 
 
 def pack_table_info():
-    return {'version': packs.TABLE_940_VERSION,
-            'entries': len(packs.TABLE_940),
-            'sha256': sha256('\n'.join(packs.TABLE_940).encode('latin-1'))}
+    """What the head of a manifest says about the pack names of a run: the
+    replay of the pack table (packs.session_940) and its scan lists."""
+    return {'version': packs.SESSION_940_VERSION,
+            'scans': list(packs.SCANS_940),
+            'scans_of_every_directory_of': list(packs.SUB_SCANS_940)}
+
+
+def auto_modes():
+    """The order of --compare --float auto: the conversion of the exe, then
+    the three of earlier builds."""
+    out = [floatlit.EXE_MODE]
+    for m in floatlit.MODES:
+        if m != floatlit.EXE_MODE:
+            out.append(m)
+    return out
 
 
 def is_inside(path, root):
@@ -195,6 +212,9 @@ class RecordingPackNames(packs.PackNames):
             self.index[written_path] = True
             self.seen.append([written_path, name])
         return name
+
+    def external(self, written_path, k):
+        return self.inner.external(written_path, k)
 
 
 class Console(object):
@@ -325,7 +345,7 @@ def manifest_entry(sf, data, res, mode, opts, provider, pack_log, origins):
         'build': '0x%X' % opts.build,
         'float': mode,
         'strict': bool(opts.strict),
-        'pack_table': packs.TABLE_940_VERSION,
+        'pack_table': packs.SESSION_940_VERSION,
         'classes': list(res.class_names),
         'compiled_against': against,
         'not_found': sorted(res.missed),
@@ -362,8 +382,10 @@ def build_parser():
     p.add_argument('--dump', choices=DUMPS, metavar='WHAT',
                    help='print the tokens, ast, trees or class (pool and rows) of one SOURCE')
     p.add_argument('--float', default=floatlit.DEFAULT_MODE, metavar='A|B|C|D',
-                   help='float literal conversion (default %s; auto with --compare: the '
-                        'first of A, B, C, D that reproduces the file)' % floatlit.DEFAULT_MODE)
+                   help='float literal conversion (default %s, the one of the Build 940 '
+                        'exe; A, C, D reproduce shipped files of earlier builds; auto with '
+                        '--compare: the first of %s that reproduces the file)' % (
+                            floatlit.DEFAULT_MODE, ', '.join(auto_modes())))
     p.add_argument('--strict', action='store_true',
                    help='constructs no shipped source uses are errors, not warnings')
     p.add_argument('--build', metavar='N',
@@ -662,7 +684,7 @@ def first_difference(a, b):
 
 def run_compare(args, build, inst, provider, jobs, con):
     table = install.install_packs(inst)
-    modes = floatlit.MODES if args.float == 'auto' else (args.float,)
+    modes = auto_modes() if args.float == 'auto' else (args.float,)
     same = 0
     by_mode = {}
     different = []

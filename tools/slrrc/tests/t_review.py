@@ -28,11 +28,14 @@ check has a name, and the names of the checks that pass are the baseline
   numbers      (14)  no negative number and no counter that has to go below
                zero anywhere in the core, two listed places apart
   floats       (6)   the self test of floatlit against an exact model, and
-               the model under nine wrong builds: each is caught
+               the model under ten wrong builds: each is caught; the default
+               is the conversion of the exe (B) with its two exits (".5" is
+               0.0, 1,024 fraction digits)
   diagnostics  (3, 11, 13, 17)  a pack without a file, a class that is its
                own superclass, an instance field in static code, control
                characters in a string, the order of the methods, a caller
-               deep in the stack
+               deep in the stack; a resource id with a low word of 0 or with
+               a high word, as the resource engine resolves it
   driver       (7, 8, 9, 12, 16)  the command line on small trees: a run that
                fails part-way, manifests of other shapes, output that the
                code page cannot encode, an unreadable class file, nesting
@@ -108,7 +111,7 @@ class Group(object):
 
 
 def table_packs():
-    return packs.TablePackNames(packs.TABLE_940, None)
+    return harness.table_packs()
 
 
 def compile_(text, prov, strict=False, pk=None):
@@ -1049,6 +1052,7 @@ def g_numbers(g):
 TOUCHES = {
     'fma': 'AB', 'x87-53': 'AB', 'x87-64': 'AB', 'x87-24': 'CD', 'signed': 'ABCD',
     'wide': 'ABCD', 'double-0.1': 'B', 'ftz': 'ABCD', 'toward-0': 'ABCD',
+    'library': 'ABCD',
 }
 
 
@@ -1118,6 +1122,49 @@ def g_floats(g):
         floatlit.SELF_TEST = keep
         shutil.rmtree(tmp, ignore_errors=True)
     g.check('... and the self test is whole again', floatlit.self_test() == [])
+    # ---- M9: the conversion read in the exe is the default, with its two exits
+    g.check('the default setting is B, the conversion of the Build 940 exe',
+            floatlit.DEFAULT_MODE == 'B' and floatlit.EXE_MODE == 'B' and
+            slrrc.Options().float_mode == 'B' and
+            cli.build_parser().get_default('float') == 'B' and
+            cli.auto_modes() == ['B', 'A', 'C', 'D'] and
+            sorted(floatlit.ORIGIN) == list(floatlit.MODES))
+    edge = [(r[0] + '.' + r[1], r[2]) for r in floatlit.EDGE_TEST]
+    bad = [(text, m) for text, want in edge for m in fm.MODES if fm.convert(m, text) != want]
+    g.check('the rows of EDGE_TEST are the bits of the exact model under every setting',
+            len(edge) >= 3 and not bad, repr(bad))
+    lib = [b for b in builds if b.name == 'library'][0]
+    g.check('a build that converts with a library function fails EDGE_TEST as well',
+            [text for text, want in edge if lib.convert('B', text) != want] == ['.5', '.25'])
+    prov = t_extra4.MemberProvider()
+    bad = []
+    for lit, bits, warns in (('.5', 0, True), ('.5f', 0, True), ('.999', 0, True),
+                             ('0.5', 0x3F000000, False), ('5.', 0x40A00000, True),
+                             ('0.0001', 0x38D1B718, False)):
+        for strict in (False, True):
+            res = slrrc.emit_trees(t_extra4.M('float q = %s;' % lit), 'case.java', prov,
+                                   table_packs(), slrrc.Options(strict=strict))
+            if strict and warns:
+                if res.ok or codes(res) != ['E_UNSUPPORTED']:
+                    bad.append('%s strict: %r' % (lit, codes(res)))
+                continue
+            line = dump.dump_tree(res.classes[0].trees[0]).split('\n')[1] if res.ok else ''
+            if line != '1 L3 float 0x%08X' % bits or \
+                    codes(res) != (['W_UNVERIFIED'] if warns else []):
+                bad.append('%s: %s %r' % (lit, line, codes(res)))
+    g.check('a literal without a digit before the point compiles to 0.0, with a warning '
+            '(an error in strict mode); 0.0001 has the bits of the exe', not bad, repr(bad))
+    bad = []
+    long_fraction = '3' * 1100
+    for m in fm.MODES:
+        if not (floatlit.float_bits(m, '', '5') == 0 and
+                floatlit.float_bits(m, '0', long_fraction) ==
+                floatlit.float_bits(m, '0', long_fraction[:1024]) ==
+                fm.convert(m, '0.' + long_fraction) == fm.convert(m, '0.' + '3' * 60)):
+            bad.append(m)
+    g.check('only the first 1,024 fraction digits are looked at, and no bit depends on it',
+            floatlit.MAX_FRACTION_DIGITS == 1024 == fm.MAX_FRACTION_DIGITS and not bad,
+            repr(bad))
 
 
 # ---------------------------------------------------------------------------
@@ -1156,6 +1203,43 @@ def g_diagnostics(g):
     doc = packs.PackNames.__doc__ + packs.PackNames.canonical.__doc__
     g.check('what None means is written at the interface',
             'INSTALL HAS NO FILE' in doc and 'not from the packs' in doc and 'W_PACK' in doc)
+    # ---- M9: the id of a resource id, as the resource engine resolves it
+    listing = ['system.rpk', 'cars.rpk', 'cars\\racers\\Duhen.rpk']
+    tables = {'cars.rpk': ['system.rpk'],
+              'cars\\racers\\Duhen.rpk': ['system.rpk', 'cars.rpk', 'missing.rpk']}
+
+    def session():
+        return packs.session_940(packs.ListedPackFiles(listing, tables), listing)
+
+    rid_cases = [
+        # what, literal, pool entry or None, code in default mode, code in strict mode
+        ('an id with a high word of 0 and a low word', 'cars:0x00000005r',
+         'cars.rpk:0x00000005', None, None),
+        ('an id whose low 16 bits are 0', 'cars:0x00010000r',
+         'system.rpk:0x00000000', 'W_UNVERIFIED', 'E_UNSUPPORTED'),
+        ('a high word that names an external reference of the pack',
+         'cars.racers.duhen:0x00020007r', 'cars.rpk:0x00000007', 'W_UNVERIFIED',
+         'E_UNSUPPORTED'),
+        ('a high word beyond the external references of the pack', 'cars:0x00050007r',
+         'system.rpk:0x00000000', 'W_UNVERIFIED', 'E_UNSUPPORTED'),
+        ('a high word that names a pack without a file', 'cars.racers.duhen:0x00030007r',
+         None, 'E_UNSUPPORTED', 'E_UNSUPPORTED'),
+    ]
+    for what, lit, entry, code, code_strict in rid_cases:
+        bad = []
+        for strict in (False, True):
+            res = slrrc.emit_trees(t_extra4.M('int q = %s;' % lit), 'case.java', prov, session(),
+                                   slrrc.Options(strict=strict))
+            want = code_strict if strict else code
+            line = dump.dump_tree(res.classes[0].trees[0]).split('\n')[1] if res.ok else None
+            want_line = None if (entry is None or want == 'E_UNSUPPORTED') else '1 L3 rid ' + entry
+            if codes(res) != ([want] if want else []) or line != want_line:
+                bad.append('%s: %r %r' % ('strict' if strict else 'default', codes(res), line))
+        g.check('resource id: %s' % what, not bad, '; '.join(bad))
+    res = slrrc.emit_trees(t_extra4.M('int q = cars:0x00010005r;'), 'case.java', prov,
+                           packs.PackNames())
+    g.check('resource id: a high word is an error for a PackNames that knows no external '
+            'references', not res.ok and codes(res) == ['E_UNSUPPORTED'], repr(at(res)))
     e = [x for x in harness.all_sources() if x.source.endswith('/TimeAttackTest.java')]
     if e:
         e = e[0]
@@ -1806,7 +1890,7 @@ def one_token_per_line(opts):
         toks = sc.scan(text, Diagnostics(False))[:-1]
         spread = '\n'.join(text[t.pos:t.pos + t.length] for t in toks) + '\n'
         n += 1
-        res = slrrc.compile_source(spread, e.source, prov, pk)
+        res = slrrc.compile_source(spread, e.source, prov, pk, slrrc.Options(float_mode='A'))
         try:
             theirs = spike_compiler.compile_source(spread, env, 'A', 'table', name=e.source)[0]
         except Exception as x:      # noqa: the spike raises for everything

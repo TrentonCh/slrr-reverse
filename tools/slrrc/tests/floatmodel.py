@@ -5,7 +5,10 @@ An oracle for slrrc/floatlit.py that shares no code with it: every value is a
 fraction, and every rounding is written out (round to nearest, ties to even,
 gradual underflow).  convert(mode, text) is what the C forms of the docstring
 of floatlit.py compute under IEEE arithmetic with SSE2 and the default
-rounding mode.
+rounding mode.  Setting B is the routine of the Build 940 exe
+(notes/exe_reads.md 1); the two exits of that routine are modelled for every
+setting: a literal without a digit before the point is 0.0, and only the
+first 1,024 fraction digits enter the sum.
 
 wrong_builds() are the same C forms under build settings a port could meet by
 accident; each gives other bits for some literals.  The start-up self test of
@@ -24,6 +27,9 @@ them from the right build; tests/t_review.py checks that it does.
     double-0.1  the constant 0.1 where the form says 0.1f
     ftz         flush to zero: a result below the smallest normal single is 0
     toward-0    rounding mode "toward zero" instead of "to nearest"
+    library     a library conversion in place of the loop (strtof): the
+                decimal value rounded once, no wrap of the integer part, and
+                ".5" read as 0.5
 """
 import struct
 from fractions import Fraction
@@ -34,6 +40,7 @@ DOUBLE = (53, -1022)
 EXTENDED = (64, -16382)
 TENTH = Fraction(1, 10)
 TEN = Fraction(10)
+MAX_FRACTION_DIGITS = 1024  # what the routine of the exe sums (0x400)
 
 
 def round_to(x, fmt, toward_zero=False):
@@ -78,8 +85,9 @@ class Build(object):
     """How the four C forms are evaluated.  The defaults are the right build."""
 
     def __init__(self, name='right', fma=False, x87=None, signed=False, wide=False,
-                 double_tenth=False, ftz=False, toward_zero=False):
+                 double_tenth=False, ftz=False, toward_zero=False, library=False):
         self.name = name
+        self.library = library
         self.fma = fma
         self.x87 = x87                      # None, or the format every x87 result has
         self.signed = signed
@@ -132,6 +140,15 @@ class Build(object):
     def convert(self, mode, text):
         """The bits of the literal under conversion `mode`."""
         ip, fp = split(text)
+        if self.library:
+            # what strtof answers: the decimal value, rounded once
+            x = Fraction(int(ip)) if ip else Fraction(0)
+            if fp:
+                x += Fraction(int(fp), 10 ** len(fp))
+            return bits(round_to(x, SINGLE))
+        if ip == '':
+            return 0                    # the routine stops at the point: 0.0
+        fp = fp[:MAX_FRACTION_DIGITS]
         S, D, op_s, op_d = self.S, self.D, self.op_s, self.op_d
         ipv = self.int_part(ip)
         tenth_f = round_to(TENTH, SINGLE)           # the constant 0.1f
@@ -207,4 +224,5 @@ def wrong_builds():
         Build('double-0.1', double_tenth=True),
         Build('ftz', ftz=True),
         Build('toward-0', toward_zero=True),
+        Build('library', library=True),
     ]

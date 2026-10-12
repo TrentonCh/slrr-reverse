@@ -55,6 +55,7 @@ import spike_compiler       # noqa: E402  spec
 import t5_files             # noqa: E402
 import t_extra              # noqa: E402
 import t_extra4             # noqa: E402
+import pack_oracle          # noqa: E402
 
 import slrrc                            # noqa: E402
 from slrrc import classes               # noqa: E402
@@ -218,7 +219,7 @@ def run_hand(prov):
     """(passed, total, failures) for the class file written out by hand."""
     bad = []
     passed = []
-    pk = packs.TablePackNames(('packs\\Things.rpk',), None)
+    pk = pack_oracle.TablePackNames(('packs\\Things.rpk',), None)
     res = slrrc.compile_source(HAND_SOURCE, 'C.java', prov, pk, slrrc.Options(strict=True))
     if not res.ok or res.diagnostics:
         d = res.diagnostics[0]
@@ -265,7 +266,7 @@ def run_outputs():
     sources of the two other extra tests."""
     bad = []
     runs = good = compiled = 0
-    table = packs.TablePackNames(packs.TABLE_940, None)
+    table = harness.table_packs()
     for label, cases, prov in (('extra', t_extra.CASES, t_extra.MapProvider()),
                                ('extra4', t_extra4.CASES, t_extra4.MemberProvider())):
         for name, expect, text in cases:
@@ -447,7 +448,7 @@ T_DECLARATIONS = ('class p.T\n'
 
 def details(prov):
     bad = []
-    table = packs.TablePackNames(packs.TABLE_940, None)
+    table = harness.table_packs()
     text = t_extra4.M('int q = 1;\nvoid g() { q = 2; }')
 
     def comp(source, **kw):
@@ -467,8 +468,8 @@ def details(prov):
     outs = [comp(f, float_mode=m).class_file for m in 'ABCD']
     if len(set(outs)) != 3 or outs[0] != outs[2] or len(set(len(x) for x in outs)) != 1:
         bad.append('the four float settings: %d different files' % len(set(outs)))
-    if comp(f).class_file != outs[0]:
-        bad.append('the default float setting is not A')
+    if comp(f).class_file != outs[1]:
+        bad.append('the default float setting is not B')
     # a source with an error: no bytes, the diagnostics, the consulted classes
     res = comp(t_extra4.S('x = nowhere;'))
     if res.ok or res.class_file != b'' or res.classes or res.class_names or \
@@ -554,7 +555,8 @@ class Tally(t_extra4.Tally):
     def one(self, text, where):
         self.texts += 1
         try:
-            res = slrrc.compile_source(text, 'x.java', self.prov, self.pk, slrrc.Options())
+            res = slrrc.compile_source(text, 'x.java', self.prov, self.pk,
+                                       slrrc.Options(float_mode='A'))    # as the spike
             why = well_formed(res, text, self.prov, False)
         except Exception as x:
             self.exceptions.append('%s: %r' % (where, x))

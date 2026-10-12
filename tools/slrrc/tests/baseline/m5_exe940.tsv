@@ -1,0 +1,154 @@
+# class file	float settings under which the reference compiler reproduces it (= : the source has no float literal)
+#
+# The 136 comparable class files of the corpus that the Build 940 exe itself
+# wrote: on the first run of the stock game after the Steam download
+# (2026-10-09 00:43:49 to 00:44:11 UTC by diag.log) it recompiled every class
+# it loaded whose DOS time stamp differed from that of its source.  How they
+# were told from the 2,515 files Steam wrote (notes/exe_reads.md 1.6):
+#   - JVM::compileSource (0x5598F0) gives a class it writes the write time of
+#     its source as a DOS time (4-second steps, no fraction of a second).
+#     Exactly these 136 pair class files have a write time that is a whole
+#     second, and for each it is that stamp of its source;
+#   - in the Steam folder exactly these 136 have an NTFS creation time inside
+#     that run (00:43:51.26 to 00:43:54.77 UTC); every other class file has
+#     creation time = write time.
+# The list is a property of this install and is carried here; a test must not
+# recompute it from file times (a copy may lose them).  tests/t5_files.py and
+# tests/t9_exe.py: all 136 are byte-identical under float setting B, the one
+# conversion the exe contains, with no per-file choice.
+cars/racers/Remo_data/scripts/Remo_VT.class	ABCD
+cars/racers/Whisper_data/scripts/Whisper_FR_window.class	ABCD
+cars/racers/Whisper_data/scripts/Whisper_F_bumper_3.class	ABCD
+cars/racers/Whisper_data/scripts/Whisper_L_mirror.class	ABC
+cars/racers/Whisper_data/scripts/Whisper_R_bumper_3.class	ABCD
+cars/racers/Whisper_data/scripts/Whisper_R_sideskirt_3.class	ABCD
+cars/racers/Whisper_data/scripts/Whisper_R_taillights.class	ABCD
+cars/racers/Whisper_data/scripts/Whisper_R_windshield.class	ABCD
+cars/racers/Zed_data/scripts/Zed_VT.class	ABCD
+multibot/maps/DerbyArena/data/track_data.class	B
+multibot/maps/DragStrip/data/track_data.class	B
+multibot/maps/GatewayRoad/data/track_data.class	B
+multibot/maps/HockenheimGP/data/track_data.class	B
+multibot/maps/LagunaSeca/data/track_data.class	B
+multibot/maps/Norisring/data/track_data.class	B
+multibot/maps/OranPark/data/track_data.class	B
+multibot/maps/SPAFrankoohapsGPCircuit/data/track_data.class	B
+multibot/maps/UKRallyStage1/data/track_data.class	B
+multibot/maps/UKRallyStage2/data/track_data.class	B
+multibot/maps/UKRallyStage3/data/track_data.class	B
+multibot/maps/Zandvoort/data/track_data.class	B
+parts/accessories/scripts/stock_Battery_silver.class	ABCD
+parts/engines/Baiern_Emer/scripts/SL_Tuners_6_channel_NOS_rail.class	ABC
+parts/engines/Dodge_BMW_Racing_V10/scripts/kit_VENOM_605_CID_stroker_kit.class	=
+parts/engines/GMC_Nissan_Honda_Hyundai_Opel/scripts/SL_Tuners_methanol_fuel_rail.class	B
+parts/engines/Lama_Performance_V12/scripts/LP_V12_L_camshaft_bearing_bridge.class	ABCD
+parts/engines/Lama_Performance_V12/scripts/LP_V12_L_exhaust_camshaft_semi_racing.class	ABC
+parts/engines/Lama_Performance_V12/scripts/LP_V12_L_exhaust_header_racing.class	ABC
+parts/engines/Lama_Performance_V12/scripts/LP_V12_L_intake_camshaft_racing.class	ABC
+parts/engines/Lama_Performance_V12/scripts/LP_V12_L_intake_camshaft_semi_racing.class	ABCD
+parts/engines/Lama_Performance_V12/scripts/LP_V12_L_turbocharger_secondary_exhaust_pipe.class	ABCD
+parts/engines/Lama_Performance_V12/scripts/LP_V12_R_cylinder_head_cover_racing.class	ABC
+parts/engines/Lama_Performance_V12/scripts/LP_V12_R_exhaust_camshaft_semi_racing.class	ABC
+parts/engines/Lama_Performance_V12/scripts/LP_V12_R_intake_camshaft_racing.class	ABC
+parts/engines/Lama_Performance_V12/scripts/LP_V12_R_intake_camshaft_semi_racing.class	ABCD
+parts/engines/Lama_Performance_V12/scripts/LP_V12_R_primary_turbocharger_semi_racing.class	ABCD
+parts/engines/Lama_Performance_V12/scripts/LP_V12_R_secondary_turbocharger_semi_racing.class	ABCD
+parts/engines/Lama_Performance_V12/scripts/LP_V12_alternator.class	ABC
+parts/engines/Lama_Performance_V12/scripts/LP_V12_connecting_rods_racing.class	ABCD
+parts/engines/Lama_Performance_V12/scripts/LP_V12_crankshaft_bearing_bridge.class	ABC
+parts/engines/Lama_Performance_V12/scripts/LP_V12_engine_block_racing.class	AB
+parts/engines/Lama_Performance_V12/scripts/LP_V12_flywheel_racing.class	ABC
+parts/engines/Lama_Performance_V12/scripts/LP_V12_fuel_rail_racing.class	B
+parts/engines/Lama_Performance_V12/scripts/LP_V12_oil_pan_racing.class	BD
+parts/engines/Lama_Performance_V12/scripts/LP_V12_pistons_racing.class	ABC
+parts/engines/Lama_Performance_V12/scripts/LP_V12_transmission_racing.class	ABC
+parts/engines/MC_Prime_SuperDuty/scripts/Draggster_GT_SuperCharger.class	ABCD
+parts/running_gear/scripts/FR_susp/Prime_FR_McPherson_strut.class	B
+parts/running_gear/scripts/RL_susp/Prime_RL_trailing_arm.class	B
+parts/running_gear/scripts/brakes/brake_Prime_front.class	ABCD
+parts/running_gear/scripts/shocks/shock_absorber_Prime_front.class	ABCD
+parts/running_gear/scripts/shocks/shock_absorber_Prime_rear.class	ABCD
+parts/running_gear/scripts/springs/spring_Prime_rear.class	ABCD
+parts/running_gear/scripts/sways/swaybar_Prime_front.class	ABCD
+parts/scripts/BodyPart.class	ABCD
+parts/scripts/Descriptor.class	=
+parts/scripts/DynoData.class	B
+parts/scripts/EnginePart.class	ABCD
+parts/scripts/Part.class	B
+parts/scripts/bodypart/Chassis.class	B
+parts/scripts/bodypart/FrontSeat.class	ABCD
+parts/scripts/bodypart/Headlights.class	B
+parts/scripts/bodypart/Hood.class	BD
+parts/scripts/bodypart/Mirror.class	B
+parts/scripts/bodypart/SteeringWheel.class	ABCD
+parts/scripts/bodypart/Taillights.class	B
+parts/scripts/bodypart/Windshield.class	BD
+parts/scripts/enginepart/AirFuelDeliverySystem.class	B
+parts/scripts/enginepart/ExhaustHeader.class	ABCD
+parts/scripts/enginepart/ExhaustTip.class	ABCD
+parts/scripts/enginepart/OilPan.class	ABCD
+parts/scripts/enginepart/SlidingEnginePart.class	ABCD
+parts/scripts/enginepart/airfueldeliverysystem/AirFilter.class	B
+parts/scripts/enginepart/airfueldeliverysystem/NOSInjectorSystem.class	B
+parts/scripts/enginepart/airfueldeliverysystem/charger/TurboCharger.class	B
+parts/scripts/enginepart/block/block_vee/Block_Vee_OHC.class	=
+parts/scripts/enginepart/slidingenginepart/reciprocatingenginepart/Camshaft.class	ABCD
+parts/scripts/enginepart/slidingenginepart/reciprocatingenginepart/Clutch.class	ABCD
+parts/scripts/enginepart/slidingenginepart/reciprocatingenginepart/Crankshaft.class	ABCD
+parts/scripts/enginepart/slidingenginepart/reciprocatingenginepart/Flywheel.class	ABCD
+parts/scripts/enginepart/slidingenginepart/reciprocatingenginepart/Transmission.class	ABCD
+parts/scripts/enginepart/slidingenginepart/reciprocatingenginepart/cylinderhead/DOHC_CylinderHead.class	ABCD
+parts/scripts/rgearpart/ReciprocatingRGearPart.class	BD
+parts/scripts/rgearpart/Swaybar.class	ABCD
+parts/scripts/rgearpart/reciprocatingrgearpart/Brake.class	B
+parts/scripts/rgearpart/reciprocatingrgearpart/Tyre.class	B
+parts/wheels/tyres/scripts/tyre_235_45_17_9_0_LOD_CATALOG_GARAGE.class	ABCD
+sl/Scripts/game/Bot.class	ABC
+sl/Scripts/game/CarMarket.class	B
+sl/Scripts/game/CareerEvent.class	ABCD
+sl/Scripts/game/CareerEvents/Assassination.class	=
+sl/Scripts/game/CareerEvents/BurningTyres.class	=
+sl/Scripts/game/CareerEvents/DayOfTheDrags.class	=
+sl/Scripts/game/CareerEvents/DirtyActions.class	=
+sl/Scripts/game/CareerEvents/FurranoRush.class	ABC
+sl/Scripts/game/CareerEvents/GatewayRoadEndurance.class	=
+sl/Scripts/game/CareerEvents/HellOnTheWheels.class	=
+sl/Scripts/game/CareerEvents/HighOctaneRage.class	=
+sl/Scripts/game/CareerEvents/HypercarBattle.class	=
+sl/Scripts/game/CareerEvents/JuniorCurcuit.class	=
+sl/Scripts/game/CareerEvents/KurummaDragNight.class	ABCD
+sl/Scripts/game/CareerEvents/NightShift.class	=
+sl/Scripts/game/CareerEvents/NostalgiaRun.class	ABC
+sl/Scripts/game/CareerEvents/OldSchoolChallenge.class	=
+sl/Scripts/game/CareerEvents/PoliceGoesMad.class	B
+sl/Scripts/game/CareerEvents/QuatermastersChallenge.class	=
+sl/Scripts/game/CareerEvents/SlideNRock.class	=
+sl/Scripts/game/CareerEvents/SlowMotionStorm.class	=
+sl/Scripts/game/CareerEvents/TheInfiniteLoop.class	ABCD
+sl/Scripts/game/CareerEvents/TheOverspeed.class	ABC
+sl/Scripts/game/CareerEvents/TheZPower.class	=
+sl/Scripts/game/CareerEvents/TotalDomination.class	ABCD
+sl/Scripts/game/CareerEvents/TurtleRace.class	=
+sl/Scripts/game/GameLogic.class	B
+sl/Scripts/game/Gamemode.class	BD
+sl/Scripts/game/Gamemodes/DestructionDerby.class	B
+sl/Scripts/game/Gamemodes/Drifting.class	B
+sl/Scripts/game/Gamemodes/HotActionCop.class	B
+sl/Scripts/game/Integrator.class	=
+sl/Scripts/game/InventoryItem.class	=
+sl/Scripts/game/InventoryPanel.class	BD
+sl/Scripts/game/MainMenu.class	B
+sl/Scripts/game/MapObject.class	=
+sl/Scripts/game/Marker.class	=
+sl/Scripts/game/Navigator.class	B
+sl/Scripts/game/OptionsDialog.class	B
+sl/Scripts/game/PaintCan.class	=
+sl/Scripts/game/Painter.class	B
+sl/Scripts/game/Racer.class	B
+sl/Scripts/game/Scene.class	ABCD
+sl/Scripts/game/Spectator.class	ABCD
+sl/Scripts/game/TrackData.class	=
+sl/Scripts/game/TrafficVehicle.class	=
+sl/Scripts/game/Vehicle.class	ABCD
+sl/Scripts/game/VehicleDescriptor.class	B
+sl/Scripts/game/VehicleType.class	ABC

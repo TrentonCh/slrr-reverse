@@ -24,10 +24,13 @@ its trees, so a pass also says that the source holds no construct outside the
 proven subset.  (The one exception is written down in harness.py: the two
 W_PACK warnings of TimeAttackTest, which must come.)
 
-Float literals: four conversions occur in the shipped classes and which one
-the game uses is an open question (notes/compiler_spec.md 1.4).  The oracle
-pairs are compared twice: with the setting tests/baseline/m5_float.tsv names
-for the file (A for a file it does not list), and with setting A for all.
+Float literals: the Build 940 exe has one conversion, setting B
+(notes/exe_reads.md 1), but 215 shipped class files were written by earlier
+builds of the compiler whose x87 code gives other bits (settings A, C, D).
+The oracle pairs are therefore compared three times: with the setting
+tests/baseline/m5_float.tsv names for the file (A for a file it does not
+list), with setting B for all (the rule of the exe alone), and with setting A
+for all.
 
 Besides the oracle pairs:
   older    the pairs written by older builds (setting A)
@@ -40,12 +43,21 @@ Besides the oracle pairs:
            method row (slrrc.decl.locals_word) for every method tree
   floats   slrrc.floatlit equals spec/float_closed_forms.py for every float
            literal of the corpus under each of the four settings
-  packs    the table of slrrc.packs equals the spellings of the shipped pools
+  packs    the pack names come from the pack table of a session, replayed as
+           the exe builds it (slrrc.packs.session_940, notes/exe_reads.md 2):
+           after the sources are compiled the table has a record with exactly
+           the spelling of each of the 126 packs of the shipped pools (the
+           table of tests/pack_oracle.py, which is checked against the pools);
+           every resource id node of the consistent pairs has the pack name
+           and the id of the shipped node on its line; the nodes of the pack
+           that has no file are system.rpk id 0
 
 Headline:
-  M4 trees         7568/7570 node for node (float setting per file; 7396/7570
-  with setting A alone); older builds 154/154; stale 3/18; equal to the spike
-  3454/3454 sources
+  M4 trees         7568/7570 node for node (float setting per file; 7251/7570
+  with setting B, the conversion of the exe, alone; 7396/7570 with setting A
+  alone); older builds 154/154; stale 3/18; equal to the spike 3454/3454
+  sources; pack table replay 126/126 spellings of the shipped pools,
+  9058/9058 rid nodes, 2/2 for the pack without a file
 """
 import os
 import sys
@@ -57,6 +69,7 @@ import oracle               # noqa: E402  lib
 import tufa                 # noqa: E402  lib
 import float_closed_forms   # noqa: E402  spec
 import spike_compiler       # noqa: E402  spec
+import pack_oracle          # noqa: E402
 
 import slrrc                        # noqa: E402
 from slrrc import decl              # noqa: E402
@@ -68,6 +81,7 @@ from slrrc import parser as ps      # noqa: E402
 from slrrc import scanner as sc     # noqa: E402
 
 MODES = 'ABCD'
+TREES_UNDER_B = 7251        # oracle trees that are node for node under setting B alone
 
 
 def float_table():
@@ -231,16 +245,53 @@ def check_floats(texts):
     return bad
 
 
-def check_packs(prov):
-    """The table of the package against the spellings of the shipped pools."""
+def check_packs(prov, table):
+    """The pack names: (failures, spellings of the shipped pools that are the
+    name of a record of `table`, spellings).  table: the replayed pack table
+    every source of the corpus was compiled against."""
     bad = []
-    mine = sorted(packs.TABLE_940)
+    mine = sorted(pack_oracle.TABLE_940)
     theirs = sorted(prov.pack_spellings.values())
     if mine != theirs:
-        bad.append('pack table: %d entries, the shipped pools spell %d packs; first '
+        bad.append('pack oracle: %d entries, the shipped pools spell %d packs; first '
                    'difference %r' % (len(mine), len(theirs),
                                       sorted(set(mine) ^ set(theirs))[:1]))
-    return bad
+    same = 0
+    for p in theirs:
+        have = table.name_of(p)
+        if have == p:
+            same += 1
+        else:
+            bad.append('pack %s: the replayed pack table has %r' % (p, have))
+    return bad, same, len(theirs)
+
+
+def rid_nodes(res, blobs):
+    """(resource id nodes of the shipped trees; of them: the emitted class
+    has a resource id node with the same pack name and id on that line; the
+    shipped nodes with local id 0; of them: matched).  By line, so that a
+    tree that differs elsewhere does not shift the count."""
+    total = same = zero = zero_same = 0
+    for bi, blob in enumerate(blobs):
+        mine = {}
+        if res.ok and bi < len(res.classes):
+            for tree in res.classes[bi].trees:
+                for n in tree.nodes:
+                    if n.op == emit.OP_RID:
+                        o = tree.operands[n.value]
+                        mine.setdefault(n.line, []).append((o.text, o.number))
+        for nodes in blob.trees:
+            for b in nodes:
+                if b.op != emit.OP_RID:
+                    continue
+                want = tuple(blob.rid(b.imm))
+                hit = want in mine.get(b.slot, ())
+                total += 1
+                same += hit
+                if want[1] == 0:
+                    zero += 1
+                    zero_same += hit and want[0] == packs.NO_FILE_PACK
+    return total, same, zero, zero_same
 
 
 def run(opts):
@@ -276,6 +327,7 @@ def run(opts):
         odd = harness.surprises(e.source, res.diagnostics)
         if not res.ok or odd:
             oc.failures.append('%s: %s' % (e.source, odd[0] if odd else 'not ok'))
+        has_float = False
         if res.ok:
             for x in locals_differ(res):
                 oc.failures.append('%s: %s' % (e.source, x))
@@ -284,6 +336,7 @@ def run(opts):
             for t in res.ast.toks:
                 if t.kind == sc.T_FLOAT:
                     float_texts.add(src[t.pos:t.pos + t.length])
+                    has_float = True
         clean = res.ok and not odd
         # ---- the spike, every source
         blobs, why = spike_trees(env, text, e.source)
@@ -322,13 +375,33 @@ def run(opts):
             res2 = emit_trees(text, e.source, mode)
             diffs = compare(res2, shipped) if res2.ok and not harness.surprises(
                 e.source, res2.diagnostics) else diffs_a
+        # the rule of the exe alone: setting B for every file
+        diffs_b = diffs_a
+        if grp == 'oracle' and clean and has_float:
+            if mode == 'B':
+                diffs_b = diffs
+            else:
+                res_b = emit_trees(text, e.source, 'B')
+                if res_b.ok and not harness.surprises(e.source, res_b.diagnostics):
+                    diffs_b = compare(res_b, shipped)
         if grp == 'oracle':
             count('mode ' + mode)
-        for (bi, ti, why), (_, _, why_a) in zip(diffs, diffs_a):
+        if grp != 'stale' and clean:
+            r = rid_nodes(res, shipped)
+            count('rid nodes', r[0])
+            count('rid nodes ok', r[1])
+            count('rid nodes of a pack without a file', r[2])
+            count('rid nodes of a pack without a file ok', r[3])
+            if r[0] != r[1]:
+                oc.failures.append('%s: %d of its %d resource id nodes name another pack or '
+                                   'id than the shipped class' % (e.cls, r[0] - r[1], r[0]))
+        for (bi, ti, why), (_, _, why_a), (_, _, why_b) in zip(diffs, diffs_a, diffs_b):
             count(grp + ' trees')
             item = '%s#%d#%d' % (e.cls, bi, ti)
             if why_a is None:
                 count(grp + ' trees ok under A')
+            if why_b is None:
+                count(grp + ' trees ok under B')
             if why is None:
                 count(grp + ' trees ok')
                 if grp == 'oracle':
@@ -349,26 +422,40 @@ def run(opts):
         oc.failures.append('%s (declared for the provider): line %d: %s %s' % (
             src, d.line, d.code, d.text))
     bad_floats = check_floats(float_texts)
-    bad_packs = check_packs(prov)
+    bad_packs, packs_same, packs_all = check_packs(prov, pk)
+    if opts.only is not None:
+        bad_packs = []              # a part of the corpus registers a part of the packs
     oc.failures.extend(bad_floats[:20])
     oc.failures.extend(bad_packs)
 
     def g(key):
         return c.get(key, 0)
 
-    oc.text = ('%d/%d node for node (float setting per file; %d/%d with setting A alone); '
-               'older builds %d/%d; stale %d/%d; equal to the spike %d/%d sources' % (
+    oc.text = ('%d/%d node for node (float setting per file; %d/%d with setting B, the '
+               'conversion of the exe, alone; %d/%d with setting A alone); '
+               'older builds %d/%d; stale %d/%d; equal to the spike %d/%d sources; '
+               'pack table replay %d/%d spellings of the shipped pools, %d/%d rid nodes, '
+               '%d/%d for the pack without a file' % (
                    g('oracle trees ok'), g('oracle trees'),
+                   g('oracle trees ok under B'), g('oracle trees'),
                    g('oracle trees ok under A'), g('oracle trees'),
                    g('older trees ok'), g('older trees'),
                    g('stale trees ok'), g('stale trees'),
-                   len(passed_spike), n_sources))
+                   len(passed_spike), n_sources,
+                   packs_same, packs_all, g('rid nodes ok'), g('rid nodes'),
+                   g('rid nodes of a pack without a file ok'),
+                   g('rid nodes of a pack without a file')))
     oc.ok = (g('oracle trees') == 7570 and g('oracle trees ok') == 7568 and
              g('oracle trees ok under A') == 7396 and
+             g('oracle trees ok under B') == TREES_UNDER_B and
              g('older trees ok') == g('older trees') == 154 and
              g('stale trees') == 18 and g('stale trees ok') == 3 and
              len(passed_spike) == n_sources == 3454 and
              g('locals differ') == 0 and not bad_floats and not bad_packs and
+             packs_same == packs_all == 126 and
+             g('rid nodes ok') == g('rid nodes') == 9058 and
+             g('rid nodes of a pack without a file ok') ==
+             g('rid nodes of a pack without a file') == 2 and
              not prov.failed)
     oc.passed['m4.pass'] = passed
     oc.passed['m4_other.pass'] = passed_other
@@ -381,9 +468,17 @@ def run(opts):
     oc.notes.append('oracle files by float setting: %s' % ', '.join(
         '%s %d' % (m, g('mode ' + m)) for m in MODES))
     oc.notes.append('trees equal to the spike: %d/%d; float literal texts checked under '
-                    'four settings: %d; pack table: %d entries' % (
-                        g('spike trees ok'), g('spike trees'), len(float_texts),
-                        len(packs.TABLE_940)))
+                    'four settings: %d' % (
+                        g('spike trees ok'), g('spike trees'), len(float_texts)))
+    by = {}
+    for p in sorted(prov.pack_spellings.values()):
+        i = pk.find(p)
+        who = packs.ORIGIN_NAMES[pk.records[i].origin] if i != packs.NONE else 'nobody'
+        by[who] = by.get(who, 0) + 1
+    oc.notes.append('pack table replay: %d records after the corpus was compiled; the %d packs '
+                    'of the shipped pools were first registered by: %s' % (
+                        len(pk.records), packs_all,
+                        ', '.join('%s %d' % (k, v) for k, v in sorted(by.items()))))
     oc.notes.append('rules the oracle sources exercise fewer than ten times: %s' % (
         ', '.join('%s %d' % (k, v) for k, v in sorted(thin.items()) if v < 10) or 'none'))
     oc.notes.append('other thin rules: %s' % ', '.join(

@@ -9,11 +9,26 @@ returns the bytes of the class file.  The class file of the source is opened
 only to compare.
 
   oracle   the 2,651 Build 940 pairs: the bytes equal the shipped class file.
-           Compared twice: with the float setting tests/baseline/m5_float.tsv
-           names for the file (A for a file it does not list), and with
-           setting A for all.  Two files cannot be reproduced from the
-           install (tests/baseline/expected_fail.tsv: compiled against
-           another version of a class they call).
+           Compared three times: with the float setting
+           tests/baseline/m5_float.tsv names for the file (A for a file it
+           does not list), with setting B for all, and with setting A for
+           all.  Two files cannot be reproduced from the install
+           (tests/baseline/expected_fail.tsv: compiled against another
+           version of a class they call).
+  exe      THE FLOAT RULE.  The Build 940 exe has one float conversion,
+           setting B (notes/exe_reads.md 1).  The 136 class files of the
+           corpus that this exe itself wrote (tests/baseline/m5_exe940.tsv)
+           must all be byte-identical under B, with no per-file choice; the
+           settings that reproduce each of them are computed and compared
+           with the list (40 are identical under B only, 6 under B and D
+           only).  The other 2,515 files are as Steam shipped them.  B alone
+           reproduces 2,298 of them; 215 need a conversion the shipped exe
+           does not contain, the same routine in x87 arithmetic (A, C or D),
+           and 2 are the expected failures.  WHAT STAYS UNEXPLAINED: which of
+           the three x87 forms a shipped file needs.  Nothing in the file or
+           in the install says, the builds that wrote them are not at hand,
+           so no rule is made up for it: the table m5_float.tsv stays, and
+           -v prints the 215 by the settings that reproduce them.
   CONS     per class of the oracle pairs: the constant pool chunk equals the
            shipped one byte for byte (the float setting does not reach it)
   older    the pairs written by older builds, compiled with the build number
@@ -44,13 +59,18 @@ Checks on every output, whatever it is compared with:
 Controls printed with -v (not part of the headline):
   the float table is minimal: a file listed under B, C or D differs under
            every earlier setting
+  the time stamps of this copy of the corpus: the listed 136 files, and no
+           other pair, carry the stamp the exe gives a class it writes (said,
+           not required: a copy can lose its time stamps)
   the two expected failures become byte-identical when the provider answers
            with the declaration their own class file records for the callee
 
 Headline:
-  M5 files         2649/2651 byte-identical (float setting per file; 2561/2651
-  with setting A alone); older builds 153/153; stale 0/15; CONS exact
-  2703/2705 classes; equal to the spike 3454/3454 sources
+  M5 files         2649/2651 byte-identical (float setting per file; 2434/2651
+  with setting B, the conversion of the exe, alone; 2561/2651 with setting A
+  alone); written by the Build 940 exe 136/136 under B; older builds 153/153;
+  stale 0/15; CONS exact 2703/2705 classes; equal to the spike 3454/3454
+  sources
 """
 import os
 import sys
@@ -67,9 +87,54 @@ import slrrc                        # noqa: E402
 from slrrc import classes           # noqa: E402
 from slrrc import classfile         # noqa: E402
 from slrrc import emit              # noqa: E402
+from slrrc import floatlit          # noqa: E402
 from slrrc import scanner as sc     # noqa: E402
 
 MODES = 'ABCD'
+EXE = floatlit.EXE_MODE     # 'B': the one conversion of the Build 940 exe
+NS = 1000000000
+
+
+def exe_written():
+    """class file -> the float settings that reproduce it ('=': no float
+    literal), for the class files the Build 940 exe itself wrote
+    (tests/baseline/m5_exe940.tsv says how they were told apart)."""
+    out = {}
+    for line in harness.Baseline('m5_exe940.tsv').load() or []:
+        cls, modes = line.split('\t')
+        out[cls] = modes
+    return out
+
+
+def exe_stamp(ns):
+    """The write time the exe gives a class whose source was written at ns
+    (nanoseconds): the DOS time of the source, even seconds rounded up, of
+    which it keeps the steps of 4 seconds."""
+    sec = (ns + 2 * NS - 1) // (2 * NS) * 2
+    return sec // 4 * 4
+
+
+def time_stamps(entries, listed):
+    """How the write times of this copy of the corpus agree with the list:
+    (listed files that carry the stamp of the exe, listed files, other pair
+    class files that carry it)."""
+    root = oracle.corpus_root()
+    with_stamp = others = n_listed = 0
+    for e in entries:
+        if not e.is_pair:
+            continue
+        try:
+            cm = os.stat(os.path.join(root, e.cls.replace('/', os.sep))).st_mtime_ns
+            sm = os.stat(os.path.join(root, e.source.replace('/', os.sep))).st_mtime_ns
+        except OSError:
+            continue
+        stamp = cm % NS == 0 and cm // NS == exe_stamp(sm)
+        if e.cls in listed:
+            n_listed += 1
+            with_stamp += stamp
+        else:
+            others += stamp
+    return with_stamp, n_listed, others
 
 
 def float_table():
@@ -216,15 +281,21 @@ def run(opts):
     prov = harness.provider()
     pk = harness.packs()
     table = float_table()
+    exe = exe_written()
     expected = expected_failures()
     env = spike_compiler.Env()
     oracle_keys = set(e.key for e in harness.oracle_pairs())
+    oracle_keys_cls = set(e.cls for e in harness.oracle_pairs())
     older_keys = set(e.key for e in harness.older_pairs())
     c = {}
     passed = []             # oracle class files, float setting per file
     passed_older = []
     passed_spike = []       # sources equal to the spike
     passed_cons = []        # class file#blob with an exact CONS chunk (oracle)
+    passed_exe = []         # class files the exe wrote, identical under its setting
+    exe_sets = {}           # settings that reproduce a file the exe wrote -> files
+    shipped_sets = {}       # ... a shipped file that B does not reproduce -> files
+    list_bad = []
     n_sources = 0
     notes_expected = []
     table_bad = []
@@ -325,6 +396,46 @@ def run(opts):
             ok = clean and data == theirs
             if ok_a:
                 count('oracle identical under A')
+            # ---- the rule of the exe alone: setting B for every file
+            by_setting = {'A': data_a, mode: data}
+            if clean and has_float and EXE not in by_setting:
+                by_setting[EXE] = compile_(text, e.source, EXE, build).class_file
+            ok_b = clean and by_setting.get(EXE, data_a) == theirs
+            if ok_b:
+                count('oracle identical under B')
+            which = '='                 # the settings that reproduce the file
+            if e.cls in exe or (ok and not ok_b):
+                if clean and has_float:
+                    which = ''
+                    for m in MODES:
+                        if m not in by_setting:
+                            by_setting[m] = compile_(text, e.source, m, build).class_file
+                        if by_setting[m] == theirs:
+                            which += m
+                elif not ok_a:
+                    which = ''
+            if e.cls in exe:
+                count('exe files')
+                exe_sets[which] = exe_sets.get(which, 0) + 1
+                if ok_a:
+                    count('exe identical under A')
+                if ok_b:
+                    count('exe identical under B')
+                    passed_exe.append(e.cls)
+                else:
+                    oc.failures.append('%s: written by the Build 940 exe, and not '
+                                       'byte-identical under its setting %s: %s' % (
+                                           e.cls, EXE, why_different(
+                                               by_setting.get(EXE, data_a), theirs)))
+                if which != exe[e.cls]:
+                    list_bad.append('%s: listed as reproduced under %s, it is under %s' % (
+                        e.cls, exe[e.cls], which or 'none'))
+            else:
+                count('shipped files')
+                if ok_b:
+                    count('shipped identical under B')
+                elif ok:
+                    shipped_sets[which] = shipped_sets.get(which, 0) + 1
             same, total = cons_equal(data, theirs)
             count('oracle classes', total)
             count('oracle classes with exact CONS', len(same))
@@ -370,21 +481,34 @@ def run(opts):
         oc.failures.append('%s (declared for the provider): line %d: %s %s' % (
             src, d.line, d.code, d.text))
     oc.failures.extend('float table: %s' % x for x in table_bad)
+    oc.failures.extend('list of the files the exe wrote: %s' % x for x in list_bad)
+    missing = sorted(set(exe) - oracle_keys_cls) if opts.only is None else []
+    for x in missing:
+        oc.failures.append('list of the files the exe wrote: %s is no oracle pair' % x)
 
     def g(key):
         return c.get(key, 0)
 
-    oc.text = ('%d/%d byte-identical (float setting per file; %d/%d with setting A alone); '
+    oc.text = ('%d/%d byte-identical (float setting per file; %d/%d with setting %s, the '
+               'conversion of the exe, alone; %d/%d with setting A alone); '
+               'written by the Build 940 exe %d/%d under %s; '
                'older builds %d/%d; stale %d/%d; CONS exact %d/%d classes; '
                'equal to the spike %d/%d sources' % (
                    g('oracle identical'), g('oracle files'),
+                   g('oracle identical under B'), g('oracle files'), EXE,
                    g('oracle identical under A'), g('oracle files'),
+                   g('exe identical under B'), g('exe files'), EXE,
                    g('older identical'), g('older files'),
                    g('stale identical'), g('stale files'),
                    g('oracle classes with exact CONS'), g('oracle classes'),
                    len(passed_spike), n_sources))
     oc.ok = (g('oracle files') == 2651 and g('oracle identical') == 2649 and
              g('oracle identical under A') == 2561 and
+             g('oracle identical under B') == 2434 and
+             g('exe identical under B') == g('exe files') == len(exe) == 136 and
+             g('exe identical under A') == 90 and
+             g('shipped files') == 2515 and g('shipped identical under B') == 2298 and
+             sum(shipped_sets.values()) == 215 and not list_bad and not missing and
              g('older identical') == g('older files') == 153 and
              g('stale files') == 15 and g('stale identical') == 0 and
              g('oracle classes') == 2705 and g('oracle classes with exact CONS') == 2703 and
@@ -396,6 +520,7 @@ def run(opts):
     oc.passed['m5_older.pass'] = passed_older
     oc.passed['m5_spike.pass'] = passed_spike
     oc.passed['m5_cons.pass'] = passed_cons
+    oc.passed['m5_exe940.pass'] = passed_exe
     for x in notes_expected:
         oc.notes.append('expected (compiled against another version of the class it calls): '
                         '%s' % x)
@@ -406,6 +531,29 @@ def run(opts):
                     'first setting that reproduces each file: %s' % (
                         ', '.join('%s %d' % (m, by_mode.get(m, 0)) for m in MODES),
                         'yes' if not table_bad else 'NO'))
+    def sets(d):
+        return ', '.join('%s %d' % (k if k != '=' else 'no float literal', d[k])
+                         for k in sorted(d)) or 'none'
+
+    oc.notes.append('the float rule: the Build 940 exe converts with setting %s (%s).  Class '
+                    'files this exe wrote (tests/baseline/m5_exe940.tsv): %d, byte-identical '
+                    'under %s: %d, under A: %d; by the settings that reproduce them: %s' % (
+                        EXE, floatlit.ORIGIN[EXE], g('exe files'), EXE,
+                        g('exe identical under B'), g('exe identical under A'),
+                        sets(exe_sets)))
+    oc.notes.append('class files as Steam shipped them: %d, byte-identical under %s alone: %d.  '
+                    'Not under %s: %d that only a conversion of an earlier build reproduces '
+                    '(%s) and %d expected failures.  Not explained: which of A, C, D such a '
+                    'file needs; it is listed per file in m5_float.tsv' % (
+                        g('shipped files'), EXE, g('shipped identical under B'), EXE,
+                        sum(shipped_sets.values()), sets(shipped_sets),
+                        g('shipped files') - g('shipped identical under B') -
+                        sum(shipped_sets.values())))
+    if opts.only is None:
+        st = time_stamps(harness.all_sources(), exe)
+        oc.notes.append('time stamps of this copy of the corpus: %d of the %d listed class '
+                        'files carry the write time the exe gives a class it compiles (a whole '
+                        'second, the DOS time of the source); %d other pair class files do' % st)
     oc.notes.append('writer version %s; outputs checked with the strict reader: %d' % (
         slrrc.VERSION, n_sources - g('not clean')))
     oc.notes.append('classes of the consistent pairs whose declaration text '

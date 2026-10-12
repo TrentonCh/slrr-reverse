@@ -1,0 +1,287 @@
+check: ... and setting A, the default before the exe was read, reproduces fewer of them
+check: ... and they are the answers of the 126-entry table over the pack files
+check: ... in a class file as shipped (Baiern_oil_pan) and in one the exe wrote (LP_V12_oil_pan_racing)
+check: 0.0001: the bits of A and of B
+check: System.rpkScan is a script method (not native, a tree with nodes in System.class, no such string in the exe); System.openLib is native
+check: a pack without a file: no name, the record with the written spelling stays, and the next question is answered the same way
+check: a scan registers the directory as the script spells it and the file as the listing does, for the files directly in the directory
+check: after the sources are compiled the replayed table has a record with the spelling of every pack of the shipped pools
+check: control: without the scans fewer spellings are reproduced, and how many depends on the order of compilation
+check: every literal of the shipped sources has a low word and no high word
+check: every pack the start of the game and the scans do not register has one spelling in all literals and all external reference tables (63 packs), and no name is longer than a record keeps: no order of compilation gives another answer
+check: every resource id node of the consistent pairs has the pack name and the id of the rule
+check: find-or-add: record 0 is system.rpk; A to Z are folded and nothing else; the first spelling stays; "/" and "\" are different names; a name is cut to 63 characters and then never found again
+check: loading a pack registers the names of its external reference table as the file spells them, and does not load them
+check: no float literal of the corpus is of a form the two exits of the routine change
+check: packs.resolve() over the interface gives what the functions of the exe give, followed literally (13042 questions)
+check: setting B equals the exact model on every float literal text of the corpus
+check: the answers are the same in reverse order and for each source alone
+check: the class files the Build 940 exe wrote are byte-identical under setting B, every one
+check: the exe of the corpus is the Build 940 exe the notes were read in, and holds the 14 instruction and constant sequences they quote
+check: the external reference tables: the reader of the package and a second one agree on all 147 pack files; 869 references, 60 names, one spelling each
+check: the oracle table is what the shipped pools hold (126 packs, one spelling each)
+check: the pack without a file compiles to system.rpk id 0: the one rid entry with local id 0 in the shipped pools (TimeAttackTest), and no shipped local id exceeds 16 bits
+check: the scan list of the package is the list of rpkScan calls of GameLogic.java
+check: who registered the 126 first: the start of the game 1, the scans 61, an external reference table 12, a literal 52
+exe wrote cars/racers/Remo_data/scripts/Remo_VT.class
+exe wrote cars/racers/Whisper_data/scripts/Whisper_FR_window.class
+exe wrote cars/racers/Whisper_data/scripts/Whisper_F_bumper_3.class
+exe wrote cars/racers/Whisper_data/scripts/Whisper_L_mirror.class
+exe wrote cars/racers/Whisper_data/scripts/Whisper_R_bumper_3.class
+exe wrote cars/racers/Whisper_data/scripts/Whisper_R_sideskirt_3.class
+exe wrote cars/racers/Whisper_data/scripts/Whisper_R_taillights.class
+exe wrote cars/racers/Whisper_data/scripts/Whisper_R_windshield.class
+exe wrote cars/racers/Zed_data/scripts/Zed_VT.class
+exe wrote multibot/maps/DerbyArena/data/track_data.class
+exe wrote multibot/maps/DragStrip/data/track_data.class
+exe wrote multibot/maps/GatewayRoad/data/track_data.class
+exe wrote multibot/maps/HockenheimGP/data/track_data.class
+exe wrote multibot/maps/LagunaSeca/data/track_data.class
+exe wrote multibot/maps/Norisring/data/track_data.class
+exe wrote multibot/maps/OranPark/data/track_data.class
+exe wrote multibot/maps/SPAFrankoohapsGPCircuit/data/track_data.class
+exe wrote multibot/maps/UKRallyStage1/data/track_data.class
+exe wrote multibot/maps/UKRallyStage2/data/track_data.class
+exe wrote multibot/maps/UKRallyStage3/data/track_data.class
+exe wrote multibot/maps/Zandvoort/data/track_data.class
+exe wrote parts/accessories/scripts/stock_Battery_silver.class
+exe wrote parts/engines/Baiern_Emer/scripts/SL_Tuners_6_channel_NOS_rail.class
+exe wrote parts/engines/Dodge_BMW_Racing_V10/scripts/kit_VENOM_605_CID_stroker_kit.class
+exe wrote parts/engines/GMC_Nissan_Honda_Hyundai_Opel/scripts/SL_Tuners_methanol_fuel_rail.class
+exe wrote parts/engines/Lama_Performance_V12/scripts/LP_V12_L_camshaft_bearing_bridge.class
+exe wrote parts/engines/Lama_Performance_V12/scripts/LP_V12_L_exhaust_camshaft_semi_racing.class
+exe wrote parts/engines/Lama_Performance_V12/scripts/LP_V12_L_exhaust_header_racing.class
+exe wrote parts/engines/Lama_Performance_V12/scripts/LP_V12_L_intake_camshaft_racing.class
+exe wrote parts/engines/Lama_Performance_V12/scripts/LP_V12_L_intake_camshaft_semi_racing.class
+exe wrote parts/engines/Lama_Performance_V12/scripts/LP_V12_L_turbocharger_secondary_exhaust_pipe.class
+exe wrote parts/engines/Lama_Performance_V12/scripts/LP_V12_R_cylinder_head_cover_racing.class
+exe wrote parts/engines/Lama_Performance_V12/scripts/LP_V12_R_exhaust_camshaft_semi_racing.class
+exe wrote parts/engines/Lama_Performance_V12/scripts/LP_V12_R_intake_camshaft_racing.class
+exe wrote parts/engines/Lama_Performance_V12/scripts/LP_V12_R_intake_camshaft_semi_racing.class
+exe wrote parts/engines/Lama_Performance_V12/scripts/LP_V12_R_primary_turbocharger_semi_racing.class
+exe wrote parts/engines/Lama_Performance_V12/scripts/LP_V12_R_secondary_turbocharger_semi_racing.class
+exe wrote parts/engines/Lama_Performance_V12/scripts/LP_V12_alternator.class
+exe wrote parts/engines/Lama_Performance_V12/scripts/LP_V12_connecting_rods_racing.class
+exe wrote parts/engines/Lama_Performance_V12/scripts/LP_V12_crankshaft_bearing_bridge.class
+exe wrote parts/engines/Lama_Performance_V12/scripts/LP_V12_engine_block_racing.class
+exe wrote parts/engines/Lama_Performance_V12/scripts/LP_V12_flywheel_racing.class
+exe wrote parts/engines/Lama_Performance_V12/scripts/LP_V12_fuel_rail_racing.class
+exe wrote parts/engines/Lama_Performance_V12/scripts/LP_V12_oil_pan_racing.class
+exe wrote parts/engines/Lama_Performance_V12/scripts/LP_V12_pistons_racing.class
+exe wrote parts/engines/Lama_Performance_V12/scripts/LP_V12_transmission_racing.class
+exe wrote parts/engines/MC_Prime_SuperDuty/scripts/Draggster_GT_SuperCharger.class
+exe wrote parts/running_gear/scripts/FR_susp/Prime_FR_McPherson_strut.class
+exe wrote parts/running_gear/scripts/RL_susp/Prime_RL_trailing_arm.class
+exe wrote parts/running_gear/scripts/brakes/brake_Prime_front.class
+exe wrote parts/running_gear/scripts/shocks/shock_absorber_Prime_front.class
+exe wrote parts/running_gear/scripts/shocks/shock_absorber_Prime_rear.class
+exe wrote parts/running_gear/scripts/springs/spring_Prime_rear.class
+exe wrote parts/running_gear/scripts/sways/swaybar_Prime_front.class
+exe wrote parts/scripts/BodyPart.class
+exe wrote parts/scripts/Descriptor.class
+exe wrote parts/scripts/DynoData.class
+exe wrote parts/scripts/EnginePart.class
+exe wrote parts/scripts/Part.class
+exe wrote parts/scripts/bodypart/Chassis.class
+exe wrote parts/scripts/bodypart/FrontSeat.class
+exe wrote parts/scripts/bodypart/Headlights.class
+exe wrote parts/scripts/bodypart/Hood.class
+exe wrote parts/scripts/bodypart/Mirror.class
+exe wrote parts/scripts/bodypart/SteeringWheel.class
+exe wrote parts/scripts/bodypart/Taillights.class
+exe wrote parts/scripts/bodypart/Windshield.class
+exe wrote parts/scripts/enginepart/AirFuelDeliverySystem.class
+exe wrote parts/scripts/enginepart/ExhaustHeader.class
+exe wrote parts/scripts/enginepart/ExhaustTip.class
+exe wrote parts/scripts/enginepart/OilPan.class
+exe wrote parts/scripts/enginepart/SlidingEnginePart.class
+exe wrote parts/scripts/enginepart/airfueldeliverysystem/AirFilter.class
+exe wrote parts/scripts/enginepart/airfueldeliverysystem/NOSInjectorSystem.class
+exe wrote parts/scripts/enginepart/airfueldeliverysystem/charger/TurboCharger.class
+exe wrote parts/scripts/enginepart/block/block_vee/Block_Vee_OHC.class
+exe wrote parts/scripts/enginepart/slidingenginepart/reciprocatingenginepart/Camshaft.class
+exe wrote parts/scripts/enginepart/slidingenginepart/reciprocatingenginepart/Clutch.class
+exe wrote parts/scripts/enginepart/slidingenginepart/reciprocatingenginepart/Crankshaft.class
+exe wrote parts/scripts/enginepart/slidingenginepart/reciprocatingenginepart/Flywheel.class
+exe wrote parts/scripts/enginepart/slidingenginepart/reciprocatingenginepart/Transmission.class
+exe wrote parts/scripts/enginepart/slidingenginepart/reciprocatingenginepart/cylinderhead/DOHC_CylinderHead.class
+exe wrote parts/scripts/rgearpart/ReciprocatingRGearPart.class
+exe wrote parts/scripts/rgearpart/Swaybar.class
+exe wrote parts/scripts/rgearpart/reciprocatingrgearpart/Brake.class
+exe wrote parts/scripts/rgearpart/reciprocatingrgearpart/Tyre.class
+exe wrote parts/wheels/tyres/scripts/tyre_235_45_17_9_0_LOD_CATALOG_GARAGE.class
+exe wrote sl/Scripts/game/Bot.class
+exe wrote sl/Scripts/game/CarMarket.class
+exe wrote sl/Scripts/game/CareerEvent.class
+exe wrote sl/Scripts/game/CareerEvents/Assassination.class
+exe wrote sl/Scripts/game/CareerEvents/BurningTyres.class
+exe wrote sl/Scripts/game/CareerEvents/DayOfTheDrags.class
+exe wrote sl/Scripts/game/CareerEvents/DirtyActions.class
+exe wrote sl/Scripts/game/CareerEvents/FurranoRush.class
+exe wrote sl/Scripts/game/CareerEvents/GatewayRoadEndurance.class
+exe wrote sl/Scripts/game/CareerEvents/HellOnTheWheels.class
+exe wrote sl/Scripts/game/CareerEvents/HighOctaneRage.class
+exe wrote sl/Scripts/game/CareerEvents/HypercarBattle.class
+exe wrote sl/Scripts/game/CareerEvents/JuniorCurcuit.class
+exe wrote sl/Scripts/game/CareerEvents/KurummaDragNight.class
+exe wrote sl/Scripts/game/CareerEvents/NightShift.class
+exe wrote sl/Scripts/game/CareerEvents/NostalgiaRun.class
+exe wrote sl/Scripts/game/CareerEvents/OldSchoolChallenge.class
+exe wrote sl/Scripts/game/CareerEvents/PoliceGoesMad.class
+exe wrote sl/Scripts/game/CareerEvents/QuatermastersChallenge.class
+exe wrote sl/Scripts/game/CareerEvents/SlideNRock.class
+exe wrote sl/Scripts/game/CareerEvents/SlowMotionStorm.class
+exe wrote sl/Scripts/game/CareerEvents/TheInfiniteLoop.class
+exe wrote sl/Scripts/game/CareerEvents/TheOverspeed.class
+exe wrote sl/Scripts/game/CareerEvents/TheZPower.class
+exe wrote sl/Scripts/game/CareerEvents/TotalDomination.class
+exe wrote sl/Scripts/game/CareerEvents/TurtleRace.class
+exe wrote sl/Scripts/game/GameLogic.class
+exe wrote sl/Scripts/game/Gamemode.class
+exe wrote sl/Scripts/game/Gamemodes/DestructionDerby.class
+exe wrote sl/Scripts/game/Gamemodes/Drifting.class
+exe wrote sl/Scripts/game/Gamemodes/HotActionCop.class
+exe wrote sl/Scripts/game/Integrator.class
+exe wrote sl/Scripts/game/InventoryItem.class
+exe wrote sl/Scripts/game/InventoryPanel.class
+exe wrote sl/Scripts/game/MainMenu.class
+exe wrote sl/Scripts/game/MapObject.class
+exe wrote sl/Scripts/game/Marker.class
+exe wrote sl/Scripts/game/Navigator.class
+exe wrote sl/Scripts/game/OptionsDialog.class
+exe wrote sl/Scripts/game/PaintCan.class
+exe wrote sl/Scripts/game/Painter.class
+exe wrote sl/Scripts/game/Racer.class
+exe wrote sl/Scripts/game/Scene.class
+exe wrote sl/Scripts/game/Spectator.class
+exe wrote sl/Scripts/game/TrackData.class
+exe wrote sl/Scripts/game/TrafficVehicle.class
+exe wrote sl/Scripts/game/Vehicle.class
+exe wrote sl/Scripts/game/VehicleDescriptor.class
+exe wrote sl/Scripts/game/VehicleType.class
+pack cars.rpk
+pack cars\misc\Police.rpk
+pack cars\racers.rpk
+pack cars\racers\Axis.rpk
+pack cars\racers\Badge.rpk
+pack cars\racers\Baiern.rpk
+pack cars\racers\Codrac.rpk
+pack cars\racers\Coyot.rpk
+pack cars\racers\Duhen.rpk
+pack cars\racers\Einvagen.rpk
+pack cars\racers\Enula.rpk
+pack cars\racers\Focer.rpk
+pack cars\racers\Furrano.rpk
+pack cars\racers\Kurumma.rpk
+pack cars\racers\MC.rpk
+pack cars\racers\Naxas.rpk
+pack cars\racers\Ninja.rpk
+pack cars\racers\Nonus.rpk
+pack cars\racers\Prime.rpk
+pack cars\racers\Remo.rpk
+pack cars\racers\ST9.rpk
+pack cars\racers\Stallion.rpk
+pack cars\racers\Sunset.rpk
+pack cars\racers\SuperDuty.rpk
+pack cars\racers\Teg.rpk
+pack cars\racers\Whisper.rpk
+pack cars\racers\Yotta.rpk
+pack cars\racers\Zed.rpk
+pack cars\traffic\Ambulance.rpk
+pack cars\traffic\ArmoredVan.rpk
+pack cars\traffic\CivilVan.rpk
+pack cars\traffic\CivilVan_2.rpk
+pack cars\traffic\CivilVan_3.rpk
+pack cars\traffic\Coach.rpk
+pack cars\traffic\Erbilac.rpk
+pack cars\traffic\Erbilac_2.rpk
+pack cars\traffic\Erbilac_3.rpk
+pack cars\traffic\FireEngine.rpk
+pack cars\traffic\Peterbild.rpk
+pack cars\traffic\Peterbild_2.rpk
+pack cars\traffic\Peterbild_3.rpk
+pack cars\traffic\Pickup.rpk
+pack cars\traffic\Pickup_2.rpk
+pack cars\traffic\Pickup_3.rpk
+pack cars\traffic\Schoolbus.rpk
+pack cars\traffic\Taxi.rpk
+pack cars\traffic\Wagon.rpk
+pack frontend.rpk
+pack humans.rpk
+pack maps\ROC_Track\smallmap.rpk
+pack maps\ROC_track.rpk
+pack maps\city.rpk
+pack maps\city\smallmap.rpk
+pack maps\skydome.rpk
+pack maps\test_track.rpk
+pack maps\test_track\smallmap.rpk
+pack misc\carlot.rpk
+pack misc\catalog.rpk
+pack misc\dealer.rpk
+pack misc\dealer2.rpk
+pack misc\dealer3.rpk
+pack misc\garage.rpk
+pack misc\garage_objects.rpk
+pack misc\paintbooth.rpk
+pack multibot\maps\A1Ring.rpk
+pack multibot\maps\A1Ring\t_data.rpk
+pack multibot\maps\DerbyArena.rpk
+pack multibot\maps\DerbyArena\t_data.rpk
+pack multibot\maps\DragStrip.rpk
+pack multibot\maps\DragStrip\t_data.rpk
+pack multibot\maps\GatewayRoad.rpk
+pack multibot\maps\GatewayRoad\t_data.rpk
+pack multibot\maps\HockenheimGP.rpk
+pack multibot\maps\HockenheimGP\t_data.rpk
+pack multibot\maps\LagunaSeca.rpk
+pack multibot\maps\LagunaSeca\t_data.rpk
+pack multibot\maps\NationalDirtRaceway.rpk
+pack multibot\maps\NationalDirtRaceway\t_data.rpk
+pack multibot\maps\Norisring.rpk
+pack multibot\maps\Norisring\t_data.rpk
+pack multibot\maps\Nurburgring.rpk
+pack multibot\maps\Nurburgring\t_data.rpk
+pack multibot\maps\OranPark.rpk
+pack multibot\maps\OranPark\t_data.rpk
+pack multibot\maps\OultonPark.rpk
+pack multibot\maps\OultonPark\t_data.rpk
+pack multibot\maps\ROCTrack\t_data.rpk
+pack multibot\maps\SPAFrankoohapsGPCircuit.rpk
+pack multibot\maps\SPAFrankoohapsGPCircuit\t_data.rpk
+pack multibot\maps\Sandown.rpk
+pack multibot\maps\Sandown\t_data.rpk
+pack multibot\maps\TestTrack\t_data.rpk
+pack multibot\maps\UKRallyStage1.rpk
+pack multibot\maps\UKRallyStage1\t_data.rpk
+pack multibot\maps\UKRallyStage2.rpk
+pack multibot\maps\UKRallyStage2\t_data.rpk
+pack multibot\maps\UKRallyStage3.rpk
+pack multibot\maps\UKRallyStage3\t_data.rpk
+pack multibot\maps\Vallelunga.rpk
+pack multibot\maps\Vallelunga\t_data.rpk
+pack multibot\maps\ValoCity\t_data.rpk
+pack multibot\maps\Zandvoort.rpk
+pack multibot\maps\Zandvoort\t_data.rpk
+pack multibot\scripts.rpk
+pack multibot\sounds.rpk
+pack objects.rpk
+pack particles.rpk
+pack parts.rpk
+pack parts\engines\Baiern_Emer.rpk
+pack parts\engines\Callaway_Cadillac_Bugatti_V16.rpk
+pack parts\engines\Dodge_BMW_Racing_V10.rpk
+pack parts\engines\Einvagen_Duhen_Ishima_Focer.rpk
+pack parts\engines\GMC_Nissan_Honda_Hyundai_Opel.rpk
+pack parts\engines\Lama_Performance_V12.rpk
+pack parts\engines\MC_Prime_SuperDuty.rpk
+pack parts\interior.rpk
+pack parts\mufflers.rpk
+pack parts\pedals.rpk
+pack parts\wheels.rpk
+pack parts\wings.rpk
+pack sl.rpk
+pack sl\Scripts\game\CareerEvents\old_stdpack_231.rpk
+pack sl\Scripts\game\CareerEvents\stdpack_231.rpk
+pack sl\Scripts\game\Gamemodes\stdpack_231.rpk
+pack sound.rpk
+pack system.rpk

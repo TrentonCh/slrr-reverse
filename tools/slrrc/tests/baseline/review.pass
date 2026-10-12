@@ -32,6 +32,12 @@ diagnostics: an instance field in the initialiser of an instance field: no diagn
 diagnostics: an instance field of another object in a static method: no diagnostic
 diagnostics: no warning from a PackNames that has the table and no file list
 diagnostics: no warning from a PackNames that names every pack as written
+diagnostics: resource id: a high word beyond the external references of the pack
+diagnostics: resource id: a high word is an error for a PackNames that knows no external references
+diagnostics: resource id: a high word that names a pack without a file
+diagnostics: resource id: a high word that names an external reference of the pack
+diagnostics: resource id: an id whose low 16 bits are 0
+diagnostics: resource id: an id with a high word of 0 and a low word
 diagnostics: the NUL is copied into the utf8 entry all the same (default mode)
 diagnostics: three classes of a source in a ring: an error at each
 diagnostics: what None means is written at the interface
@@ -66,21 +72,27 @@ driver: the command line sets the limit the tests run under
 driver: two sources, one the superclass of the other, compile
 driver: write_atomic removes its temporary file when the rename fails
 floats: ... and the self test is whole again
+floats: a build that converts with a library function fails EDGE_TEST as well
 floats: a build with double-0.1 fails the self test in the settings B
 floats: a build with fma fails the self test in the settings A, B
 floats: a build with ftz fails the self test in the settings A, B, C, D
+floats: a build with library fails the self test in the settings A, B, C, D
 floats: a build with signed fails the self test in the settings A, B, C, D
 floats: a build with toward-0 fails the self test in the settings A, B, C, D
 floats: a build with wide fails the self test in the settings A, B, C, D
 floats: a build with x87-24 fails the self test in the settings C, D
 floats: a build with x87-53 fails the self test in the settings A, B
 floats: a build with x87-64 fails the self test in the settings A, B
+floats: a literal without a digit before the point compiles to 0.0, with a warning (an error in strict mode); 0.0001 has the bits of the exe
 floats: float_bits equals the exact model (363 literal texts, 4 settings)
 floats: floatlit.self_test() finds nothing
+floats: only the first 1,024 fraction digits are looked at, and no bit depends on it
 floats: the 15 rows of SELF_TEST are the bits of the exact model
 floats: the C forms name every intermediate result and the build settings
 floats: the command line refuses to compile when the self test fails
+floats: the default setting is B, the conversion of the Build 940 exe
 floats: the four settings differ pairwise on some row
+floats: the rows of EDGE_TEST are the bits of the exact model under every setting
 floats: the wrong builds are the ones this test knows
 gaps: ... and the emitter writes those refs
 gaps: lookup: back(F) binds to (F)I with score 0

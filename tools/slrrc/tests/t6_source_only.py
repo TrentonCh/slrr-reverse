@@ -11,9 +11,17 @@ The test runs the driver as a host would,
 and then looks at what it wrote.  There is no shipped class to compare the 635
 outputs with, so they are checked in every other way there is:
 
-  baseline   the SHA-256 of every output equals tests/baseline/m6.sha256 (the
-             bytes the composition spike produced; a wanted change is
-             re-baselined on purpose)
+  baseline   the SHA-256 of every output equals tests/baseline/m6.sha256.  The
+             outputs are compiled with the float conversion of the Build 940
+             exe, setting B (notes/exe_reads.md 1).  Until the exe was read
+             the baseline held the bytes of setting A (the bytes the
+             composition spike produced); it was re-baselined on purpose for
+             the 10 outputs that hold a literal the two settings convert
+             differently
+  float A    every source compiled once more in this process under setting A:
+             the outputs that differ from the cache are exactly the ones of
+             tests/baseline/m6_float_a.sha256, with the hashes they had in
+             the baseline before (so nothing but the float default moved)
   reader     lib/tufa.py (the strict reader of the foundation) reads each file
              back, validate() finds nothing, it serialises to the same bytes
   layout     the 30 layout rules of the foundation (lib/check_layout.py, run
@@ -29,7 +37,8 @@ outputs with, so they are checked in every other way there is:
              jump offset and kind of expression of every node equal the
              sibling's shipped class
   manifest   one entry per output with the source path, its size and hash,
-             the float setting, the pack table version and the classes it was
+             the float setting (B), the version of the pack table replay and
+             the classes it was
              compiled against; every hash in it is recomputed here, the
              declarations from the CorpusProvider of the tests (which reads
              the class files with lib/tufa.py, not with the package's reader)
@@ -48,7 +57,8 @@ of M6; that needs the host to run).
 
 Headline:
   M6 source-only   635/635 compiled through the cache (635 classes, 771 trees,
-  32644 nodes, 693847 bytes); hashes 635/635 equal to the baseline; strict
+  32644 nodes, 693847 bytes); hashes 635/635 equal to the baseline (float
+  setting B; under setting A 10 files differ, 33 literals); strict
   reader 635/635; layout rules hold; stack simulation holds (21523 nodes);
   structure 767/767 trees; siblings 522/522; manifest 635/635 entries; driver
   checks N/N
@@ -77,8 +87,10 @@ import slrrc                        # noqa: E402
 from slrrc import classes           # noqa: E402
 from slrrc import classfile         # noqa: E402
 from slrrc import cli               # noqa: E402
+from slrrc import floatlit          # noqa: E402
 from slrrc import install           # noqa: E402
 from slrrc import packs             # noqa: E402
+from slrrc import scanner as sc     # noqa: E402
 
 PACKAGE_DIR = os.path.join(harness.ROOT, 'slrrc')
 
@@ -138,8 +150,13 @@ def sha(data):
 
 ALPHA = ('package java.game.mod;\r\n\r\npublic class Alpha\r\n{\r\n\tint n = 3;\r\n\r\n'
          '\tpublic Alpha()\r\n\t{\r\n\t\tn = n + 1;\r\n\t}\r\n}\r\n')
+# three packs: in a directory the game scans at start (the spelling of the
+# listing wins), in another directory (the first spelling asked for stays),
+# and without a file
 BETA = ('package java.game.mod;\r\n\r\npublic class Beta extends Alpha\r\n{\r\n'
-        '\tint pic = packs.things:0x00000012r;\r\n\tint gone = packs.nothing:0x00000034r;\r\n\r\n'
+        '\tint pic = cars.racers.things:0x00000012r;\r\n'
+        '\tint far = packs.other:0x00000056r;\r\n'
+        '\tint gone = packs.nothing:0x00000034r;\r\n\r\n'
         '\tpublic Beta()\r\n\t{\r\n\t\tsuper();\r\n\t\tn = 7;\r\n\t}\r\n}\r\n')
 BROKEN = 'package java.game.mod;\r\n\r\npublic class Broken\r\n{\r\n\tint n = ;\r\n}\r\n'
 GAMMA = 'package java.game.mod;\r\n\r\npublic class Gamma\r\n{\r\n\tint a[];\r\n}\r\n'
@@ -171,7 +188,8 @@ def driver_checks(tmp):
     put(os.path.join(src, 'Alpha.java'), ALPHA)
     put(os.path.join(src, 'Beta.java'), BETA)
     put(os.path.join(tree, 'loose', 'Stray.java'), ALPHA)
-    put(os.path.join(tree, 'packs', 'Things.rpk'), '')
+    put(os.path.join(tree, 'cars', 'racers', 'Things.rpk'), '')
+    put(os.path.join(tree, 'packs', 'Other.rpk'), '')
     before = snapshot(tree)
     alpha_class = os.path.join(tree, 'mod', 'scripts', 'Alpha.class')
     beta_class = os.path.join(tree, 'mod', 'scripts', 'Beta.class')
@@ -235,16 +253,25 @@ def driver_checks(tmp):
           origins == {'java.game.mod.Alpha': 'mod/scripts/src/Alpha.java'} and
           beta.get('not_found') == ['java.lang.Object'],
           '%r %r %r' % (against, origins, beta.get('not_found')))
-    check('the manifest records the packs: the file spelling for a pack that has a file, '
-          'none for one that has not',
-          beta.get('packs') == [{'written': 'packs\\things.rpk', 'pool': 'packs\\Things.rpk'},
-                                {'written': 'packs\\nothing.rpk', 'pool': None}],
+    check('the manifest records the packs: the spelling of the directory listing for a pack '
+          'in a directory the game scans, the written one for a pack elsewhere, none for a '
+          'pack without a file',
+          beta.get('packs') == [
+              {'written': 'cars\\racers\\things.rpk', 'pool': 'cars\\racers\\Things.rpk'},
+              {'written': 'packs\\other.rpk', 'pool': 'packs\\other.rpk'},
+              {'written': 'packs\\nothing.rpk', 'pool': None}],
           repr(beta.get('packs')))
+    check('the manifest names the float setting of the exe and the pack table replay',
+          beta.get('float') == 'B' == floatlit.EXE_MODE and
+          beta.get('pack_table') == packs.SESSION_940_VERSION and
+          doc.get('pack_table') == cli.pack_table_info() if man else False,
+          '%r %r' % (beta.get('float'), beta.get('pack_table')))
     blobs = tufa.parse(get(os.path.join(cache, 'mod', 'scripts', 'Beta.class'))) \
         if have == want else []
     rids = [b.rid(i) for b in blobs for i, e in enumerate(b.cons) if e[0] == 'rid']
     check('a pack without a file compiles to system.rpk id 0',
-          rids == [('packs\\Things.rpk', 0x12), ('system.rpk', 0)], repr(rids))
+          rids == [('cars\\racers\\Things.rpk', 0x12), ('packs\\other.rpk', 0x56),
+                   ('system.rpk', 0)], repr(rids))
     # the same run again: the same bytes
     first = dict((k, get(os.path.join(cache, k))) for k in have)
     code, so, se = run_cli(['--root', tree, '--out', cache])
@@ -376,6 +403,8 @@ def run(opts):
     cache = os.path.join(tmp, 'cache')
     passed = []
     hashes = []
+    outputs = {}            # source -> (output path, the bytes the command line wrote)
+    under_a = []            # 'hash  path' of the outputs that differ under float setting A
     notes = oc.notes
     try:
         before = script_snapshot(corpus)
@@ -431,6 +460,7 @@ def run(opts):
             c['bytes'] += len(data)
             hashes.append('%s  %s' % (sha(data), rel))
             passed.append(e.source)
+            outputs[e.source] = (rel, data)
             # ---- the manifest entry
             m = man.get(rel)
             src_bytes = oracle.load_source_bytes(e)
@@ -443,11 +473,12 @@ def run(opts):
                 why = 'size or hash of the source'
             elif m['size'] != len(data) or m['sha256'] != sha(data):
                 why = 'size or hash of the output'
-            elif m['float'] != 'A' or m['build'] != '0x24F9D' or m['strict'] is not False:
+            elif m['float'] != floatlit.EXE_MODE or m['build'] != '0x24F9D' or \
+                    m['strict'] is not False:
                 why = 'float %r build %r strict %r' % (m['float'], m['build'], m['strict'])
             elif m['compiler'] != 'slrrc ' + slrrc.VERSION:
                 why = 'compiler %r' % m['compiler']
-            elif m['pack_table'] != packs.TABLE_940_VERSION:
+            elif m['pack_table'] != packs.SESSION_940_VERSION:
                 why = 'pack table %r' % m['pack_table']
             else:
                 for dep, digest in sorted(m['compiled_against'].items()):
@@ -534,6 +565,49 @@ def run(opts):
         for r in xrules:
             if r.ok != r.total:
                 fails['stack simulation ' + r.rid] = list(r.bad)
+        # ---- the float default.  In this process, with the provider and a pack
+        # table of the tests: setting B gives the bytes the command line wrote,
+        # setting A the bytes the baseline held before the exe was read.
+        pk_b = harness.packs()
+        pk_a = harness.packs()
+        for e in entries:
+            if e.source not in outputs:
+                continue
+            rel, data = outputs[e.source]
+            text = oracle.load_source(e)
+            res_b = slrrc.compile_source(text, e.source, prov, pk_b,
+                                         slrrc.Options(float_mode=floatlit.EXE_MODE))
+            if res_b.class_file != data:
+                fails['float'].append('%s: the command line wrote other bytes than this '
+                                      'process compiles under setting %s' % (
+                                          e.source, floatlit.EXE_MODE))
+                continue
+            res_a = slrrc.compile_source(text, e.source, prov, pk_a,
+                                         slrrc.Options(float_mode='A'))
+            n_lit = n_other = 0
+            for t in res_b.ast.toks:
+                if t.kind == sc.T_FLOAT:
+                    digits = sc.float_digits(text[t.pos:t.pos + t.length])
+                    n_lit += 1
+                    n_other += (floatlit.float_bits('A', digits[0], digits[1]) !=
+                                floatlit.float_bits(floatlit.EXE_MODE, digits[0], digits[1]))
+            c['float literals'] += n_lit
+            c['float literals with other bits under A'] += n_other
+            c['sources with a float literal'] += bool(n_lit)
+            if res_a.class_file != data:
+                under_a.append('%s  %s' % (sha(res_a.class_file), rel))
+                if not n_other:
+                    fails['float'].append('%s: other bytes under A without a literal that '
+                                          'differs' % e.source)
+            elif n_other:
+                fails['float'].append('%s: a literal differs under A, the bytes do not'
+                                      % e.source)
+        lost_a, new_a = harness.Baseline('m6_float_a.sha256').compare(under_a)
+        if opts.only is None:
+            for x in lost_a:
+                fails['float'].append('under setting A no longer as the old baseline: %s' % x)
+            for x in new_a:
+                fails['float'].append('under setting A another output differs: %s' % x)
         extra = sorted(set(written) - expected_files)
         if extra:
             fails['files'].append('files nobody asked for: %s' % extra[:5])
@@ -577,12 +651,14 @@ def run(opts):
     x1 = xrules[0]
     sim_ok = all(r.ok == r.total for r in xrules)
     oc.text = ('%d/%d compiled through the cache (%d classes, %d trees, %d nodes, %d bytes); '
-               'hashes %s equal to the baseline; strict reader %d/%d; layout rules %s; '
+               'hashes %s equal to the baseline (float setting %s; under setting A %d files '
+               'differ, %d literals); strict reader %d/%d; layout rules %s; '
                'stack simulation %s (%d nodes); structure %d/%d trees; siblings %d/%d; '
                'manifest %d/%d entries; driver checks %d/%d' % (
                    c['compiled'], c['sources'], c['classes'], c['trees'], c['nodes'],
                    c['bytes'], '%d/%d' % (len(hashes) - len(harness.Baseline(
                        'm6.sha256').compare(hashes)[1]), c['sources']),
+                   floatlit.EXE_MODE, len(under_a), c['float literals with other bits under A'],
                    c['strict'], c['compiled'],
                    'hold' if not bad_rules and n_must else 'FAIL',
                    'holds' if sim_ok else 'FAILS', x1.total,
@@ -594,11 +670,20 @@ def run(opts):
             c['structure'] == with_nodes == 767 and
             c['strict twin equal'] == c['with strict twin'] == 522 and
             c['twin same opcodes'] == c['with twin'] == 528 and
-            not harness.Baseline('m6.sha256').compare(hashes)[1])
+            not harness.Baseline('m6.sha256').compare(hashes)[1] and
+            len(under_a) == 10 and c['float literals with other bits under A'] == 33 and
+            c['float literals'] == 1817 and c['sources with a float literal'] == 575)
     oc.ok = (full and not oc.failures and tree_same and sim_ok and not bad_rules and
              n_must > 0 and drv_ok == len(drv) and code == 0)
     oc.passed['m6.pass'] = passed
     oc.passed['m6.sha256'] = hashes
+    oc.passed['m6_float_a.sha256'] = under_a
+    notes.append('float literals: %d in %d of the %d sources; the outputs are compiled under '
+                 'setting %s (%s); under setting A %d literals in %d sources have other bits, '
+                 'and those %d outputs have the hashes of tests/baseline/m6_float_a.sha256'
+                 % (c['float literals'], c['sources with a float literal'], c['sources'],
+                    floatlit.EXE_MODE, floatlit.ORIGIN[floatlit.EXE_MODE],
+                    c['float literals with other bits under A'], len(under_a), len(under_a)))
     notes.append('layout: %d MUST rules of lib/check_layout.py on %d blobs; stack simulation: %s'
                  % (n_must, n_blobs, ', '.join('%s %d of %d' % (r.rid, r.ok, r.total)
                                                for r in xrules)))

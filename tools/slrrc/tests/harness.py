@@ -8,8 +8,9 @@
                 from the shipped class files (read with lib/tufa.py) and, for
                 the classes that have no class file, declares them from their
                 source with the compiler under test
-    packs       the PackNames of the tests: the table of slrrc/packs.py over
-                the pack files of the corpus
+    packs       the PackNames of the tests: the pack table of a session of
+                the game, replayed over the pack files of the corpus
+                (slrrc/packs.py: session_940)
     baseline    tests/baseline/<name>: the sorted list of passing items of a
                 milestone; a run that loses one is a regression
     headline    the one line every test prints
@@ -265,33 +266,61 @@ def provider():
 # the pack names of the tests
 # ---------------------------------------------------------------------------
 
+_PACK_FILES = None
+_PACK_DISK = None
+
+
 def pack_files():
     """The .rpk files of the corpus as the directory listing spells them,
-    relative to the corpus root, with backslashes."""
-    out = []
-    root = oracle.corpus_root()
-    for dp, dn, fn in os.walk(root):
-        dn[:] = sorted(d for d in dn if not d.lower().startswith(oracle.SKIP_DIR_PREFIX))
-        for f in sorted(fn):
-            if f.lower().endswith('.rpk'):
-                out.append(os.path.relpath(os.path.join(dp, f), root).replace('/', '\\'))
-    return out
+    relative to the corpus root, with backslashes.  (Walked once; the tests
+    do not change the corpus.)"""
+    global _PACK_FILES
+    if _PACK_FILES is None:
+        out = []
+        root = oracle.corpus_root()
+        for dp, dn, fn in os.walk(root):
+            dn[:] = sorted(d for d in dn if not d.lower().startswith(oracle.SKIP_DIR_PREFIX))
+            for f in sorted(fn):
+                if f.lower().endswith('.rpk'):
+                    out.append(os.path.relpath(os.path.join(dp, f), root).replace('/', '\\'))
+        _PACK_FILES = out
+    return list(_PACK_FILES)
 
 
-_PACKS = None
+def pack_disk():
+    """The PackFiles of the corpus: which pack files exist, and the external
+    reference table at the head of each (read once per file)."""
+    global _PACK_DISK
+    if _PACK_DISK is None:
+        from slrrc import install
+        _PACK_DISK = install.DiskPackFiles(oracle.corpus_root(), pack_files())
+    return _PACK_DISK
 
 
-def packs():
-    """The PackNames of the tests: the table of the package (one spelling per
-    pack, as the shipped pools have it) over the pack files of the corpus.  A
-    pack without a file has no name (the compiler then writes system.rpk,
-    id 0); a pack with a file that no shipped pool names is spelled as the
-    directory listing spells it.  This is the rule of spec/spike_compiler.py."""
-    global _PACKS
-    if _PACKS is None:
-        from slrrc import packs as pk
-        _PACKS = pk.TablePackNames(pk.TABLE_940, pack_files())
-    return _PACKS
+def packs(scans=True):
+    """The PackNames of the tests: the pack table of a session of the game
+    as it stands when the scripts are compiled (slrrc.packs.session_940:
+    system.rpk, then the pack scans of the constructor of GameLogic), over
+    the pack files of the corpus.  A pack in a scanned directory is spelled
+    as the directory listing spells it, any other pack as it is first asked
+    for, a pack without a file has no name (the compiler then writes
+    system.rpk, id 0).
+
+    Every call gives a NEW table: the table has state (the first spelling
+    asked for stays), and one test must not see what another one asked.  The
+    answers for the sources of the corpus do not depend on the order in
+    which they are compiled (tests/t9_exe.py checks that); they are the ones
+    of the 126-entry table of tests/pack_oracle.py, which is the rule of
+    spec/spike_compiler.py."""
+    from slrrc import packs as pk
+    return pk.session_940(pack_disk(), pack_files(), scans)
+
+
+def table_packs():
+    """The stateless PackNames of the old rule, for synthetic sources: the
+    table of tests/pack_oracle.py and no file list."""
+    import pack_oracle
+    return pack_oracle.TablePackNames(pack_oracle.TABLE_940, None)
 
 
 # ---------------------------------------------------------------------------

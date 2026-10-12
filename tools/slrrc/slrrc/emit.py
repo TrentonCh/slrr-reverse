@@ -105,13 +105,20 @@ forms; it never derives the type of an operator, a call, an element or a new.
 
 LITERALS.  An int is its value modulo 2**32, a string its text after escape
 processing, true and false a carrier of their own.  Two literals depend on
-state of the game's exe that no source holds, and neither is decided here: the
-bits of a float come from floatlit.float_bits() under the conversion the
-caller selects (four occur in the shipped classes), and the file name of the
-pack of a resource id comes from the PackNames the caller passes in.  A pack
-for which it answers "no file" is compiled to system.rpk id 0, the form one
+state that no source holds, and neither is decided here.  The bits of a float
+come from floatlit.float_bits() under the conversion the caller selects: B is
+what the scanner of the Build 940 exe computes, A, C and D reproduce shipped
+files of earlier builds.  The pack and the id of a resource id come from
+packs.resolve() over the PackNames the caller passes in: the pack table of
+the session, as in the exe, which resolves every resource id through the
+resource engine when it writes a class (0x54B310).  The emitter asks when it
+reaches the literal, tree by tree in tree order.  A pack for which the
+PackNames answers "no file" is compiled to system.rpk id 0, the form one
 shipped class shows, and reported (W_PACK) at every such literal, in both
-modes: the resource is not the one the source names.
+modes: the resource is not the one the source names.  An id with a low word
+of 0 or with a high word (an external reference of the pack) follows the
+rule read in the exe and is reported as unverified: no shipped source has
+one.
 
 DIAGNOSTICS.  An identifier that is no local, field or class is E_NAME, a
 member that is not found in a dotted name is E_MEMBER; the tree of a source
@@ -966,25 +973,49 @@ class Emitter(object):
             self.put_utf8(OP_STR, sc.string_value(text), tok)
         elif kind == T_RID:
             parts = sc.rid_parts(text)
-            name = self.packs.canonical(pk.pack_path(parts[0]))
-            number = parts[1]
-            if name is None:
-                # A pack without a file (observed once, Build 940: the two
-                # literals of TimeAttackTest).  The resource the class will
-                # name is not the one the source names, so this is said at
-                # every such literal, and in strict mode too: a warning,
-                # because the shipped source has to compile.
-                t = self.toks[tok]
-                self.diags.warning(W_PACK, t.line, sc.column_at(self.ast.source, t.pos),
-                                   'pack %s has no file: the resource id is compiled to %s '
-                                   'id %d' % (parts[0], pk.NO_FILE_PACK, pk.NO_FILE_ID))
-                name = pk.NO_FILE_PACK
-                number = pk.NO_FILE_ID
-            self.put_operand(OP_RID, K_RID, Operand(name, '', '', number), tok)
+            answer = pk.resolve(self.packs, pk.pack_path(parts[0]), parts[1])
+            if answer[2] != pk.R_OK:
+                self.rid_note(tok, parts[0], parts[1], answer)
+            self.put_operand(OP_RID, K_RID, Operand(answer[0], '', '', answer[1]), tok)
         elif kind == KW_NULL:
             self.put(OP_NULL, tok)
         else:
             self.put_imm(OP_BOOL, 1 if kind == KW_TRUE else 0, tok)
+
+    def rid_note(self, tok, pack, number, answer):
+        """The diagnostic for a resource id that is not compiled to its own
+        pack and id (answer: what packs.resolve() gave)."""
+        why = answer[2]
+        k = (number >> 16) & 0xFFFF
+        if why == pk.R_NO_FILE:
+            # A pack without a file (observed once, Build 940: the two
+            # literals of TimeAttackTest).  The resource the class will
+            # name is not the one the source names, so this is said at
+            # every such literal, and in strict mode too: a warning,
+            # because the shipped source has to compile.
+            t = self.toks[tok]
+            self.diags.warning(W_PACK, t.line, sc.column_at(self.ast.source, t.pos),
+                               'pack %s has no file: the resource id is compiled to %s '
+                               'id %d' % (pack, pk.NO_FILE_PACK, pk.NO_FILE_ID))
+        elif why == pk.R_ZERO:
+            self.unverified(tok, 'resource id whose low 16 bits are 0: compiled to %s id %d, '
+                                 'as the resource engine of the game resolves it'
+                            % (pk.NO_FILE_PACK, pk.NO_FILE_ID))
+        elif why == pk.R_EXTERNAL:
+            self.unverified(tok, 'resource id with a high word: external reference %d of pack '
+                                 '%s, compiled to %s id 0x%X' % (k, pack, answer[0], answer[1]))
+        elif why == pk.R_NO_EXTERNAL:
+            self.unverified(tok, 'resource id with a high word: pack %s has no external '
+                                 'reference %d, compiled to %s id %d'
+                            % (pack, k, pk.NO_FILE_PACK, pk.NO_FILE_ID))
+        elif why == pk.R_FAULT:
+            self.error(E_UNSUPPORTED, tok, 'resource id with a high word: external reference '
+                                           '%d of pack %s is a pack without a file; the '
+                                           'compiler of the game fails on this' % (k, pack))
+        else:
+            self.error(E_UNSUPPORTED, tok, 'resource id with a high word (external reference '
+                                           '%d of pack %s): the pack names of this host do not '
+                                           'know the external references of a pack' % (k, pack))
 
     # -- names ---------------------------------------------------------------
 

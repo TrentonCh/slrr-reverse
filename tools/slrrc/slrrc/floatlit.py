@@ -7,23 +7,70 @@ The scanner hands over the digits before and behind the point
 (scanner.float_digits); this module turns them into the 32 bits of the
 `float` node.
 
-WHICH CONVERSION THE GAME USES IS AN OPEN QUESTION (notes/compiler_spec.md
-1.4 item 1).  Four conversions occur in the shipped classes, one per class
-file, and nothing in a source says which; the scanner of the exe has to be
-read to settle it.  All four are implemented and selectable:
+THE CONVERSION OF BUILD 940 IS SETTING B.  It was read in the exe
+(notes/exe_reads.md 1): the scanner converts a float token with the engine's
+own sscanf("%f"), whose digit loop (0x527530) is scalar SSE single precision,
+
+    uint32 ip = 0;   per leading digit:  ip = ip * 10 + digit       (wraps)
+    float  v  = (float)ip;                                 unsigned, one rounding
+    float  s  = 0.1f;                                      0x3DCCCCCD
+    per fraction digit d, at most 1,024 of them:
+        float t = (float)d * s;      MULSS
+        s = s * 0.1f;                MULSS
+        v = v + t;                   ADDSS
+
+with nothing wider than a single at any point.  There is no x87 arithmetic on
+the path, so the precision state of the x87 unit (which Direct3D changes)
+cannot change a bit, and there is one code path for a class compiled on
+demand and for System.compileAll.  B is therefore the default, and what a
+host has to use for every class it compiles.
+
+Two things the routine does that a decimal reader would not (both read, not
+run; no shipped source has either form):
+
+  - it stops at a first character that is no digit and stores nothing, and
+    the caller's result was preset to 0.0: the literal ".5" compiles to 0.0;
+  - only the first 1,024 fraction digits enter the sum (MAX_FRACTION_DIGITS).
+    No bit depends on that: the scale has long underflowed to zero by then
+    (from the 46th fraction digit on in single precision, from the 324th in
+    double).
+
+A, C AND D ARE HISTORY.  The shipped class files were not all written by the
+shipped exe: 215 of the 2,649 that the compiler reproduces hold a literal
+that B converts to other bits.  The same routine in x87 arithmetic gives
+them, and the 2005
+build of the game has it in that form (FILD / FMUL / FADDP, the scale
+multiplied by the double 0.1; notes/exe_reads.md 1.4).  Written as the single
+precision or double precision forms that give the same bits on every float
+literal of the corpus:
 
     A   s = 1;     per digit:  s = s / 10;      v = v + d * s      single precision
-    B   s = 0.1f;  per digit:  v = v + d * s;   s = s * 0.1f       single precision
+                   = the x87 code under 24-bit precision control
     C   as A, but d * s and the sum are formed in double before the store to float
+                   = x87 code at 53 or 64 bits that stores v and s to float
+                     after every statement
     D   s = 0.1f;  per digit:  v = v + d * s;   s = s / 10         double, one rounding at the end
+                   = the x87 code at 53 or 64 bits with v and s in registers
 
-v starts as the integer part, which is accumulated in an unsigned 32-bit
-integer and wraps.  Of the 2,514 oracle files with a float literal A
-reproduces 2,426, and A then B then C then D cover 2,426, 2,486, 2,508, 2,514;
-the results differ by at most 3 units in the last place.  A is the default
-for a new compilation (the largest group, and the only one the older builds
-show); the oracle tests take the setting per file from
-tests/baseline/m5_float.tsv.
+Which of the three a shipped file needs is not recorded in the file and
+follows from nothing in the install (tests/baseline/m5_float.tsv lists it per
+file); that those files came from earlier builds of the compiler is inferred,
+the builds are not at hand.  The three stay selectable for one purpose: to
+reproduce those shipped files in the oracle tests.  Never use them for a new
+compilation.  (One corner the corpus cannot decide and that is left as it
+was: an integer part above 2**24 with fraction digits.  The x87 code keeps
+the integer part exact until the first sum, A rounds it first.)
+
+The integer part is accumulated in an unsigned 32-bit integer and wraps, in
+all four.  The two exits of the routine (no digit before the point, 1,024
+fraction digits) are in the 2005 x87 code as well, so they are applied to all
+four.
+
+Of the 2,514 oracle files with a float literal B reproduces 2,298, A 2,426;
+A then B then C then D cover 2,426, 2,486, 2,508, 2,514.  The 136 class files
+the Build 940 exe itself wrote into the corpus (tests/baseline/m5_exe940.tsv)
+are all reproduced by B, 46 of them by neither A nor C.  The results of the
+four differ by at most 3 units in the last place.
 
 The arithmetic is written with explicit IEEE operations so that it does not
 depend on the floating point state of the host.  r32(x) rounds a double to
@@ -39,16 +86,18 @@ quotient is stored in a named variable of the type the form names; nothing
 that is rounded in between stands inside one expression:
 
     #pragma STDC FP_CONTRACT OFF            /* MSVC: #pragma fp_contract(off) */
+    if (no digit before the point) return 0;            /* ".5" is 0.0 */
     uint32_t ip;                            /* the integer part, modulo 2**32 */
+    at most 1024 fraction digits enter the loop
 
+    /* B */  float v = (float)ip;  float s = 0.1f;      /* the exe, the default */
+             per digit d:   float p = (float)d * s;
+                            s = s * 0.1f;
+                            v = v + p;
     /* A */  float v = (float)ip;  float s = 1.0f;
              per digit d:   s = s / 10.0f;
                             float p = (float)d * s;
                             v = v + p;
-    /* B */  float v = (float)ip;  float s = 0.1f;
-             per digit d:   float p = (float)d * s;
-                            v = v + p;
-                            s = s * 0.1f;
     /* C */  float v = (float)ip;  float s = 1.0f;
              per digit d:   double q = (double)s / 10.0;
                             s = (float)q;
@@ -81,20 +130,38 @@ texts (tests/floatmodel.py: wrong_builds; the 15,954 texts of the corpus and
     0.1 where the form says 0.1f                      B 417
     a rounding mode other than to-nearest, or         most literals; the
     flush-to-zero                                     literals below 1.2e-38
+    a library conversion (strtof, from_chars)         of the 15,954 texts of
+        in place of the loop: the correctly           the corpus A 4,676,
+        rounded value is not what the game            B 4,748, C 4,671, D 194
+        computes                                      (1 or 2 units in the
+                                                      last place, more where
+                                                      the integer part wraps);
+                                                      and ".5", which is 0.0
 
 So: compile sc_float.cpp for SSE2 (MSVC: /arch:SSE2 for a 32-bit build,
 /fp:precise, never /fp:fast; GCC and Clang: -msse2 -mfpmath=sse
 -ffp-contract=off, never -ffast-math), and run self_test() once at start-up.
 SELF_TEST holds 15 literals with their bits under each setting; every
 deviation of the list above changes at least one of them in every setting it
-touches.  A host whose self test fails must not write a class file: its
-float literals would differ from the reference by a unit in the last place
-and nothing else would show it.
+touches.  EDGE_TEST holds the forms the routine does not read as a decimal
+number.  A host whose self test fails must not write a class file: its float
+literals would differ from the reference by a unit in the last place and
+nothing else would show it.
 """
 import struct
 
 MODES = ('A', 'B', 'C', 'D')
-DEFAULT_MODE = 'A'
+EXE_MODE = 'B'              # the conversion the Build 940 exe contains
+DEFAULT_MODE = EXE_MODE     # ... and so the one for every new compilation
+MAX_FRACTION_DIGITS = 1024  # fraction digits that enter the sum
+
+# What each setting is, in one line (the command line and the tests print it).
+ORIGIN = {
+    'A': 'x87 code under 24-bit precision control (shipped files of earlier builds)',
+    'B': 'SSE single precision: the scanner of the Build 940 exe',
+    'C': 'x87 code at 53 or 64 bits, values stored to float (shipped files of earlier builds)',
+    'D': 'x87 code at 53 or 64 bits, values in registers (shipped files of earlier builds)',
+}
 
 _PACK_F = struct.Struct('<f')
 _PACK_I = struct.Struct('<I')
@@ -123,15 +190,26 @@ def int_part(digits):
 
 def float_bits(mode, int_digits, frac_digits):
     """Bit pattern of the literal  int_digits "." frac_digits  under the
-    conversion `mode` ('A', 'B', 'C' or 'D').  Either part may be empty."""
+    conversion `mode` ('A', 'B', 'C' or 'D').
+
+    A literal without a digit before the point is 0.0 whatever follows (the
+    routine of the exe stops at a first character that is no digit); a
+    literal without a digit behind it is its integer part.  Fraction digits
+    beyond MAX_FRACTION_DIGITS are not looked at."""
+    if int_digits == '':
+        return 0x00000000
     ip = int_part(int_digits)
+    if len(frac_digits) > MAX_FRACTION_DIGITS:
+        frac_digits = frac_digits[:MAX_FRACTION_DIGITS]
     if mode == 'B':
+        # the exe: t = d * s (MULSS); s = s * 0.1f (MULSS); v = v + t (ADDSS)
         v = r32(float(ip))
         s = F01
         for ch in frac_digits:
             d = ord(ch) - 48
-            v = r32(v + r32(d * s))
+            t = r32(d * s)
             s = r32(s * F01)
+            v = r32(v + t)
         return bits_of(v)
     if mode == 'C':
         v = r32(float(ip))
@@ -149,7 +227,7 @@ def float_bits(mode, int_digits, frac_digits):
             v = v + d * s
             s = s / 10.0
         return bits_of(v)
-    # A, the default
+    # A
     v = r32(float(ip))
     s = 1.0
     for ch in frac_digits:
@@ -203,12 +281,26 @@ SELF_TEST = (
     ('123456', '789', 0x47F12065, 0x47F12065, 0x47F12065, 0x47F12065),
 )
 
+# (integer digits, fraction digits, bits under every setting): the literal
+# forms the routine of the exe does not read as a decimal reader would.  A
+# port that converts with a library function fails here whatever its
+# arithmetic.
+#
+#   .5, .25, .0                no digit before the point: 0.0
+#   5.                         no digit behind it: the integer part
+EDGE_TEST = (
+    ('', '5', 0x00000000),
+    ('', '25', 0x00000000),
+    ('', '0', 0x00000000),
+    ('5', '', 0x40A00000),
+)
+
 
 def self_test():
-    """Does this build compute the bits of SELF_TEST?  Returns the rows it
-    does not, as (mode, literal text, bits computed, bits expected); [] when
-    all is well.  A host runs it once before it compiles anything (the
-    module text says what it guards against)."""
+    """Does this build compute the bits of SELF_TEST and EDGE_TEST?  Returns
+    the rows it does not, as (mode, literal text, bits computed, bits
+    expected); [] when all is well.  A host runs it once before it compiles
+    anything (the module text says what it guards against)."""
     bad = []
     for row in SELF_TEST:
         k = 0
@@ -217,4 +309,9 @@ def self_test():
             if got != row[2 + k]:
                 bad.append((mode, row[0] + '.' + row[1], got, row[2 + k]))
             k += 1
+    for row in EDGE_TEST:
+        for mode in MODES:
+            got = float_bits(mode, row[0], row[1])
+            if got != row[2]:
+                bad.append((mode, row[0] + '.' + row[1], got, row[2]))
     return bad

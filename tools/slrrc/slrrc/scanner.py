@@ -470,6 +470,26 @@ def _number(source, pos, n):
 # ---------------------------------------------------------------------------
 # literal forms no shipped source uses
 # ---------------------------------------------------------------------------
+#
+# What the scanner of the Build 940 exe does with them was read in its flex
+# tables and its literal actions (notes/exe_reads.md 1.5); none was run:
+#
+#   int above 32 bits          decimal and hex wrap modulo 2**32: as here
+#   1.5F, 5.                   float rules with [fF] and without fraction
+#                              digits: as here
+#   .5                         matched as a float, converted to 0.0: as here
+#                              (floatlit.float_bits)
+#   1.5d, 1.5e3                suffix d is reported as "NOT SUPPORTED DATA
+#                              TYPE"; there is no exponent rule (1.5e3 is the
+#                              float 1.5 and the identifier e3): errors here
+#   012, 08                    NOT AS HERE.  0[0-7]+ is the octal rule of the
+#                              exe: it reports "octal values not supported"
+#                              and leaves the value unassigned; 08 is two
+#                              tokens.  Here both are read as decimal, with
+#                              the warning below (an error in strict mode)
+#   0x10L                      accepted by the exe as the int 0x10; a
+#                              malformed number here
+# They stay what they were, W_UNVERIFIED or an error: no class file shows any.
 
 def _check_int(source, pos, end, line, diags):
     text = source[pos:end]
@@ -481,7 +501,8 @@ def _check_int(source, pos, end, line, diags):
         return
     if len(text) > 1 and text[0] == '0':
         diags.unverified(line, column_at(source, pos),
-                         'decimal int literal with a leading zero, read as decimal')
+                         'decimal int literal with a leading zero, read as decimal (the '
+                         'scanner of the game reports "octal values not supported")')
     digits = text.lstrip('0')
     if len(digits) > 10 or (len(digits) == 10 and digits > '2147483647'):
         diags.unverified(line, column_at(source, pos),
@@ -502,7 +523,8 @@ def _check_float(source, pos, end, line, diags):
     if last == 'F':
         diags.unverified(line, col, 'float literal with suffix F')
     if body[0] == '.':
-        diags.unverified(line, col, 'float literal without digits before the point')
+        diags.unverified(line, col, 'float literal without digits before the point: it is '
+                                    '0.0, as the scanner of the game converts it')
     elif body[len(body) - 1] == '.':
         diags.unverified(line, col, 'float literal without digits after the point')
 

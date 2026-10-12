@@ -1,13 +1,16 @@
 #!/usr/bin/env python3
-"""gen_pack_table.py - print the pack name table of slrrc/packs.py.
+"""gen_pack_table.py - print the pack name table of tests/pack_oracle.py.
 
     python -I tests/gen_pack_table.py
 
 The pool of a class spells the pack of a resource id in one way per pack over
-all 2,993 shipped classes (notes/compiler_spec.md 1.4 item 2).  This script
-reads every pool of the corpus and prints those spellings as the lines of
-TABLE_940, sorted without regard to letter case.  tests/t4_trees.py checks
-that the table in the package still equals what the pools hold.
+all 2,993 shipped classes (notes/exe_reads.md 2: the spelling of the pack's
+first registration in the session).  This script reads every pool of the
+corpus and prints those spellings as the lines of TABLE_940, sorted without
+regard to letter case.  The table is a test oracle, not an input of the
+compiler: tests/t4_trees.py checks that it still equals what the pools hold,
+and that the replayed pack table of the package ends up with every one of its
+spellings.
 
 It also says how the table relates to the pack files of the install.
 """

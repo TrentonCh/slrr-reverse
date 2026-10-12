@@ -448,6 +448,12 @@ finding 2).
 
 Neither was guessed away.
 
+(Later, M9: both were read in the exe, `exe_reads.md`. The game uses setting
+B, so B is the default now, the cache was regenerated and `m6.sha256`
+re-baselined for the 10 files that changed, as the paragraph below foresaw.
+The pack names come from the replayed pack table of the resource engine;
+`TablePackNames` and `TABLE_940` moved to `tests\pack_oracle.py`.)
+
 **Float literals.** `Options.float_mode` and `--float` select one of the four
 conversions; A is the default for a new compilation, and the 635 class files
 of the cache use A (575 of their sources hold a float literal, 1,817 literals).

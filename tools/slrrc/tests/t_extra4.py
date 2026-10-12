@@ -48,10 +48,12 @@ import harness              # noqa: E402
 import symbols              # noqa: E402  lib
 import spike_compiler       # noqa: E402  spec
 import t4_trees             # noqa: E402
+import pack_oracle          # noqa: E402
 
 import slrrc                            # noqa: E402
 from slrrc import classes               # noqa: E402
 from slrrc import dump                  # noqa: E402
+from slrrc import floatlit              # noqa: E402
 from slrrc import packs                 # noqa: E402
 from slrrc import scanner as sc         # noqa: E402
 from slrrc.diag import Diagnostics      # noqa: E402
@@ -267,7 +269,7 @@ def codes(res):
 
 def compile_case(text, prov, strict=False, mode='A', pk=None):
     if pk is None:
-        pk = packs.TablePackNames(packs.TABLE_940, None)
+        pk = harness.table_packs()
     return slrrc.emit_trees(text, 'case.java', prov, pk,
                             slrrc.Options(strict=strict, float_mode=mode))
 
@@ -1262,8 +1264,9 @@ def details(prov):
         if got != '1 L3 float 0x%08X' % want[mode]:
             bad.append('float setting %s: %s' % (mode, got))
     res = slrrc.emit_trees(text, 'case.java', prov, packs.PackNames())
-    if first_tree(res).split('\n')[1] != '1 L3 float 0x3A2A64C1':
-        bad.append('the default float setting is not A')
+    if first_tree(res).split('\n')[1] != '1 L3 float 0x3A2A64C4' or \
+            slrrc.Options().float_mode != 'B' or floatlit.DEFAULT_MODE != floatlit.EXE_MODE:
+        bad.append('the default float setting is not B, the conversion of the exe')
     try:
         compile_case(text, prov, mode='E')
         bad.append('float setting E accepted')
@@ -1289,23 +1292,38 @@ def details(prov):
                '1 L4 rid no\\such\\pack.rpk:0x00000012',
                '1 L5 rid MAPS\\roc_TRACK\\smallmap.rpk:0x00000001']:
         bad.append('pack names as written: %r' % got)
-    got = rids(packs.TablePackNames(packs.TABLE_940, None))     # the table alone
+    got = rids(pack_oracle.TablePackNames(pack_oracle.TABLE_940, None))     # the table alone
     if got != ['1 L3 rid cars\\racers\\Duhen.rpk:0x0000002A',
                '1 L4 rid no\\such\\pack.rpk:0x00000012',
                '1 L5 rid maps\\ROC_Track\\smallmap.rpk:0x00000001']:
         bad.append('pack names from the table: %r' % got)
     files = ['cars\\racers\\Duhen.rpk', 'maps\\ROC_track\\smallmap.rpk', 'Other\\Pack.rpk']
-    got = rids(packs.TablePackNames(packs.TABLE_940, files))    # the table over the files
+    got = rids(pack_oracle.TablePackNames(pack_oracle.TABLE_940, files))    # the table over the files
     if got != ['1 L3 rid cars\\racers\\Duhen.rpk:0x0000002A',
                '1 L4 rid system.rpk:0x00000000',
                '1 L5 rid maps\\ROC_Track\\smallmap.rpk:0x00000001']:
         bad.append('pack names from the table and the files: %r' % got)
-    got = rids(packs.TablePackNames((), ['CARS\\Racers\\DUHEN.rpk']))     # the files alone
+    got = rids(pack_oracle.TablePackNames((), ['CARS\\Racers\\DUHEN.rpk']))     # the files alone
     if got[0] != '1 L3 rid CARS\\Racers\\DUHEN.rpk:0x0000002A' or \
             got[1] != '1 L4 rid system.rpk:0x00000000':
         bad.append('pack names from the files: %r' % got)
-    if len(packs.TABLE_940) != 126 or len(set(packs.lower(p) for p in packs.TABLE_940)) != 126:
+    if len(pack_oracle.TABLE_940) != 126 or \
+            len(set(packs.lower(p) for p in pack_oracle.TABLE_940)) != 126:
         bad.append('the pack table does not hold 126 packs')
+    # the pack table of a session: the first registration decides the spelling
+    listing = ['cars\\racers\\Duhen.rpk', 'maps\\ROC_track\\smallmap.rpk', 'Other\\Pack.rpk',
+               'system.rpk']
+    got = rids(packs.session_940(packs.ListedPackFiles(listing), listing))
+    if got != ['1 L3 rid cars\\racers\\Duhen.rpk:0x0000002A',        # scanned: the listing
+               '1 L4 rid system.rpk:0x00000000',                      # no file
+               '1 L5 rid MAPS\\roc_TRACK\\smallmap.rpk:0x00000001']:  # not scanned: as written
+        bad.append('pack names from the replayed pack table: %r' % got)
+    table = packs.session_940(packs.ListedPackFiles(listing), listing)
+    first = rids(table)
+    again = compile_case(M('int s = maps.ROC_Track.smallmap:0x2r;'), prov, pk=table)
+    line = dump.dump_tree(again.classes[0].trees[0]).split('\n')[1]
+    if line != '1 L3 rid MAPS\\roc_TRACK\\smallmap.rpk:0x00000002' or first != got:
+        bad.append('the first spelling asked for does not stay: %r' % line)
     # the classes the emitter looked at are consulted classes
     res = compile_case(S('t.m();'), prov)
     for name in ('p.T', 'p.A', 'java.lang.Object'):
@@ -1398,7 +1416,8 @@ class Tally(object):
     def one(self, text, where):
         self.texts += 1
         try:
-            res = slrrc.emit_trees(text, 'x.java', self.prov, self.pk, slrrc.Options())
+            res = slrrc.emit_trees(text, 'x.java', self.prov, self.pk,
+                                   slrrc.Options(float_mode='A'))    # as the spike
         except Exception as x:
             self.exceptions.append('%s: %r' % (where, x))
             return
