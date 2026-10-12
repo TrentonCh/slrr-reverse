@@ -504,3 +504,58 @@ start of its sections 6 and 7 and in its dependency map.
 
 Next: a car in the garage (the `car` native type, parts on slots, lit
 materials with environment maps), TASKS.md step 3.
+
+### 2026-10-11 (session 6, later): a car, and the compiler
+
+**A car in the garage** (2f5111a, 430ab5e). Mapped first, as the garage
+was (notes in `../slrr-ghidra/notes/m3/`), then built in two halves
+against an offline reference model, because no stock frame with a car
+exists yet. What the exe does, as built into the host:
+
+- The chassis pack entry is the car: `native car <cfg>` is the part type
+  plus wheels, seats and a drive train; `Vehicle` is a script handle on the
+  same node. Slots hang on bodies chosen by `slottype` (reference body,
+  steering body, and per wheel the wheelbone, hub and a_arm bodies).
+- A standing car is posed without physics: `setPos` / `setMatrix` put the
+  middle of the four static tyre contact points on the position, level the
+  body and write each suspension length; wheel bodies follow from mount,
+  length, steer angle (Ackermann) and the arm / hub geometry the suspension
+  scripts set through `WheelRef`. `Chassis.forceUpdate` calls the scripts'
+  `updatevariables`.
+- What is drawn depends on the level of detail (the garage camera's
+  lodBias 1 selects the highest level), on `linked` two-bone renders
+  (springs, shocks, half-shafts between two slots) and on paint.
+- Paint is a texture: `Part.setTexture` replaces, in the first render
+  entry's instance, the first texture line equal to the cfg `texture` id.
+  The body classes send white as D3D diffuse.
+- Lit materials are 17 class programs. The environment map is added after
+  lighting, `lit x base + env x F`, sampled by a camera-space reflection
+  texgen with a texture matrix; nearly every car material uses the global
+  envmap set by `GfxEngine.setGlobalEnvmap`.
+- Shadows are a render-to-texture pass per owner: casters (render-type
+  flag 8) white on black along the light, then the ground redrawn with the
+  projected texture.
+- The garage top bar cannot be operated from the keyboard (the controller
+  is in the camera set there), so the unattended route to a car is LOAD CAR
+  from the main menu.
+
+Two host bugs fell out on the way. The static `File` natives read a `name`
+field of their String argument, got null and worked on a file called
+`<null>` (3d8c8a3): no save ever copied its files and a loaded career never
+got its car. And the INVO v4 chunk directory was read shifted by one field,
+which rejected every two-bone mesh.
+
+**The compiler** (1342f63, `tools/slrrc`). With the file natives fixed, a
+real 2023 career stopped in the main menu on a rim whose class exists only
+as source. The exe compiles such a class on demand; the host could not. The
+rules of the exe's compiler were learned from the 2,819 shipped source /
+class pairs instead of from the exe: a strict class-file reader and writer
+(round trip of all 2,921 files), a parser for all 3,454 sources, and models
+of the declarations, the constant pool, expressions and statements, each
+proven on the whole corpus. The reference compiler built from them
+reproduces 2,649 of the 2,651 comparable class files byte for byte and
+compiles the 635 sources that ship without a class. The host reads such
+classes from a cache directory (`SLRR_CLASS_CACHE`), never writing into
+the install; with it that career loads into the garage with its car.
+Facts about the format that the docs had wrong are listed at the start of
+ENGINE.md section 4.3.

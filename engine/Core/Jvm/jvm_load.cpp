@@ -57,6 +57,45 @@ bool jvm_file_exists(const char* path) {
   return false;
 }
 
+// Fork: class cache. The exe compiles X/src/Name.java to X/Name.class when a
+// class is loaded and its file is missing or stale (JavaMachine_loadClass ->
+// JVM_compileSource, 940 @ 0x55BEC0 / 0x5598F0), writing into the install.
+// The host has no compiler in the engine yet: tools/slrrc compiles the
+// sources that ship without a class into a directory laid out like the game
+// tree, and SLRR_CLASS_CACHE=<dir> names it. A class file that is missing in
+// the install is then read from the same relative path under that directory.
+// Nothing is written into the install. Unset = no fallback.
+std::string jvm_class_cache_path(const std::string& game_root,
+                                 const std::string& path) {
+  static const std::string cache = [] {
+    const char* e = std::getenv("SLRR_CLASS_CACHE");
+    std::string c = (e && e[0]) ? e : "";
+    while (!c.empty() && (c.back() == '/' || c.back() == '\\')) c.pop_back();
+    return c;
+  }();
+  if (cache.empty() || path.empty()) return {};
+  auto norm = [](std::string s) {
+    for (char& c : s) {
+      if (c == '\\') c = '/';
+      else c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    }
+    return s;
+  };
+  std::string rel = path;
+  std::string groot = game_root;
+  while (!groot.empty() && (groot.back() == '/' || groot.back() == '\\')) groot.pop_back();
+  if (!groot.empty() && rel.size() > groot.size() &&
+      norm(rel.substr(0, groot.size())) == norm(groot) &&
+      (rel[groot.size()] == '/' || rel[groot.size()] == '\\')) {
+    rel = rel.substr(groot.size() + 1);
+  }
+  while (rel.size() >= 2 && rel[0] == '.' && (rel[1] == '/' || rel[1] == '\\')) rel = rel.substr(2);
+  while (!rel.empty() && (rel[0] == '/' || rel[0] == '\\')) rel = rel.substr(1);
+  // An absolute path outside the game root has no place in the cache.
+  if (rel.empty() || rel.find(':') != std::string::npos) return {};
+  return cache + "/" + rel;
+}
+
 // Soft stand-in for Classpath_resolvePackageDir @ 0x0041D290 + path join used
 // by JVM_loadClassByFqn @ 0x00410630 → JavaMachine_loadClass @ 0x00410430
 // (`{dir}\\{simple}.class`). Package→filesystem map is kClasspathMap.
@@ -140,6 +179,17 @@ void Jvm::set_game_root(const char* root) {
 
 bool Jvm::load_class_file_named(const char* path, std::string* first_fqn) {
   if (!path || !path[0]) return false;
+  // Fork: a class that exists only as source in the install may have been
+  // compiled into the class cache (see jvm_class_cache_path).
+  std::string cached;
+  if (!jvm_file_exists(path)) {
+    cached = jvm_class_cache_path(game_root_, path);
+    if (cached.empty() || !jvm_file_exists(cached.c_str())) cached.clear();
+    else {
+      std::fprintf(stderr, "[jvm] class from cache %s" "\n", cached.c_str());
+      path = cached.c_str();
+    }
+  }
   std::vector<JvmClass> all;
   std::string err;
   if (!tufa_load_file_all(path, &all, &err) || all.empty()) return false;
@@ -229,6 +279,14 @@ bool Jvm::load_class(const char* fqn) {
   if (jvm_file_exists(path.c_str())) {
     if (!load_class_file(path.c_str())) return false;
     return find_class(fqn) != nullptr;
+  }
+  {
+    // Fork: the class cache, before the sibling scan (jvm_class_cache_path).
+    const std::string cached = jvm_class_cache_path(game_root_, path);
+    if (!cached.empty() && jvm_file_exists(cached.c_str())) {
+      std::fprintf(stderr, "[jvm] class from cache %s" "\n", cached.c_str());
+      if (load_class_file(cached.c_str()) && find_class(fqn)) return true;
+    }
   }
 
   // Sibling class: MainMenuDialog lives inside MainMenu.class (multi-TUFA).

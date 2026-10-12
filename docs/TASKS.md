@@ -15,21 +15,25 @@ Old-build regression (from `E:\NFS.SLRR Edition\NFS.SLRR Edition`):
 `timeout 150 slrr_engine.exe --game --no-wait` must print vehicleTypes=25,
 `hub EXIT ok=1` and exit 5. Delete `tree_rpk_scan_boot` after every run.
 
-## Next steps (ordered, 2026-10-11)
+## Next steps (ordered, 2026-10-11 evening)
 
-Where it stands: the 940 scripts boot to the main menu, NEW CAREER takes
-a typed name and enters `java.game.Garage`, ENTER closes the welcome
-dialog. The 2D layer is pixel identical to the stock frames at 1366x768
-(75569af) and the 3D garage behind it matches the stock frame (06384ba:
-luminance difference of the 3D rows 0.52 of 255, every shell, prop and
-lift-support material mean equal). A 48 s garage run logs one script
-error (the `trim` null) and one legacy `class file missing` line.
-Unattended check, garage with the welcome dialog closed:
-`SLRR_PE_BOOT_KEYS="13:0x1C,16:0x1C,19:0x14,19.4:0x12,19.8:0x20,22:0x1C,36:0x1C,42:0x1C"`
-with `SLRR_PE_BOOT_SECONDS=48`, then
-`python ../slrr-ghidra/notes/m2/m2_check.py <frame.bmp>` (A must be 0 / 0,
-B1 at most 7). Without the last two keys and 40 s the frame has the
-welcome dialog. Stock frames: `../slrr-ghidra/notes/reference_frames/`.
+Where it stands: the 940 scripts boot to the main menu; NEW CAREER enters
+the garage, which matches the stock frame in 2D and 3D; LOAD CAR gives a
+painted, reflective car standing on its wheels with a shadow (430ab5e);
+LOAD CAREER loads a stock-written 2023 career with its car, using two
+classes compiled from source by `tools/slrrc` through the class cache.
+All Build 940 tests run in the test copy `D:\SLRR-test`, never in the
+Steam install. Unattended checks (cwd = the test copy):
+- garage: `SLRR_PE_BOOT_KEYS="13:0x1C,16:0x1C,19:0x14,19.4:0x12,19.8:0x20,22:0x1C,36:0x1C,42:0x1C"`,
+  48 s, then `python ../slrr-ghidra/notes/m2/m2_check.py <frame.bmp>` (A
+  0 / 0, B1 at most 0.6; 0.42 today);
+- car: `13:0x1C,16:0xCB,18.5:0xCB,21:0xCB,23.5:0x1C,26.5:0x14,26.9:0x1E,27.3:0x32,27.7:0x1E,28.1:0x1F,30:0x1C`
+  (LOAD CAR, type `tamas`), 60 s, then `m3_check.py` from
+  `../slrr-ghidra/notes/m3/` (0 FAIL);
+- career with a compiled class: two LEFT instead of three, type the
+  profile name, with `SLRR_CLASS_CACHE=<tools/slrrc out dir>`.
+Stock frames: `../slrr-ghidra/notes/reference_frames/` (none with a car
+yet).
 
 1. UI pass: done (75569af). What the exe does and what the host got wrong
    is in ENGINE.md section 7 and docs/VM.md session 5. Left over, none
@@ -109,8 +113,15 @@ welcome dialog. Stock frames: `../slrr-ghidra/notes/reference_frames/`.
    natives answering from the objects, `forceUpdate` running the scripts'
    `updatevariables`, level of detail, two-bone meshes and `linked`
    renders. The loaded car stands assembled on its wheels; every part pose
-   equals the offline reference model within 0.1 mm. Running: lit material
-   classes with environment map and specular, paint, shadows.
+   equals the offline reference model within 0.1 mm.
+   Done (430ab5e): the 17 lit material classes with the environment map
+   added after lighting and specular, back-face culling in those
+   programs, paint as a texture swap on the first render entry, the
+   shadow pass per owner with the options read from `save/game/options`.
+   The lift in the empty garage now matches stock in its metals and its
+   shadow marks. Left over: MixVCA lit sections (33 in the install) have
+   no program; the two other shadow kinds; casters are redrawn from
+   system memory; `render_d3d9_part1.inc` is at 127 of 128 KB.
    Known wrong: the top bar's vehicle class and horsepower (old dyno
    stand-in; the 940 combustion cycle `calcDyno` 0x4CBA80 is not ported);
    front tyres of strut cars dip 4 to 21 mm into the floor as transcribed
@@ -136,29 +147,26 @@ welcome dialog. Stock frames: `../slrr-ghidra/notes/reference_frames/`.
    Class_newInstance behaviour in the exe).
 6. Retire the C++ Soft boot shims; then physics / FFB behind the native
    contract (FORK.md).
-7. Source compiler (in progress 2026-10-11; everything is still outside the
-   repo in `../slrr-ghidra/compiler/`: `notes/compiler_spec.md` is the plan,
-   `lib/` the strict class-file tools, `spec/spike_compiler.py` the
-   prototype). Proven so far: all 3,454 sources tokenise and parse; the
-   declarations, the constant pool, statements and expressions are
-   reproduced from source; the prototype's output is byte-identical to
-   2,649 of the 2,651 comparable shipped class files and it compiles all
-   635 source-only classes. Being built: the clean reference package
-   `slrrc` (Python, milestones M1 to M5) and an offline class cache for
-   the 635. Then: the host class loader looks in the cache (no write into
-   the install), the C++ port linked into the engine, and two exe reads
-   (float literal conversion, pack-name spelling).
-   Original note: standalone tool (ENGINE.md M3, parallel work).
-   Now needed by real saves: since the File natives work (see Done),
-   LOAD CAREER builds the saved car, and a stock-written 2023 career in
-   the install has a rim whose class exists only as source
-   (`parts/wheels/rims/scripts/src/rim_MT_Mescaline_15_0_15_...java`);
-   its part becomes a plain GameRef, the Part scripts fail and the load
-   never leaves the main menu. The
-   stock exe compiles `X/src/Name.java` to `X/Name.class` on every class
-   load when the class is missing or its time stamp differs from the
-   source; 635 sources ship without a class (lights, doors, kits, some
-   wheels and running gear; no chassis). Oracle: 2,819 shipped pairs.
+7. Source compiler. Done so far: the reference compiler `tools/slrrc`
+   (1342f63; Python, standard library only; `tests/run_tests.py m1..m6`
+   from `tools/slrrc`, about 85 s): every source tokenises and parses,
+   2,649 of 2,651 comparable shipped class files are reproduced byte for
+   byte, all 635 source-only classes compile. The host reads classes
+   that are missing in the install from the directory named by
+   `SLRR_CLASS_CACHE` (same relative path; nothing is written into the
+   install); fill it with
+   `python -I slrrc --root <game dir> --out out\class_cache --only-missing`.
+   With it a stock-written career whose car has a source-only rim and
+   tyre loads into the garage. Open:
+   - the C++ port linked into the engine (`engine/Core/Jvm/Compiler`),
+     equal to the reference at every level (`--impl cpp` hook in the
+     tests), then compile on demand in the class loader with a cache;
+   - two exe reads: the float literal conversion (four variants occur in
+     the shipped classes; the cache uses variant A, so a decimal literal
+     can be off by up to 3 units in the last place) and the spelling of
+     pack names in rid entries (a 126-entry table meanwhile);
+   - stale detection for cache entries (the manifest records source size
+     and hash; the host does not check it yet).
 8. Frame-loop differences listed in ENGINE.md section 3 (rate gates, four
    `input_tick` calls per iteration, the load rate that never reaches
    the pump). The window size from `save/game/options` is done (75569af).
@@ -236,6 +244,9 @@ comes after the menu is up.
 | Garage scene: native ground / camera / part types, POLY shell, prelit materials with lightmaps, horizon group, lights, node identity and `install` | 06384ba | 3D garage matches the stock frame (luminance difference 0.52, was 82.7) |
 | Static `File.exists / delete / copy / move` take their String argument | 3d8c8a3 | they read a `name` field of the String, got null and worked on a file called `<null>`; saves never cleaned or copied files, a loaded career never got its car |
 | Car in the garage, first half: `native car` type and analytic stance, Part / Chassis / WheelRef natives on the objects, level of detail, two-bone meshes and linked renders | 2f5111a | LOAD CAR gives an assembled car on its wheels; unpainted until the second half |
+| tools/slrrc: reference compiler for the script dialect, with its proofs | 1342f63 | 2,649 of 2,651 shipped class files byte-identical; all 635 source-only classes compile |
+| Car in the garage, second half: lit material classes with environment map and specular, paint, shadows | 430ab5e | painted car with reflections and a shadow; the lift matches stock in metals and shadow marks |
+| Class cache: classes missing in the install are read from `SLRR_CLASS_CACHE` | (this commit) | a stock-written career with a source-only rim and tyre loads into the garage |
 
 ## In progress
 
