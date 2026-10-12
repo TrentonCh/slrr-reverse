@@ -226,11 +226,22 @@ have no class. Corrections to this section and to 4.2 and 4.4:
 - 15 pairs are stale (the source was edited after the class was compiled) and 2 more were
   compiled against classes that have since changed, so 2,649 files is the reachable
   byte-identical goal, not 2,663.
-- Two things come from outside the source and are still open: the float literal
-  conversion (four conversions occur in the shipped classes, one per file; about 19% of
-  float nodes are 1 or 2 ulp off the correctly rounded value) and the spelling of pack
-  names in rid entries (it comes from the resource system; a 126-entry table reproduces
-  all of them). Both need the exe's scanner and resource code to be read.
+- Two things come from outside the source; both were read in the exe on 2026-10-12
+  (`tools/slrrc/notes/exe_reads.md`). Float literals: the scanner (yylex 0x5523F0)
+  converts with the engine's own `sscanf("%f")` (0x527530), a scalar SSE
+  single-precision digit loop (`t = d * s; s = s * 0.1f; v = v + t` after a 32-bit
+  integer part), which is why about 19% of float nodes are 1 or 2 ulp off the correctly
+  rounded value. The other three bit patterns in shipped classes are the same statements
+  in x87 arithmetic from earlier builds. Pack names: the parser joins the dotted name
+  with backslashes plus `.rpk` in the source's letter case, and at emission the
+  resource engine's pack table resolves it (find-or-add, case-insensitive, a new record
+  keeps the first asker's spelling; a pack whose file cannot be opened resolves to
+  `system.rpk` id 0). So the pooled spelling is that of the pack's first registration
+  in the process, e.g. the directory-listing name for packs `GameLogic` scans.
+- The exe does write compiled classes into the install: 136 class files of the Steam
+  install carry the DOS time stamp `compileSource` gives a class it writes (the
+  source's time, 4 s granularity) and NTFS creation times inside the one stock run of
+  2026-10-08; all 136 are byte-identical to the reference compiler's output.
 - Flag 0x80 exists on 20 methods of `Vector` and `Signal` (name "synchronized" inferred).
 
 A `.class` is one or more concatenated blobs: a 12-byte header (`TUFA`, u32 4, u32 build

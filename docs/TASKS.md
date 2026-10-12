@@ -161,10 +161,14 @@ yet).
    - the C++ port linked into the engine (`engine/Core/Jvm/Compiler`),
      equal to the reference at every level (`--impl cpp` hook in the
      tests), then compile on demand in the class loader with a cache;
-   - two exe reads: the float literal conversion (four variants occur in
-     the shipped classes; the cache uses variant A, so a decimal literal
-     can be off by up to 3 units in the last place) and the spelling of
-     pack names in rid entries (a 126-entry table meanwhile);
+   - done (a4c77f2): the two exe reads. Float literals use the engine's
+     own SSE single-precision `sscanf("%f")` (setting B, now the
+     default; the 136 class files the Build 940 exe itself wrote are
+     byte-identical under it). Pack names come from the resource
+     engine's pack table (first registration spelling), replayed by
+     `packs.PackTable`. Host side still open: `rpak.cpp` does not keep
+     the first spelling of a pack, so the engine cannot answer
+     `PackNames` yet (needed by the C++ port);
    - stale detection for cache entries (the manifest records source size
      and hash; the host does not check it yet).
 8. Frame-loop differences listed in ENGINE.md section 3 (rate gates, four
@@ -246,7 +250,7 @@ comes after the menu is up.
 | Car in the garage, first half: `native car` type and analytic stance, Part / Chassis / WheelRef natives on the objects, level of detail, two-bone meshes and linked renders | 2f5111a | LOAD CAR gives an assembled car on its wheels; unpainted until the second half |
 | tools/slrrc: reference compiler for the script dialect, with its proofs | 1342f63 | 2,649 of 2,651 shipped class files byte-identical; all 635 source-only classes compile |
 | Car in the garage, second half: lit material classes with environment map and specular, paint, shadows | 430ab5e | painted car with reflections and a shadow; the lift matches stock in metals and shadow marks |
-| Class cache: classes missing in the install are read from `SLRR_CLASS_CACHE` | (this commit) | a stock-written career with a source-only rim and tyre loads into the garage |
+| Class cache: classes missing in the install are read from `SLRR_CLASS_CACHE` | d3872e1 | a stock-written career with a source-only rim and tyre loads into the garage |
 
 ## In progress
 
