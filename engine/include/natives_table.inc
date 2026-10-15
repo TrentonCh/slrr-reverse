@@ -144,6 +144,12 @@ void java_io_Input_checkHotkeys(InvObject* inst, InvObject* infocus);
 void java_io_Input_flushHotkeys();
 InvObject* java_io_MouseCursor_getPos(InvObject* self);
 InvObject* java_io_MouseCursor_getPickedPos(InvObject* self);
+// The (Vector3) overloads (PE 940 FUN_004df3b0, FUN_004df100). Their rows
+// carry the descriptor itself, "(Ljava.lang.Vector3;)Ljava.lang.Vector3;":
+// a Java-form row compares as "(Ljava.lang.Object;)..." and would never be
+// the descriptor match of resolve_native.
+InvObject* java_io_MouseCursor_getPos_1(InvObject* self, InvObject* v);
+InvObject* java_io_MouseCursor_getPickedPos_1(InvObject* self, InvObject* v);
 InvObject* java_lang_Float_toString(float f, InvObject* fmt);
 void java_lang_GameType_remNotification(InvObject* self, InvObject* ref, int32_t etype);
 void java_lang_GameType_addNotification(InvObject* self, InvObject* ref, int32_t etype, int32_t ealias, InvObject* custmsg);

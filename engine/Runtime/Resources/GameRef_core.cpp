@@ -1347,11 +1347,21 @@ InvObject* java_util_resource_GameRef_getScriptInstance(InvObject* self) {
     InvObject* node = gameref_node_object(self);
     if (node &&
         script_node_object(java_util_resource_ResourceRef_id(node)) == node) {
-      std::lock_guard<std::mutex> lock(g_gr_mu);
-      auto it = g_refs.find(node);
-      if (it == g_refs.end() || it->second.script_class.empty())
-        return nullptr;
-      return it->second.script;
+      {
+        std::lock_guard<std::mutex> lock(g_gr_mu);
+        auto it = g_refs.find(node);
+        if (it != g_refs.end() && !it->second.script_class.empty())
+          return it->second.script;
+      }
+      // A node GameType.createNativeInstance made (a Group, an Osd, the
+      // Controller): the factory FUN_005240e0 is called with `script =
+      // this`, so *(payload+0x50) is the script object the native was called
+      // on, which is the node object here. Group.findGadgetEx reads `new
+      // ResourceRef(id).getParent().getScriptInstance()` and wants the
+      // Group (Group.class L101-L104). Inferred from the factory's
+      // arguments (M4 spec step 2 item 8); no run of M4 drops one gadget on
+      // another.
+      return gametype_native_created(node) ? node : nullptr;
     }
   }
   constexpr int32_t kInstanceGame = 1;

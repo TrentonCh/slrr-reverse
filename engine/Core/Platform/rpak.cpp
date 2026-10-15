@@ -497,8 +497,25 @@ const RpakEntry* rpak_find_entry(int32_t res_id) {
   return nullptr;
 }
 
+// The pack whose remap table rpak_remap_local_id_unlocked reads for
+// `pack_id`: the first of g_packs with that id, or null.
+static const RpakPack* rpak_remap_pack_unlocked(int32_t pack_id) {
+  for (const auto& p : g_packs) {
+    if (p.pack_id == pack_id) return &p;
+  }
+  return nullptr;
+}
+
 // Soft PE ResPack_RemapLocalId @ 0x544590 (ASM stride 66 @ 0x5445DB..E2).
-static uint32_t rpak_remap_local_id_unlocked(int32_t pack_id, uint32_t local_id) {
+// `pack_known`: the caller has looked `pack` up with
+// rpak_remap_pack_unlocked(pack_id) already; else it is looked up here, as
+// late as before. Host only: the child scan (collect_children_unlocked)
+// remaps every entry of every pack, and looking its pack up again for each
+// entry made one scan cost entries x packs; the legacy
+// ResourceRef.countChildNodes walks of the old-build regression run that
+// scan for most of their 2,000,000 TREE steps.
+static uint32_t rpak_remap_local_id_in(int32_t pack_id, uint32_t local_id,
+                                       const RpakPack* pack, bool pack_known) {
   if (static_cast<uint32_t>(pack_id) == 0xFFFFu) return local_id;  // @ 0x54459D
   const uint32_t lo = local_id & 0xFFFFu;                          // @ 0x5445A5
   const uint32_t hi = local_id >> 16;                              // @ 0x5445AB
@@ -508,19 +525,17 @@ static uint32_t rpak_remap_local_id_unlocked(int32_t pack_id, uint32_t local_id)
   if (hi >= eng_count) return 0;                                   // @ 0x5445C6
   if (hi == 0) return lo | (static_cast<uint32_t>(pack_id) << 16); // @ 0x5445F6
 
-  const RpakPack* pack = nullptr;
-  for (const auto& p : g_packs) {
-    if (p.pack_id == pack_id) {
-      pack = &p;
-      break;
-    }
-  }
+  if (!pack_known) pack = rpak_remap_pack_unlocked(pack_id);
   if (!pack) return 0;
   const uint32_t lim = pack->toc_lim_a + pack->toc_lim_b;  // @ 0x5445CC
   if (hi > lim) return 0;                                 // @ 0x5445D4 ja
   if (hi >= pack->remap_toc.size()) return 0;
   const uint32_t ext_hi = pack->remap_toc[hi].pack_hi;     // table+66*hi+2
   return lo | (ext_hi << 16);                             // @ 0x5445EA
+}
+
+static uint32_t rpak_remap_local_id_unlocked(int32_t pack_id, uint32_t local_id) {
+  return rpak_remap_local_id_in(pack_id, local_id, nullptr, false);
 }
 
 uint32_t rpak_remap_local_id(int32_t pack_id, uint32_t local_id) {
@@ -597,10 +612,13 @@ std::vector<int32_t> collect_children_unlocked(int32_t parent_res_id) {
   const int32_t parent_local = static_cast<int32_t>(rpak_id_local(parent_res_id));
   for (const auto& pack : g_packs) {
     if (!pack.parsed_entries) continue;
+    // The remap of this pack's ids reads one pack table: looked up once here,
+    // not once per entry (g_packs does not change while g_mu is held).
+    const RpakPack* remap_pack = rpak_remap_pack_unlocked(pack.pack_id);
     for (const auto& e : pack.entries) {
       if (e.is_dir) continue;
-      const uint32_t full = rpak_remap_local_id_unlocked(pack.pack_id,
-                                                         static_cast<uint32_t>(e.kind));
+      const uint32_t full = rpak_remap_local_id_in(
+          pack.pack_id, static_cast<uint32_t>(e.kind), remap_pack, true);
       bool match = false;
       if (full != 0) {
         match = static_cast<int32_t>(full) == parent_res_id;

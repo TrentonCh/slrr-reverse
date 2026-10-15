@@ -4,6 +4,7 @@
 
 #include <cstdint>
 #include <cstdio>
+#include <vector>
 
 namespace inv {
 
@@ -25,6 +26,12 @@ void engine_dispatch_animate_events();
 // PE Engine_SimulateFrame (also declared in System_internal.hpp): tick sim
 // objects + EVENT_TIME timers; the PE boot loop calls it before the pump.
 void engine_simulate_frame();
+// PE 940 FUN_0047e050, the game tick of the loop pass FUN_0047d760, with the
+// seconds since the tick before: the loop's 15 ms gate measures them and
+// hands the same value to the input tick. The script-boot loop calls this;
+// engine_simulate_frame() measures its own GetTickCount difference and
+// stays the legacy callers'.
+void engine_simulate_frame_dt(float tick_dt);
 void ypr_get(InvObject* o, float* y, float* p, float* r);
 void vec3_set(InvObject* o, float x, float y, float z);
 void ypr_set(InvObject* o, float y, float p, float r);
@@ -158,6 +165,28 @@ void physics_extents(InvObject* self, float* a, float* b, float* c);
 bool physics_pick_osd_gadget(float ndc_x, float ndc_y, InvObject** out_phy,
                              InvObject** out_group, float* out_px, float* out_py,
                              float* out_pz);
+// M4 step 2: the bodies the cursor's pick tests. Every physics instance the
+// scripts made with PhysicsRef.createBox or createSphere (PE 940
+// FUN_004e16a0 and its sphere twin -> FUN_004e8a50: a body and a type-2 node
+// under the owner's node) that was not destroyed since: its id
+// (ResourceRef.id() of the PhysicsRef: body+0x50, the `phy` of the cursor's
+// event strings), its owner (the node object of the `parent` argument:
+// body+0x44), the shape, and the pose PhysicsRef.setMatrix gave it (identity
+// at the origin without one). No test on thickness, on the Osd or on any
+// state: which bodies a camera reaches is the walk's business.
+// Fork: a body made by PhysicsRef.create from a body type has no shape on
+// the host and is not listed.
+struct PhysicsPickBody {
+  InvObject* phy = nullptr;
+  InvObject* owner = nullptr;
+  int32_t id = 0;
+  uint64_t seq = 0;   // creation order of the PhysicsRef object
+  int32_t shape = 0;  // 1 box, 2 sphere
+  float half[3] = {0.f, 0.f, 0.f};  // box: half extents; sphere: [0] = radius
+  float pos[3] = {0.f, 0.f, 0.f};
+  float ypr[3] = {0.f, 0.f, 0.f};
+};
+void physics_pick_bodies(std::vector<PhysicsPickBody>* out);
 // Phase 2.19 — flat ground + arcade drive from Controller axes.
 void physics_set_ground_y(float y);
 float physics_ground_y();
@@ -342,6 +371,10 @@ int32_t native_render_owner(void* node);
 // Fork: one `[render-dbg]` line per native camera (NativeTypes.cpp), printed
 // by render_d3d9_debug_dump.
 void native_camera_debug_dump(FILE* out);
+// Fork: `[cursor] state ...`, one line per native cursor object
+// (NativeTypes_part9.inc), printed by render_d3d9_debug_dump beside the
+// camera line when SLRR_PE_NATIVE_PROF is set.
+void native_cursor_debug_dump(FILE* out);
 // Fork: `[render-dbg]` lines for the instances of the native `part` and
 // `car` types (NativeTypes_part6.inc): a count, the cars with their wheels,
 // and the parts with their render instances.
@@ -448,6 +481,9 @@ bool native_car_wheel_set(InvObject* chassis, int32_t wheel, int32_t field,
 bool native_car_wheel_get(InvObject* chassis, int32_t wheel, int32_t field,
                           float* v);
 InvObject* gametype_get_parent(InvObject* o);  // GameType.createNativeInstance parent
+// True when GameType.createNativeInstance made a node for this script object
+// (its node's script instance is the object itself).
+bool gametype_native_created(InvObject* o);
 void frontend_gfx_engine_frame_notify();
 // Phase 2.119: stock LoadingScreen.run pacing loop (host).
 void frontend_loading_screen_run(InvObject* self);
@@ -488,6 +524,25 @@ void java_lang_GameType_dispatchCursor(InvObject* obj_ref, InvObject* param);
 // Group (setEventMask EVENT_CURSOR). Direct handleEvent on dest.
 void java_lang_GameType_dispatchCursorTo(InvObject* dest, InvObject* obj_ref,
                                          InvObject* param);
+// M4 step 2: PE 940 FUN_0047d550 -> FUN_0047c760(target, sender, event,
+// text, 0), the one way an event with a text reaches a game node (script
+// boot; the two dispatchers above stay the legacy tick's). `target` and
+// `sender` are node objects (gameref_node_object); `sender` may be null.
+//  - when the target's event mask has the event: the handler of its native
+//    game object first (a handler that returns true ends it), else the
+//    script's handleEvent / handleEventAsync(GameRef, int, String) on a
+//    fresh VM thread that runs at once; the GameRef is the sender, or the
+//    target itself without one;
+//  - then, whatever the mask said, every notification on the target whose
+//    mask has the event forwards it to its listener, newest entry first
+//    (FUN_004e78e0 links at the head), with the listener's own mask, the
+//    entry's event (EVENT_SAME keeps it), custom text and method, and the
+//    sender, or the target itself when there was none.
+// With `log_tag` one line goes to stderr before anything is called:
+// `<tag> to=0x<id> '<class>' mask=<0|1> listeners=<n> sender=0x<id> "<text>"`.
+// Runs script code: call it with no host lock held.
+void gametype_send_event(InvObject* target, InvObject* sender, int32_t event,
+                         const char* text, const char* log_tag);
 
 InvObject* game_logic_change_active_section(InvObject* state);
 InvObject* game_logic_actual_state();

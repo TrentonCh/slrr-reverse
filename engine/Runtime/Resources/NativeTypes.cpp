@@ -35,21 +35,30 @@
 //                        FUN_004afbf0 (`linked` render entries)
 //   light types          NativeTypes_part4.inc: FUN_005219c0 (typeof-13
 //                        payload), FUN_004ebef0 (RenderRef.setLight)
+//   player, cursor       NativeTypes_part9.inc: FUN_004d2370 / FUN_004d28d0
+//                        (the player's create and getinfo), FUN_004b7a10
+//                        (the cursor's create), FUN_004b7d70 (commands),
+//                        FUN_004b78f0 and the head of FUN_004b8430 (the
+//                        animate tick), FUN_004b7c60 (getinfo)
+//   animate walk         FUN_0047ba10 (native_tick_animate)
 
 #include "NativeTypes.hpp"
 
 #include "host_objects.hpp"
+#include "input_win32.hpp"
 #include "jvm.hpp"
 #include "natives.hpp"
 #include "render_d3d9.hpp"
 #include "rpak.hpp"
 #include "runtime.hpp"
 #include "tree_interp.hpp"
+#include "tree_interp_internal.hpp"  // tree_static_slot (Config statics by name)
 #include "GameRef_internal.hpp"
 #include "Resources.h"
 #include "Resources_internal.hpp"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstdarg>
 #include <cstdint>
@@ -322,6 +331,8 @@ std::shared_ptr<NativeObject> ground_create(const NativeCreate& c);
 std::shared_ptr<NativeObject> camera_create(const NativeCreate& c);
 std::shared_ptr<NativeObject> part_create(const NativeCreate& c);
 std::shared_ptr<NativeObject> car_create(const NativeCreate& c);
+std::shared_ptr<NativeObject> player_create(const NativeCreate& c);
+std::shared_ptr<NativeObject> cursor_create(const NativeCreate& c);
 
 using NativeFactory = std::shared_ptr<NativeObject> (*)(const NativeCreate&);
 struct NativeTypeRow {
@@ -340,9 +351,9 @@ const NativeTypeRow kNativeTypes[kNativeTypeCount] = {
     {"car", &car_create},
     {"part", &part_create},
     {"trigger", nullptr},
-    {"player", nullptr},
+    {"player", &player_create},
     {"button", nullptr},
-    {"cursor", nullptr},
+    {"cursor", &cursor_create},
     {"bot", nullptr},
     {"road", nullptr},
     {"walk", nullptr},
@@ -572,22 +583,37 @@ int32_t handle_instance_id(InvObject* handle) {
 // instance flags 0x14 with FUN_004ebd90 and walks the registered instances
 // in FUN_0047bc20 / FUN_0047be30).
 std::vector<std::shared_ptr<NativeObject>> g_ticking;
+// The objects on the animate list (the exe: getinfo 0x1C at GameRef.create,
+// FUN_0047d560; appended at the tail and walked from the head by
+// FUN_0047ba10, so in creation order).
+std::vector<std::shared_ptr<NativeObject>> g_animating;
 
 // Caller holds g_nt_mu.
 void ticking_add(const std::shared_ptr<NativeObject>& o) {
   if (o && o->ticks) g_ticking.push_back(o);
+  if (o && o->animates) g_animating.push_back(o);
 }
 void ticking_remove(const std::shared_ptr<NativeObject>& o) {
   for (size_t i = 0; i < g_ticking.size(); ++i)
     if (g_ticking[i] == o) {
       g_ticking.erase(g_ticking.begin() + static_cast<std::ptrdiff_t>(i));
-      return;
+      break;
+    }
+  for (size_t i = 0; i < g_animating.size(); ++i)
+    if (g_animating[i] == o) {
+      g_animating.erase(g_animating.begin() + static_cast<std::ptrdiff_t>(i));
+      break;
     }
 }
 
 std::vector<std::shared_ptr<NativeObject>> ticking_snapshot() {
   std::lock_guard<std::mutex> lock(g_nt_mu);
   return g_ticking;
+}
+
+std::vector<std::shared_ptr<NativeObject>> animating_snapshot() {
+  std::lock_guard<std::mutex> lock(g_nt_mu);
+  return g_animating;
 }
 
 }  // namespace
@@ -762,6 +788,25 @@ void native_tick_control(float dt) {
 void native_tick_drive(float dt) {
   if (!native_script_boot()) return;
   for (auto& o : ticking_snapshot()) o->drive(dt);
+}
+
+namespace {
+double g_loop_time = 0.0;  // Fork (diagnostic): native_set_loop_time
+}  // namespace
+
+void native_set_loop_time(double seconds) { g_loop_time = seconds; }
+double native_loop_time() { return g_loop_time; }
+
+void native_tick_animate(float dt) {
+  if (!native_script_boot()) return;
+  // Fork: an animate() of step 2 runs script handlers; one that pumps
+  // frames must not start a second walk inside the first.
+  static bool walking = false;
+  if (walking) return;
+  walking = true;
+  // A copy of the list: a handler may create or destroy an object.
+  for (auto& o : animating_snapshot()) o->animate(dt);
+  walking = false;
 }
 
 // ---------------------------------------------------------------------------
@@ -1317,5 +1362,8 @@ std::shared_ptr<NativeObject> ground_create(const NativeCreate& c) {
 // What is drawn of a part or car: the detail the cameras give, the levels,
 // the linked render entries (FUN_00461980, FUN_004afbf0).
 #include "NativeTypes_part8.inc"
+
+// The `player` type (table row 6) and the `cursor` type (row 8).
+#include "NativeTypes_part9.inc"
 
 }  // namespace inv

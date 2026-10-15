@@ -559,3 +559,48 @@ classes from a cache directory (`SLRR_CLASS_CACHE`), never writing into
 the install; with it that career loads into the garage with its car.
 Facts about the format that the docs had wrong are listed at the start of
 ENGINE.md section 4.3.
+
+### 2026-10-12 to 2026-10-15 (session 7): the mouse
+
+Mapped before any code, as the garage and the car were (notes in
+`../slrr-ghidra/notes/m4/`): what the exe does (Ghidra), what the scripts
+expect (all 96 system classes decompiled), what the host did (four traced
+runs). The host had every piece as a legacy stand-in wired to objects the
+scripts do not hold, so on the script boot nothing failed and nothing
+reacted. The design in the docs was wrong in its main points; ENGINE.md
+section 8 now has what the exe does. In short:
+
+- The pointer is the Windows cursor (`Config.SysCursor` is 1); position
+  from the window messages, buttons from controller axes 45 / 46; the
+  wheel belongs to the camera, not the cursor.
+- `cursor` and `player` (the Controller) are native types; the host had
+  neither, so `activate` and `camera <id>` went nowhere.
+- Picking is a ray per camera over the bound viewports into script-made
+  physics boxes owned by `java.render.Group`s; events go to the Group and
+  to the cursor's node, whose listeners are Garage and Mechanic.
+- The camera reads controller axes 7, 8 and 10; arrow keys, PgUp / PgDn,
+  the wheel and the right-button drag all arrive that way.
+
+Built in four steps, each with unattended checks. A test rig injects a
+mouse script (`SLRR_PE_BOOT_MOUSE="t:x,y[,L|l|R|r|W<n>|G<secs>];..."`)
+where real input enters, holds keys for a given time (`t:dik:secs`), and
+keeps unattended runs away from the user's real pointer and foreground.
+`SLRR_PE_CURSOR_DRAW=1` draws the pointer glyph into the frame dump, and
+`SLRR_SYSCURSOR=0|1` overrides `Config.SysCursor`. The scripts' own hover,
+press and tooltip code then worked without changes in the menu, the
+dialogs and the garage. Clicking X in the garage returns to the main menu
+of a running career without a crash, the first time leaving the garage
+ever ran on the host.
+
+Defects found on the way, each fixed at its cause on the script boot: the
+soft physics integrator lifted every script box half its height (the
+exe's script boxes have mass 0), so no ray hit them; a `Vector3` / `Ypr`
+was read from the host record instead of its script fields; a field
+reference was resolved against the running class only. The review found
+that a test window made with `WS_EX_NOACTIVATE` still took the foreground
+through the boot movie code, so the user's real mouse reached unattended
+runs; that, a pointer left pinned when a right drag ends by leaving the
+garage, and a lost click when press and release fall in one loop pass are
+fixed. Separately, the old-build regression spent 100 of its 109 s in a
+pack scan that searched the pack table again for every entry; one lookup
+per pack makes it 67 s with identical output.

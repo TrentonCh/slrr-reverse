@@ -2,6 +2,7 @@
 #include "natives.hpp"
 #include "runtime.hpp"
 #include "tree_interp.hpp"
+#include "NativeTypes.hpp"  // native_script_boot
 
 #include <cmath>
 #include <cstring>
@@ -40,12 +41,18 @@ float bits_f32(unsigned bits) {
 
 // Soft PE deepen — host dual-store: prefer native map (vec3_set/ypr_set),
 // else TREE fields (PE path = JVM_vm_get_float_field @ 0x0042A560 only).
+// Script boot (Build 940 classes): the fields only, as in the exe. The
+// script reads and writes x / y / z itself (Osd.animate: `p =
+// Input.cursor.getPos(); p.x += w * 0.5 + 0.05; ... new Rectangle(
+// Input.cursor, p, ...)`), which a record kept beside the fields never
+// sees; every writer of the record writes the fields as well there
+// (vec3_set, ypr_set), so the fields are never the older of the two.
 bool load_vec3(InvObject* o, float& x, float& y, float& z) {
   if (!o) {
     x = y = z = 0.f;
     return false;
   }
-  {
+  if (!native_script_boot()) {
     std::lock_guard<std::mutex> lock(g_mu);
     if (Vec3* v = vget(o)) {
       x = v->x;
@@ -65,7 +72,7 @@ bool load_ypr(InvObject* o, float& y, float& p, float& r) {
     y = p = r = 0.f;
     return false;
   }
-  {
+  if (!native_script_boot()) {  // as load_vec3
     std::lock_guard<std::mutex> lock(g_mu);
     if (Ypr* t = yget(o)) {
       y = t->y;
@@ -304,14 +311,30 @@ void ypr_get(InvObject* o, float* y, float* p, float* r) {
 
 void vec3_set(InvObject* o, float x, float y, float z) {
   if (!o) return;
-  std::lock_guard<std::mutex> lock(g_mu);
-  g_vec[o] = Vec3{x, y, z};
+  {
+    std::lock_guard<std::mutex> lock(g_mu);
+    g_vec[o] = Vec3{x, y, z};
+  }
+  // Script boot: the fields are what the script and the natives read
+  // (load_vec3); a native that writes a vector writes them.
+  if (native_script_boot()) {
+    tree_field_set_float(o, "x", x);
+    tree_field_set_float(o, "y", y);
+    tree_field_set_float(o, "z", z);
+  }
 }
 
 void ypr_set(InvObject* o, float y, float p, float r) {
   if (!o) return;
-  std::lock_guard<std::mutex> lock(g_mu);
-  g_ypr[o] = Ypr{y, p, r};
+  {
+    std::lock_guard<std::mutex> lock(g_mu);
+    g_ypr[o] = Ypr{y, p, r};
+  }
+  if (native_script_boot()) {  // as vec3_set
+    tree_field_set_float(o, "y", y);
+    tree_field_set_float(o, "p", p);
+    tree_field_set_float(o, "r", r);
+  }
 }
 
 // Soft PE @ 0x004823E0 — java.lang.Vector3.length()F size 0x65

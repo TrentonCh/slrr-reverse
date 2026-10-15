@@ -1727,6 +1727,16 @@ void vmthread_op101F_push_nulls(VmThread* thr, int32_t count) {
 }
 
 namespace {
+// Fork: true on the Build 940 script boot (SLRR_PE_BOOT_INIT=1, the gate of
+// NativeTypes.cpp); what the legacy path must not pick up asks this.
+bool vm_boot940() {
+  static const bool on = [] {
+    const char* e = std::getenv("SLRR_PE_BOOT_INIT");
+    return e && e[0] == '1';
+  }();
+  return on;
+}
+
 // PE walks the super chain through the class CP (class+0x40 → ConstantPool_
 // getClass → getUtf8 → JVM_findOrLoadClassByName). The host keeps super_name,
 // so resolve through the active Jvm and load on demand.
@@ -1777,6 +1787,8 @@ int32_t vmthread_class_find_field_slot(const JvmClass* cls,
 // what 0x4234D9 tests to pick Class_getFieldAt over Object_getFieldAt. The host
 // const pool only keeps the resolved name, so re-run the slot search to learn
 // the same bit instead of trusting the declaration site.
+std::string vmthread_normalize_class_desc(const char* desc);  // below
+
 bool vmthread_resolve_field_ref(const JvmClass* cp_cls, const JvmClass* cls,
                                 uint32_t cp_index,
                                 std::string* name_out, bool* is_static_out,
@@ -1788,7 +1800,40 @@ bool vmthread_resolve_field_ref(const JvmClass* cp_cls, const JvmClass* cls,
   const std::string& n = cp_cls->const_mref_name[cp_index];
   if (n.empty()) return false;
   const JvmClass* owner = nullptr;
-  const int32_t slot = vmthread_class_find_field_slot(cls, n, &owner);
+  int32_t slot = vmthread_class_find_field_slot(cls, n, &owner);
+  // The name is no field of the context class: the FIELDREF entry names
+  // the class the reference was compiled against, and the exe's slot search
+  // starts there (ConstantPool_resolveFieldRef @ 0x00406D00). That is how a
+  // static read through an instance resolves: `arg0.NGROUPS` in
+  // Controller.reset(ControlSetState) is a two-segment path, a local and
+  // the fieldref java.io.ControlSetState.NGROUPS:I, run by the code of
+  // java.io.Controller. Without this the read fell to the object's
+  // instance bag and gave 0, the loop that restores the control groups a
+  // dialog saved never ran, and after any dialog the controller kept no
+  // axis at all. Build 940 boot only.
+  // Fork: the named class is asked only after the context class missed (the
+  // exe asks it first); a name the context class has keeps its old answer.
+  if (slot == -1 && vm_boot940() && cp_index < cp_cls->const_mref_class.size() &&
+      !cp_cls->const_mref_class[cp_index].empty()) {
+    const std::string named =
+        vmthread_normalize_class_desc(cp_cls->const_mref_class[cp_index].c_str());
+    Jvm* j = jvm_active();
+    // An array descriptor names no class file (`array.length`): such a
+    // reference keeps the answer of the object itself.
+    if (j && !named.empty() && named[0] != '[') {
+      const JvmClass* nc = j->find_class(named.c_str());
+      if (!nc) {
+        // Asked for once: a name the class path lacks stays missing.
+        static std::unordered_map<std::string, bool> tried;
+        if (!tried[named]) {
+          tried[named] = true;
+          j->load_class(named.c_str());
+          nc = j->find_class(named.c_str());
+        }
+      }
+      if (nc) slot = vmthread_class_find_field_slot(nc, n, &owner);
+    }
+  }
   if (name_out) *name_out = n;
   if (owner_out) *owner_out = owner;
   if (is_static_out) *is_static_out = slot != -1 && (slot & 0x40000000) != 0;

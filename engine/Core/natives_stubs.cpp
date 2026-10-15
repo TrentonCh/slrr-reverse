@@ -147,6 +147,8 @@ const NativeEntry kNativeTable[] = {
   {"java.io.Input", "flushHotkeys", "void flushHotkeys()", true, reinterpret_cast<void*>(&java_io_Input_flushHotkeys)},
   {"java.io.MouseCursor", "getPos", "Vector3 getPos()", false, reinterpret_cast<void*>(&java_io_MouseCursor_getPos)},
   {"java.io.MouseCursor", "getPickedPos", "Vector3 getPickedPos()", false, reinterpret_cast<void*>(&java_io_MouseCursor_getPickedPos)},
+  {"java.io.MouseCursor", "getPos", "(Ljava.lang.Vector3;)Ljava.lang.Vector3;", false, reinterpret_cast<void*>(&java_io_MouseCursor_getPos_1)},
+  {"java.io.MouseCursor", "getPickedPos", "(Ljava.lang.Vector3;)Ljava.lang.Vector3;", false, reinterpret_cast<void*>(&java_io_MouseCursor_getPickedPos_1)},
   {"java.lang.Float", "toString", "String toString(float f, String fmt)", true, reinterpret_cast<void*>(&java_lang_Float_toString)},
   {"java.lang.GameType", "remNotification", "void remNotification(GameRef ref, int etype)", false, reinterpret_cast<void*>(&java_lang_GameType_remNotification)},
   {"java.lang.GameType", "addNotification", "void addNotification(GameRef ref, int etype, int ealias, String custmsg)", false, reinterpret_cast<void*>(&java_lang_GameType_addNotification)},

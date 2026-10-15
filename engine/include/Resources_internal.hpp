@@ -55,6 +55,12 @@ struct ResState {
   int32_t is_static = 0;
   int32_t asleep = 0;
   int32_t pose_set = 0;  // PhysicsRef.setMatrix always writes pose (null → origin)
+  // Fork: the id this physics instance had when ResourceRef.destroy was
+  // called on it; 0 = never. The exe deletes the type-2 node and its body
+  // then, while the host keeps the ResState until deleteNative. A create on
+  // the same handle takes a new id, so the mark lapses by itself. Read by
+  // physics_pick_bodies (the cursor's pick) only.
+  int32_t destroyed_id = 0;
   int32_t collide = 0;  // Phase 2.25 — setActiveCollision
   // Phase 2.93 — last drive tick: wheels off support.
   int32_t airborne = 0;

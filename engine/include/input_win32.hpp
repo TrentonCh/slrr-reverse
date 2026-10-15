@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <cstdio>
 
 namespace inv {
 
@@ -61,6 +62,60 @@ void input_syscursor_set_buttons(uint32_t mk);
 void input_syscursor_lock();
 void input_syscursor_unlock();
 bool input_syscursor_locked();
+// PE 940 FUN_00427870 / FUN_00425a20: ShowCursor(TRUE / FALSE), one call per
+// change of the cursor's enabled bit (`enable`, `disable`, `standby`).
+// Nothing in an unattended run (input_mouse_unattended).
+void input_syscursor_show(bool show);
+// PE 940 FUN_00426cb0: the cursor's `setpos x,y` (window NDC, y down):
+// SetCursorPos at that point of the client area. Nothing in an unattended
+// run.
+void input_syscursor_set_pos(float x, float y);
+
+// ---- Fork: the mouse of unattended runs (script boot only) -----------------
+// The exe has none of this. On the legacy path all of it is inert.
+//
+// True on the script boot when a mouse script (SLRR_PE_BOOT_MOUSE) is given:
+// the DirectInput mouse slot is then filled by input_inject_mouse and the
+// real device is not read.
+bool input_mouse_script();
+// True on the script boot when the run is unattended (SLRR_WINDOW_NOACTIVATE=1
+// or a mouse script). The real pointer then stays out of the run: window
+// mouse messages that do not come from input_inject_mouse are dropped,
+// GetCursorPos is not read, and nothing may call ShowCursor, SetCursor,
+// SetCursorPos or ClipCursor (state and log only).
+bool input_mouse_unattended();
+
+// One step of the mouse script. `op`: 'L' / 'l' left button down / up, 'R' /
+// 'r' right button down / up, 'W' wheel by `n` notches (signed; +1 = away
+// from the user, lZ +120).
+struct InputInjectMouseOp {
+  char op = 0;
+  int32_t n = 0;
+};
+struct InputInjectMouseState {
+  bool placed = false;        // an entry has put hand and pointer down
+  int32_t x = 0, y = 0;       // the pointer, back-buffer pixels
+  int32_t hand_x = 0, hand_y = 0;  // the hand (where the next entry counts from)
+  int32_t dx = 0, dy = 0;     // DirectInput counts this call added
+  bool left = false, right = false;  // held buttons
+  bool locked = false;        // the cursor's `lock` held when the call began
+  uint32_t polls = 0;         // polls of the device slot so far (the loop
+                              // waits for one after a button or wheel entry)
+};
+// The hand, the OS and the device of an unattended run: moves the hand to
+// back-buffer pixel (x, y), then applies `ops` in order. It enters where real
+// input enters, the window procedure's mouse messages (input_wndproc_mouse)
+// and the DirectInput mouse slot; everything behind those is the real code.
+// Does nothing without a mouse script. `out` (optional) = the state after.
+void input_inject_mouse(int32_t x, int32_t y, const InputInjectMouseOp* ops,
+                        int32_t n_ops, InputInjectMouseState* out);
+// The state the next input_inject_mouse call starts from (no input is made).
+void input_inject_mouse_peek(InputInjectMouseState* out);
+// `[input] mouse axes ...`: what device 1 and the window procedure hold, one
+// line at loop end on the script boot (SLRR_PE_NATIVE_PROF). With a mouse
+// script a second line, `[input] mouse script ...`: the counts the device
+// slot was handed over the run and the largest values published from them.
+void input_debug_dump(FILE* out);
 
 // Virtual axis ids (mirror Input.java) — use with user_GetAxisVal / mapAxis.
 constexpr int32_t kAxisMoveLR = 4;

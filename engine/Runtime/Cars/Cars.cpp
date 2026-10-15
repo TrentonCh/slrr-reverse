@@ -17,6 +17,7 @@
 
 #include "../Parts/world_state.hpp"
 #include "GameRef_internal.hpp"
+#include "NativeTypes.hpp"
 
 namespace inv {
 
@@ -639,6 +640,15 @@ InvObject* java_io_MouseCursor_getPos(InvObject* self) {
   // No ResourceRef_id gate.
   InvObject* inner = self ? tree_field_get_obj(self, "cursor") : nullptr;
   if (!inner) return nullptr;
+  // PE 940 FUN_004df270: getinfo 2 of the instance in field `cursor`, x and
+  // y only (z stays the 0 of the new Vector3). On the script boot the native
+  // cursor object answers; the stand-in below stays for a receiver without
+  // one (the legacy path).
+  if (native_script_boot()) {
+    NativeInfo info;
+    if (native_getinfo(inner, 2, &info))
+      return vec3_new(info.v[0], info.v[1], 0.f);
+  }
   float cx = 0.f, cy = 0.f, cz = 0.f;
   if (tree_field_get_int(inner, "cursor_set") != 0) {
     cx = tree_field_get_float(inner, "cursor_x");
@@ -674,6 +684,14 @@ InvObject* java_io_MouseCursor_getPickedPos(InvObject* self) {
   // No Mighty log.
   InvObject* inner = self ? tree_field_get_obj(self, "cursor") : nullptr;
   if (!inner) return nullptr;
+  // PE 940 FUN_004def10: getinfo 0x3B of the instance in field `cursor`, all
+  // three components. On the script boot the native cursor object answers;
+  // the stand-in below stays for a receiver without one (the legacy path).
+  if (native_script_boot()) {
+    NativeInfo info;
+    if (native_getinfo(inner, 0x3b, &info))
+      return vec3_new(info.v[0], info.v[1], info.v[2]);
+  }
   const float wx = tree_field_get_float(inner, "pick_x");
   const float wy = tree_field_get_float(inner, "pick_y");
   const float wz = tree_field_get_float(inner, "pick_z");
@@ -687,6 +705,47 @@ InvObject* java_io_MouseCursor_getPickedPos(InvObject* self) {
                          tree_field_get_float(inner, "pick_scale"));
   }
   return vec3_new(wx, wy, wz);
+}
+
+InvObject* java_io_MouseCursor_getPos_1(InvObject* self, InvObject* v) {
+  // PE 940 FUN_004df3b0, (Ljava.lang.Vector3;)Ljava.lang.Vector3;: x and y
+  // of the given vector are set from getinfo 2 of the instance in field
+  // `cursor`, its z is left as it is, and the vector itself is returned.
+  InvObject* inner = self ? tree_field_get_obj(self, "cursor") : nullptr;
+  if (native_script_boot() && inner && v) {
+    NativeInfo info;
+    if (native_getinfo(inner, 2, &info)) {
+      float x = 0.f, y = 0.f, z = 0.f;
+      vec3_get(v, &x, &y, &z);
+      vec3_set(v, info.v[0], info.v[1], z);
+      return v;
+    }
+  }
+  // Without a native cursor object (the legacy path), or without a vector:
+  // what happened before this row existed, when the table had the
+  // 0-argument row only and resolve_native handed that one out for every
+  // call of the name: the given vector stays untouched and a new one is
+  // returned. (The same makes it harmless when a 0-argument call is given
+  // this row: the registered rows of the name compare as
+  // "()Ljava.lang.Object;", so that call takes the first row of the bucket
+  // walk.)
+  return java_io_MouseCursor_getPos(self);
+}
+
+InvObject* java_io_MouseCursor_getPickedPos_1(InvObject* self, InvObject* v) {
+  // PE 940 FUN_004df100, (Ljava.lang.Vector3;)Ljava.lang.Vector3;: x, y and
+  // z of the given vector are set from getinfo 0x3B of the instance in field
+  // `cursor`, and the vector itself is returned.
+  InvObject* inner = self ? tree_field_get_obj(self, "cursor") : nullptr;
+  if (native_script_boot() && inner && v) {
+    NativeInfo info;
+    if (native_getinfo(inner, 0x3b, &info)) {
+      vec3_set(v, info.v[0], info.v[1], info.v[2]);
+      return v;
+    }
+  }
+  // As java_io_MouseCursor_getPos_1.
+  return java_io_MouseCursor_getPickedPos(self);
 }
 
 void java_io_MouseCursor_tickSysCursor() {
@@ -703,6 +762,11 @@ void java_io_MouseCursor_tickSysCursor() {
   // pick_* + t=0. No Camera_unproject / Engine_rayPickScene @ 0x49E3D0.
   // HOVER SfxRef.play / Present must not re-enter. Do not break
   // dispatchCursor / dispatchCursorTo call sites.
+  // PE 940: the cursor's tick is the animate callback of the native
+  // `cursor` object (FUN_004b78f0; NativeTypes_part9.inc), once per
+  // main-loop pass. On the script boot this legacy stand-in does nothing: it
+  // works on a host-made MouseCursor that no script holds.
+  if (native_script_boot()) return;
   static bool in_tick = false;
   if (in_tick) return;
   in_tick = true;

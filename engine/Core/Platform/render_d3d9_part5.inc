@@ -481,4 +481,159 @@ void render_d3d9_bone_debug_dump(FILE* out) {
 #endif
 }
 
+// M4 step 1: the pointer shapes of Build 940 (see render_d3d9.hpp). The
+// module stays mapped for the life of the process: LoadCursor hands out
+// shared cursors that belong to it. The cursors the slots held before (the
+// .cur files beside the host exe, which come from another build of the
+// game) are left alive: one of them may be the class cursor.
+int32_t render_d3d9_cursor_shapes_load(const char* exe_path, int32_t* from_bits,
+                                       int32_t* hot) {
+  if (from_bits) *from_bits = 0;
+  if (hot)
+    for (int i = 0; i < 20; ++i) hot[i] = -1;
+#ifdef _WIN32
+  if (!exe_path || !exe_path[0]) return 0;
+  // The shipped assets first, so that a later load of them cannot write
+  // over these slots.
+  if (!g_assets_ok) load_stock_window_assets();
+  static const WORD kGroupIds[10] = {116, 117, 118, 119, 120,
+                                     121, 123, 124, 125, 126};
+  HMODULE mod = LoadLibraryExA(
+      exe_path, nullptr,
+      LOAD_LIBRARY_AS_DATAFILE | LOAD_LIBRARY_AS_IMAGE_RESOURCE);
+  if (!mod) return 0;
+  int32_t n = 0;
+  for (int i = 0; i < 10; ++i) {
+    HCURSOR cur = LoadCursorA(mod, MAKEINTRESOURCEA(kGroupIds[i]));
+    if (!cur) {
+      // The group names the RT_CURSOR image; its bits start with the hot
+      // spot, which CreateIconFromResourceEx reads for a cursor.
+      HRSRC grp = FindResourceA(mod, MAKEINTRESOURCEA(kGroupIds[i]),
+                                MAKEINTRESOURCEA(12));  // RT_GROUP_CURSOR
+      HGLOBAL grp_mem = grp ? LoadResource(mod, grp) : nullptr;
+      BYTE* grp_bits = grp_mem ? static_cast<BYTE*>(LockResource(grp_mem)) : nullptr;
+      const int image_id =
+          grp_bits ? LookupIconIdFromDirectoryEx(grp_bits, FALSE, 0, 0,
+                                                 LR_DEFAULTCOLOR)
+                   : 0;
+      HRSRC img = image_id ? FindResourceA(mod, MAKEINTRESOURCEA(image_id),
+                                           MAKEINTRESOURCEA(1))  // RT_CURSOR
+                           : nullptr;
+      HGLOBAL img_mem = img ? LoadResource(mod, img) : nullptr;
+      BYTE* img_bits = img_mem ? static_cast<BYTE*>(LockResource(img_mem)) : nullptr;
+      const DWORD img_size = img ? SizeofResource(mod, img) : 0;
+      if (img_bits && img_size)
+        cur = static_cast<HCURSOR>(CreateIconFromResourceEx(
+            img_bits, img_size, FALSE, 0x00030000, 0, 0, LR_DEFAULTCOLOR));
+      if (cur && from_bits) ++*from_bits;
+    }
+    if (!cur) continue;
+    g_stock_cursors[i + 2] = cur;
+    ++n;
+    if (hot) {
+      ICONINFO info{};
+      if (GetIconInfo(cur, &info)) {
+        hot[2 * i] = static_cast<int32_t>(info.xHotspot);
+        hot[2 * i + 1] = static_cast<int32_t>(info.yHotspot);
+        if (info.hbmMask) DeleteObject(info.hbmMask);
+        if (info.hbmColor) DeleteObject(info.hbmColor);
+      }
+    }
+  }
+  return n;
+#else
+  (void)exe_path;
+  return 0;
+#endif
+}
+
+// M4 step 2: the cameras a pointer position is asked through (see
+// render_d3d9.hpp). PE 940 FUN_004eb000 with the list walks FUN_00421220 /
+// FUN_00421260 / FUN_004210d0 and the unproject FUN_00461c20.
+int32_t render_d3d9_pick_rays(float x, float y, RenderPickRay* out,
+                              int32_t cap) {
+#ifdef _WIN32
+  if (!out || cap <= 0 || g_cameras.empty()) return 0;
+  struct Item {
+    uint32_t vp_pri, vp_seq, cam_pri, cam_seq;
+    void* cam;
+    float lx, ly;
+  };
+  std::vector<Item> items;
+  for (const auto& kv : g_cameras) {
+    if (!kv.second.viewport) continue;
+    auto vit = g_viewports.find(kv.second.viewport);
+    if (vit == g_viewports.end() || !vit->second.active) continue;
+    const ViewportState& vp = vit->second;
+    // vp+0xd4 left, +0xd8 top, +0xdc width, +0xe0 height, as fractions of
+    // the window; the test of the exe, operand for operand.
+    const float lx = (x - ((vp.x + vp.x) - 1.f)) / vp.w - 1.f;
+    const float ly = (y - ((vp.y + vp.y) - 1.f)) / vp.h - 1.f;
+    if (lx < -1.f || 1.f < lx || ly < -1.f || 1.f < ly) continue;
+    items.push_back({static_cast<uint32_t>(vp.pri), vp.bind_seq,
+                     static_cast<uint32_t>(kv.second.pri), kv.second.seq,
+                     kv.first, lx, ly});
+  }
+  if (items.empty()) return 0;
+  // The reverse of the pass order of draw_viewport_cameras: the viewport
+  // drawn last is asked first, and in it the camera drawn last.
+  std::sort(items.begin(), items.end(), [](const Item& a, const Item& b) {
+    if (a.vp_pri != b.vp_pri) return a.vp_pri > b.vp_pri;
+    if (a.vp_seq != b.vp_seq) return a.vp_seq < b.vp_seq;
+    if (a.cam_pri != b.cam_pri) return a.cam_pri > b.cam_pri;
+    if (a.cam_seq != b.cam_seq) return a.cam_seq < b.cam_seq;
+    return a.cam > b.cam;
+  });
+  int32_t n = 0;
+  for (const Item& it : items) {
+    if (n >= cap) break;
+    auto cit = g_cameras.find(it.cam);
+    if (cit == g_cameras.end()) continue;
+    const CameraState& cam = cit->second;
+    void* const start = cam.parent ? cam.parent : it.cam;
+    D3DMATRIX proj{}, cam_world{}, view{}, inv_proj{};
+    float xs = 1.f, ys = 1.f;
+    camera_pass_matrices(it.cam, cam, &cam_world, &view, &proj, &xs, &ys,
+                         nullptr);
+    if (!invert_general(proj, &inv_proj)) continue;  // cam+0x45c
+    RenderPickRay& r = out[n];
+    r = RenderPickRay{};
+    r.viewport = cam.viewport;
+    r.camera = it.cam;
+    r.root = camera_root_of(start);
+    r.vp_pri = static_cast<int32_t>(it.vp_pri);
+    r.cam_pri = static_cast<int32_t>(it.cam_pri);
+    // FUN_00461c20(cam, out, (x, y, z)): v = (x, y, z, 1) * inverse
+    // projection, divided by its w; out = (v, 1) * camera world.
+    auto unproject = [&](float nx, float ny, float nz, float* o) {
+      const D3DMATRIX& ip = inv_proj;
+      const D3DMATRIX& cw = cam_world;
+      const float rw = 1.f / (ip.m[0][3] * nx + ip.m[1][3] * ny +
+                              ip.m[2][3] * nz + ip.m[3][3]);
+      const float vx = (ip.m[1][0] * ny + nx * ip.m[0][0] + ip.m[2][0] * nz +
+                        ip.m[3][0]) * rw;
+      const float vy = (ip.m[0][1] * nx + ip.m[1][1] * ny + ip.m[2][1] * nz +
+                        ip.m[3][1]) * rw;
+      const float vz = (ip.m[0][2] * nx + ip.m[1][2] * ny + ip.m[2][2] * nz +
+                        ip.m[3][2]) * rw;
+      o[0] = cw.m[1][0] * vy + cw.m[0][0] * vx + cw.m[2][0] * vz + cw.m[3][0];
+      o[1] = cw.m[0][1] * vx + cw.m[1][1] * vy + cw.m[2][1] * vz + cw.m[3][1];
+      o[2] = cw.m[0][2] * vx + cw.m[1][2] * vy + cw.m[2][2] * vz + cw.m[3][2];
+    };
+    // The exe multiplies both points by 0.1 (_DAT_005935d4: its render
+    // units are a tenth of a metre); the host's matrices are in metres.
+    unproject(it.lx, -it.ly, 1.f, r.far_pt);
+    unproject(it.lx, -it.ly, 0.f, r.near_pt);
+    ++n;
+  }
+  return n;
+#else
+  (void)x;
+  (void)y;
+  (void)out;
+  (void)cap;
+  return 0;
+#endif
+}
+
 }  // namespace inv

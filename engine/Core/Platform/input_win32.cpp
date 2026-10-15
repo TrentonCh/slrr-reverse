@@ -1,8 +1,10 @@
 #include "render_d3d9.hpp"
 #include "host_objects.hpp"
 #include "input_win32.hpp"
+#include "NativeTypes.hpp"
 
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <memory>
 #include <vector>
@@ -192,6 +194,54 @@ int32_t g_syscursor_px = 0;
 int32_t g_syscursor_py = 0;
 uint32_t g_syscursor_mk = 0;
 bool g_syscursor_locked = false;
+
+// ---------------------------------------------------------------------------
+// Fork: the mouse script of unattended runs (SLRR_PE_BOOT_MOUSE, parsed by
+// the script-boot loop in game_boot). The exe has nothing like it. One state
+// stands for the hand (H, back-buffer pixels: every pixel it travels is one
+// DirectInput count), the OS pointer (P: what Windows would report; it does
+// not move while the cursor's `lock` holds, as under ClipCursor to one
+// point) and the device (button bytes, counts not yet polled). It enters
+// where real input enters: input_wndproc_mouse and input_di_poll_mouse_slot.
+struct InputMouseScriptSoft {
+  bool placed = false;      // the first entry has put hand and pointer down
+  bool was_locked = false;  // input_syscursor_locked() at the previous entry
+  bool in_call = false;     // input_wndproc_mouse is being called from here
+  int32_t hx = 0, hy = 0;   // hand
+  int32_t px = 0, py = 0;   // pointer
+  bool left = false, right = false;            // held buttons
+  int32_t pend_x = 0, pend_y = 0, pend_z = 0;  // counts not yet polled
+  uint32_t polls_all = 0;                      // every poll of the device slot
+  // For the loop-end line `[input] mouse script` only.
+  uint32_t polls = 0;                          // polls that were handed counts
+  int32_t sum_x = 0, sum_y = 0, sum_z = 0;     // counts handed to the slot
+  float peak[3] = {0.f, 0.f, 0.f};             // largest |axis 0..2| published
+  bool seen_left = false, seen_right = false;  // buttons ever published down
+};
+InputMouseScriptSoft g_mouse_script;
+
+// Script boot with SLRR_PE_BOOT_MOUSE set; read once.
+bool input_mouse_script_soft() {
+  static const bool on = [] {
+    if (!native_script_boot()) return false;
+    const char* e = std::getenv("SLRR_PE_BOOT_MOUSE");
+    return e != nullptr && e[0] != 0;
+  }();
+  return on;
+}
+
+// Script boot, and SLRR_WINDOW_NOACTIVATE=1 or a mouse script; read once.
+// Fork: the exe has no such rule. Without it the user's pointer crossing the
+// test window moves the game's cursor, and the first injected right drag
+// (`lock`) pins the user's pointer.
+bool input_mouse_unattended_soft() {
+  static const bool on = [] {
+    if (!native_script_boot()) return false;
+    const char* e = std::getenv("SLRR_WINDOW_NOACTIVATE");
+    return (e != nullptr && e[0] == '1') || input_mouse_script_soft();
+  }();
+  return on;
+}
 
 #ifdef _WIN32
 IDirectInput8A* g_di = nullptr;
@@ -799,7 +849,34 @@ bool input_di_mouse_get_state_soft(IDirectInputDevice8A* dev,
 
 void input_di_poll_mouse_slot(InputDiSlotSoft& slot) {
   IDirectInputDevice8A* dev = slot.device ? slot.device : g_di_mouse;
-  if (!input_window_is_foreground() || !input_di_mouse_get_state_soft(dev, slot)) {
+  if (input_mouse_script_soft()) {
+    // Fork: SLRR_PE_BOOT_MOUSE. The device state is what the script's hand
+    // did since the previous poll: the counts go to this ONE poll (relative
+    // DirectInput data is returned once), the button bytes are levels. The
+    // foreground test and GetDeviceState are skipped, as g_inject_keys does
+    // for the keyboard (IO.cpp); the real mouse is not read.
+    InputMouseScriptSoft& m = g_mouse_script;
+    ++m.polls_all;
+    slot.state[0] = m.pend_x;
+    slot.state[1] = m.pend_y;
+    slot.state[2] = m.pend_z;
+    if (m.pend_x != 0 || m.pend_y != 0 || m.pend_z != 0) {
+      ++m.polls;
+      m.sum_x += m.pend_x;
+      m.sum_y += m.pend_y;
+      m.sum_z += m.pend_z;
+    }
+    m.pend_x = m.pend_y = m.pend_z = 0;
+    const unsigned char btn[4] = {
+        static_cast<unsigned char>(m.left ? 0x80 : 0),
+        static_cast<unsigned char>(m.right ? 0x80 : 0), 0, 0};
+    std::memcpy(&slot.state[3], btn, 4);
+  } else if (input_mouse_unattended_soft() || !input_window_is_foreground() ||
+             !input_di_mouse_get_state_soft(dev, slot)) {
+    // Fork: an unattended run without a mouse script reads no device either:
+    // the mouse nobody touched (the exe reads it whenever it is acquired).
+    // The test window can be the foreground window although it was made with
+    // WS_EX_NOACTIVATE, and the user's hand would then reach the run.
     // PE @ 0x00556CFF: zero state dwords 401..404 (lX/lY/lZ/buttons).
     slot.state[0] = slot.state[1] = slot.state[2] = slot.state[3] = 0;
     g_mouse_rel_x = g_mouse_rel_y = g_mouse_rel_z = 0.f;
@@ -976,15 +1053,35 @@ void input_publish_phys_from_di_soft() {
   }
 
   // Soft PE mouse axes 0..9 via readPhysicalAxis; then NDC overlay on 0/1.
+  // Fork: in an unattended run (a mouse script, or SLRR_WINDOW_NOACTIVATE=1
+  // on the script boot) the real buttons stay out.
+  const bool vk_buttons = !input_mouse_unattended_soft();
   for (int a = 0; a < kInputMouseAxisCountSoft; ++a) {
     float v = input_read_physical_axis_soft(1, a);
     // Hybrid VK buttons if DI mouse not acquired (soft state may be zero).
-    if (a == 3 && key_down_vk(VK_LBUTTON)) v = 1.f;
-    if (a == 4 && key_down_vk(VK_RBUTTON)) v = 1.f;
-    if (a == 5 && key_down_vk(VK_MBUTTON)) v = 1.f;
+    if (vk_buttons) {
+      if (a == 3 && key_down_vk(VK_LBUTTON)) v = 1.f;
+      if (a == 4 && key_down_vk(VK_RBUTTON)) v = 1.f;
+      if (a == 5 && key_down_vk(VK_MBUTTON)) v = 1.f;
+    } else if (input_mouse_script_soft()) {
+      // What the mouse script's input became (`[input] mouse script`).
+      InputMouseScriptSoft& m = g_mouse_script;
+      const float av = v < 0.f ? -v : v;
+      if (a < 3 && m.peak[a] < av) m.peak[a] = av;
+      if (a == 3 && v > 0.f) m.seen_left = true;
+      if (a == 4 && v > 0.f) m.seen_right = true;
+    }
     input_set_axis(1, a, v);
   }
-  poll_mouse_axes();  // overlays phys 0/1 with client NDC for OSD
+  // PE 940 FUN_00543f70: physical axes 0 / 1 of the mouse are rates,
+  // clamp(lX or lY / dt_ms * 0.005, -1, 1), as read just above. The overlay
+  // (the real pointer's client NDC written over them) is a host stand-in
+  // whose only reader is the Soft mechanic of the legacy path. On the script
+  // boot the two axes keep the exe's values and GetCursorPos is not read:
+  // the scripts map the camera axes 7 / 8 onto exactly these two during a
+  // right drag (Garage.java:1174-1180).
+  if (!native_script_boot())
+    poll_mouse_axes();  // overlays phys 0/1 with client NDC for OSD
 #endif
 }
 // Soft PE Input_pollDevices @ 0x00556BC0 size 0x23c.
@@ -1011,11 +1108,29 @@ float input_poll_devices_soft() {
     const double ticks =
         static_cast<double>(now.QuadPart - g_input_qpc_last.QuadPart);
     g_input_qpc_last = now;
-    if (g_input_qpc_freq.QuadPart > 0)
+    if (g_input_qpc_freq.QuadPart > 0) {
       g_input_poll_qpc_dt_ms = static_cast<float>(
           ticks * 1000.0 / static_cast<double>(g_input_qpc_freq.QuadPart));
-    else
+      // PE 940 FUN_00544ba0: DAT_00794b74 = (float)(int)__alldiv(__allmul(
+      // counter difference, 1000), frequency): WHOLE milliseconds since the
+      // poll before. The mouse rates divide by it (FUN_00543f70), and the
+      // exe polls once per game tick. Script boot only: the legacy loop
+      // polls several times per pass and keeps the fraction.
+      // Fork: the host takes the whole milliseconds the loop handed to
+      // input_tick (g_input_frame_dt_ms), not its own counter difference.
+      // In the exe the two are the same interval, measured twice (the poll
+      // runs right behind the loop's gate). The host's loop accounts a tick
+      // at its due time although it runs up to a pass later
+      // (game_boot_part1.inc), and the counter difference between two polls
+      // carries that lateness: 13 to 19 ms for a 16 ms tick, which would
+      // make one wheel notch a different step of the camera distance from
+      // tick to tick.
+      if (native_script_boot())
+        g_input_poll_qpc_dt_ms = static_cast<float>(
+            static_cast<int32_t>(g_input_frame_dt_ms + 0.5f));
+    } else {
       g_input_poll_qpc_dt_ms = 0.f;
+    }
   }
 
   for (int i = 0; i < g_input_di_count && i < kInputDiMaxSoft; ++i) {
@@ -1227,8 +1342,16 @@ void input_live_poll() {
   // Soft Input_tick first (PE MainLoop @ 0x00428AAD order): pollDevices fills
   // DI + g_axes, then ++logicalEvalStamp + tickAxes. lastKey / SysCursor are
   // adjacent host extras (not inside PE Input_tick body).
-  input_tick(g_input_last_frame_dt_sec);
-  g_input_last_frame_dt_sec = g_input_poll_dt_ms * 0.001f;
+  // PE 940 FUN_0047d760: the input tick FUN_00566160 runs once per game
+  // tick, behind the loop's 15 ms gate. On the script boot the loop calls
+  // input_tick there (game_boot_part1.inc) and this function polls no
+  // device: relative data (mouse counts, the wheel) is returned by
+  // DirectInput once and has to reach the tick whose control(dt) reads it.
+  // The last-key scan below stays. The legacy loop keeps its poll here.
+  if (!native_script_boot()) {
+    input_tick(g_input_last_frame_dt_sec);
+    g_input_last_frame_dt_sec = g_input_poll_dt_ms * 0.001f;
+  }
 
   bool di_key = false;
   if (g_di_kb_ok && g_input_di_count > 0 && g_input_di_slots[0].type == 1) {
@@ -1263,6 +1386,11 @@ void input_wndproc_mouse(void* hwnd, uint32_t msg, uintptr_t wp, intptr_t lp) {
   if (msg != 0x200 && msg != 0x201 && msg != 0x202 && msg != 0x204 &&
       msg != 0x205)
     return;
+  // Fork: in an unattended run (script boot, and SLRR_WINDOW_NOACTIVATE=1 or
+  // a mouse script) only the mouse script's messages count. The exe takes
+  // every message; a window that is not the foreground window still gets
+  // WM_MOUSEMOVE when the user's pointer crosses it.
+  if (input_mouse_unattended_soft() && !g_mouse_script.in_call) return;
   HWND h = static_cast<HWND>(hwnd);
   RECT rc{};
   if (!h || !GetClientRect(h, &rc) || rc.right <= 0 || rc.bottom <= 0) return;
@@ -1307,6 +1435,13 @@ void input_syscursor_set_buttons(uint32_t mk) {
 
 void input_syscursor_lock() {
 #ifdef _WIN32
+  // Fork: an unattended run never reads or pins the user's pointer; the
+  // flag alone is kept (the mouse script holds its own pointer still while
+  // it is set). The exe does what follows.
+  if (input_mouse_unattended_soft()) {
+    g_syscursor_locked = true;
+    return;
+  }
   // PE Engine_SysCursorLock @ 0x004B7C50: GetCursorPos → RECT {x,y,x,y}
   // (degenerate clip = pin pixel) → ClipCursor; Engine_SysCursorLocked=1.
   POINT pt{};
@@ -1327,6 +1462,9 @@ void input_syscursor_unlock() {
 #ifdef _WIN32
   // PE 0x004B7C90: flag=0; ClipCursor(NULL).
   g_syscursor_locked = false;
+  // Fork: not in an unattended run (see input_syscursor_lock); a clip
+  // rectangle another program set is the user's.
+  if (input_mouse_unattended_soft()) return;
   ClipCursor(nullptr);
 #else
   g_syscursor_locked = false;
@@ -1334,5 +1472,199 @@ void input_syscursor_unlock() {
 }
 
 bool input_syscursor_locked() { return g_syscursor_locked; }
+
+void input_syscursor_show(bool show) {
+#ifdef _WIN32
+  // Fork: an unattended run never shows or hides the user's pointer (the
+  // cursor object keeps its enabled bit; the log has the command).
+  if (input_mouse_unattended_soft()) return;
+  // PE 940 FUN_00427870: ShowCursor(1); FUN_00425a20: ShowCursor(0). The
+  // cursor type calls one of them once per change of its enabled bit, which
+  // starts set, so the display count is 0 (shown) or -1 (hidden).
+  ShowCursor(show ? TRUE : FALSE);
+#else
+  (void)show;
+#endif
+}
+
+void input_syscursor_set_pos(float x, float y) {
+#ifdef _WIN32
+  // Fork: an unattended run never moves the user's pointer.
+  if (input_mouse_unattended_soft()) return;
+  // PE 940 FUN_00426cb0: SetCursorPos((int)((x + 1) * 0.5 * W), (int)((y +
+  // 1) * 0.5 * H)) with W, H the client size (DAT_005e93c8 / DAT_005e93cc).
+  HWND h = static_cast<HWND>(render_d3d9_hwnd());
+  RECT rc{};
+  if (!h || !GetClientRect(h, &rc)) return;
+  POINT pt{};
+  pt.x = static_cast<LONG>((x + 1.f) * 0.5f * static_cast<float>(rc.right));
+  pt.y = static_cast<LONG>((y + 1.f) * 0.5f * static_cast<float>(rc.bottom));
+  // Fork: the exe hands these client coordinates to SetCursorPos as they
+  // are: its window has the client area at the screen origin (FUN_00423fd0
+  // moves it there). The host's window is placed by Windows, so the point
+  // goes through ClientToScreen.
+  ClientToScreen(h, &pt);
+  SetCursorPos(pt.x, pt.y);
+#else
+  (void)x;
+  (void)y;
+#endif
+}
+
+bool input_mouse_script() { return input_mouse_script_soft(); }
+bool input_mouse_unattended() { return input_mouse_unattended_soft(); }
+
+namespace {
+
+void input_inject_mouse_state_soft(InputInjectMouseState* out, int32_t dx,
+                                   int32_t dy, bool locked) {
+  if (!out) return;
+  const InputMouseScriptSoft& m = g_mouse_script;
+  out->placed = m.placed;
+  out->x = m.px;
+  out->y = m.py;
+  out->hand_x = m.hx;
+  out->hand_y = m.hy;
+  out->dx = dx;
+  out->dy = dy;
+  out->left = m.left;
+  out->right = m.right;
+  out->locked = locked;
+  out->polls = m.polls_all;
+}
+
+// One window message of the mouse script, through the window procedure's
+// own entry. A pointer outside the client area gets no message: the exe has
+// no SetCapture, so its position keeps the last value there (X 2.1).
+void input_inject_mouse_message_soft(uint32_t msg) {
+#ifdef _WIN32
+  InputMouseScriptSoft& m = g_mouse_script;
+  HWND hwnd = static_cast<HWND>(render_d3d9_hwnd());
+  RECT rc{};
+  if (!hwnd || !GetClientRect(hwnd, &rc)) return;
+  if (m.px < 0 || m.py < 0 || m.px >= rc.right || m.py >= rc.bottom) return;
+  const uintptr_t wp = (m.left ? 1u : 0u) | (m.right ? 2u : 0u);  // MK_LBUTTON | MK_RBUTTON
+  const intptr_t lp = static_cast<intptr_t>(
+      (static_cast<uint32_t>(m.py) << 16) | (static_cast<uint32_t>(m.px) & 0xFFFFu));
+  m.in_call = true;
+  input_wndproc_mouse(hwnd, msg, wp, lp);
+  m.in_call = false;
+#else
+  (void)msg;
+#endif
+}
+
+}  // namespace
+
+void input_inject_mouse_peek(InputInjectMouseState* out) {
+  if (!out) return;
+  const bool locked = g_syscursor_locked;
+  input_inject_mouse_state_soft(out, 0, 0, locked);
+  // The next entry starts from the pointer when the lock went since the
+  // previous one (see input_inject_mouse).
+  if (g_mouse_script.placed && g_mouse_script.was_locked && !locked) {
+    out->hand_x = g_mouse_script.px;
+    out->hand_y = g_mouse_script.py;
+  }
+}
+
+void input_inject_mouse(int32_t x, int32_t y, const InputInjectMouseOp* ops,
+                        int32_t n_ops, InputInjectMouseState* out) {
+  // Fork: SLRR_PE_BOOT_MOUSE, see InputMouseScriptSoft.
+  InputMouseScriptSoft& m = g_mouse_script;
+  const bool locked = g_syscursor_locked;
+  if (!input_mouse_script_soft()) {
+    input_inject_mouse_state_soft(out, 0, 0, locked);
+    return;
+  }
+  int32_t dx = 0, dy = 0;
+  if (!m.placed) {
+    // The first entry puts hand and pointer down: no counts.
+    m.placed = true;
+    m.hx = x;
+    m.hy = y;
+  } else {
+    // The lock went since the previous entry: the hand is where the pinned
+    // pointer is.
+    if (m.was_locked && !locked) {
+      m.hx = m.px;
+      m.hy = m.py;
+    }
+    // Fork: one DirectInput count per pixel the hand travels (a real mouse
+    // gives counts by its resolution and the pointer speed setting).
+    dx = x - m.hx;
+    dy = y - m.hy;
+    m.pend_x += dx;
+    m.pend_y += dy;
+    m.hx = x;
+    m.hy = y;
+  }
+  m.was_locked = locked;
+  if (!locked) {
+    // The pointer follows the hand and the window hears of it. While the
+    // cursor's `lock` holds it stays (ClipCursor to one point in the exe)
+    // and no message is sent.
+    m.px = x;
+    m.py = y;
+    input_inject_mouse_message_soft(0x200);  // WM_MOUSEMOVE
+  }
+  for (int32_t i = 0; ops && i < n_ops; ++i) {
+    switch (ops[i].op) {
+      case 'L':
+        m.left = true;
+        input_inject_mouse_message_soft(0x201);  // WM_LBUTTONDOWN
+        break;
+      case 'l':
+        m.left = false;
+        input_inject_mouse_message_soft(0x202);  // WM_LBUTTONUP
+        break;
+      case 'R':
+        m.right = true;
+        input_inject_mouse_message_soft(0x204);  // WM_RBUTTONDOWN
+        break;
+      case 'r':
+        m.right = false;
+        input_inject_mouse_message_soft(0x205);  // WM_RBUTTONUP
+        break;
+      case 'W':
+        m.pend_z += 120 * ops[i].n;  // WHEEL_DELTA per notch; no message (X 2.1)
+        break;
+      default:
+        break;
+    }
+  }
+  input_inject_mouse_state_soft(out, dx, dy, locked);
+}
+
+void input_debug_dump(FILE* out) {
+  // Fork: one line for the script-boot report (SLRR_PE_NATIVE_PROF): the
+  // mouse's physical axes 0..4 as Input.getAxis(1, n) answers them (0..2
+  // rates, 3 / 4 the first two buttons) and the window procedure's position.
+  if (!out || !native_script_boot() || !native_type_log()) return;
+  std::fprintf(out,
+               "[input] mouse axes 0=%g 1=%g 2=%g 3=%g 4=%g window ndc=(%.4f, %.4f) "
+               "seen=%d locked=%d\n",
+               static_cast<double>(java_io_Input_getAxis(1, 0)),
+               static_cast<double>(java_io_Input_getAxis(1, 1)),
+               static_cast<double>(java_io_Input_getAxis(1, 2)),
+               static_cast<double>(java_io_Input_getAxis(1, 3)),
+               static_cast<double>(java_io_Input_getAxis(1, 4)),
+               static_cast<double>(g_syscursor_nx),
+               static_cast<double>(g_syscursor_ny), g_syscursor_has ? 1 : 0,
+               g_syscursor_locked ? 1 : 0);
+  if (input_mouse_script_soft()) {
+    // Only with SLRR_PE_BOOT_MOUSE: what the device slot was handed over
+    // the run and the largest values the publish made of it.
+    const InputMouseScriptSoft& m = g_mouse_script;
+    std::fprintf(out,
+                 "[input] mouse script polls=%u counts=(%d, %d, %d) peak=(%g, %g, %g) "
+                 "buttons=%s\n",
+                 m.polls, m.sum_x, m.sum_y, m.sum_z,
+                 static_cast<double>(m.peak[0]), static_cast<double>(m.peak[1]),
+                 static_cast<double>(m.peak[2]),
+                 m.seen_left ? (m.seen_right ? "LR" : "L")
+                             : (m.seen_right ? "R" : "-"));
+  }
+}
 
 }  // namespace inv

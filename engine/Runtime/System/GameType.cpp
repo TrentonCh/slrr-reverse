@@ -49,11 +49,18 @@ struct GameTypeState {
     int32_t ealias = 0;
     std::string custmsg;
     std::string custmethod;
+    // Fork: when the entry was added, over all listeners. PE 940
+    // FUN_004e78e0 links a new entry at the head of the watched node's list
+    // (payload+0x5c) and FUN_0047c760 walks from the head: the newest entry
+    // of a node is called first. The host keeps the entries per listener,
+    // so the order across listeners is this stamp (gametype_send_event).
+    uint64_t seq = 0;
   };
   std::vector<Notification> notifs;
 };
 
 std::unordered_map<InvObject*, GameTypeState> g_gt;
+uint64_t g_notif_seq = 0;  // guarded by g_mu
 // PE LoadGameInit stores script at GI+0x50 (32-bit). Host side-map (64-bit
 // InvObject* cannot overwrite HostLoadGameInitGi.rebind_key int32 @ +0x50).
 std::unordered_map<void*, InvObject*> g_lgi_scripts;
@@ -394,6 +401,40 @@ void engine_dispatch_animate_events() {
   }
 }
 
+namespace {
+
+// The handles in the list of `self` that are the same key as `ref` with this
+// mask word: `ref` itself, and on the script boot every other handle of the
+// node `ref` names. PE 940 FUN_004e78e0 (M4 Q3) keeps the list on the node
+// listened to and finds an entry by listener and mask word (asm 0x4e7980,
+// 0x4e7985), so two handles of one node are one key there; the walk
+// (send_event_node) matches by node as well. The legacy path keeps the
+// handle as the key. Called with no lock held: gameref_node_object locks.
+std::vector<InvObject*> watch_keys_of(InvObject* self, InvObject* ref,
+                                      int32_t etype) {
+  std::vector<InvObject*> keys{ref};
+  if (!native_script_boot()) return keys;
+  std::vector<InvObject*> others;
+  {
+    std::lock_guard<std::mutex> lock(g_mu);
+    auto it = g_gt.find(self);
+    if (it == g_gt.end()) return keys;
+    for (const auto& n : it->second.notifs)
+      if (n.etype == etype && n.ref && n.ref != ref) others.push_back(n.ref);
+  }
+  if (others.empty()) return keys;
+  InvObject* const node = gameref_node_object(ref);
+  for (InvObject* o : others)
+    if (gameref_node_object(o) == node) keys.push_back(o);
+  return keys;
+}
+
+bool watch_key_in(const std::vector<InvObject*>& keys, InvObject* ref) {
+  return std::find(keys.begin(), keys.end(), ref) != keys.end();
+}
+
+}  // namespace
+
 void java_lang_GameType_remNotification(InvObject* self, InvObject* ref,
                                         int32_t etype) {
   // PE @ 0x0047E000 size 0x4b (75): Unbox dest0=this, dest1=GameRef,
@@ -406,14 +447,16 @@ void java_lang_GameType_remNotification(InvObject* self, InvObject* ref,
   // Gaps (host stand-in; no invent Watch/blob APIs):
   // - no Native.ptr gate: still erase (script GameType City/Track/Osd
   //   often has no blob; stock would silent-ret).
-  // - match key = InvObject* ref + etype (not *(handle+8) listener).
+  // - match key = InvObject* ref + etype (not *(handle+8) listener); on
+  //   the script boot any handle of the same node (watch_keys_of).
   // - list on GameType self (not GameRef instance+0x5C / free-list).
   if (!self) return;
   if (!ref) return;  // stock dest1==0
+  const std::vector<InvObject*> keys = watch_keys_of(self, ref, etype);
   std::lock_guard<std::mutex> lock(g_mu);
   auto& n = st(self).notifs;
   for (auto it = n.begin(); it != n.end(); ++it) {
-    if (it->ref == ref && it->etype == etype) {
+    if (watch_key_in(keys, it->ref) && it->etype == etype) {
       n.erase(it);  // stock Watch: first match only
       break;
     }
@@ -440,14 +483,16 @@ void java_lang_GameType_addNotification(InvObject* self, InvObject* ref,
   // +0x24=custmsg String*, +0x28=0 (no custmethod); insert head at +0x5C.
   // Gaps (host stand-in; no invent Watch/blob APIs):
   // - no Native.ptr gate / Mighty: still insert when script has no blob.
-  // - match key = InvObject* ref + etype (not *(handle+8) listener).
+  // - match key = InvObject* ref + etype (not *(handle+8) listener); on
+  //   the script boot any handle of the same node (watch_keys_of).
   // - list on GameType self (not GameRef instance+0x5C / free-list).
   if (!self) return;
   if (!ref) return;  // stock dest1==0
+  const std::vector<InvObject*> keys = watch_keys_of(self, ref, etype);
   std::lock_guard<std::mutex> lock(g_mu);
   auto& nlist = st(self).notifs;
   for (auto it = nlist.begin(); it != nlist.end(); ++it) {
-    if (it->ref == ref && it->etype == etype) {
+    if (watch_key_in(keys, it->ref) && it->etype == etype) {
       nlist.erase(it);  // stock Watch: first match only (like rem)
       break;
     }
@@ -460,6 +505,7 @@ void java_lang_GameType_addNotification(InvObject* self, InvObject* ref,
     if (const char* s = string_cstr(custmsg)) n.custmsg = s;
   }
   // stock node+0x28 = 0 (no custmethod); leave n.custmethod empty
+  n.seq = ++g_notif_seq;
   nlist.insert(nlist.begin(), std::move(n));
   sync(self);
 }
@@ -487,14 +533,16 @@ void java_lang_GameType_addNotification_1(InvObject* self, InvObject* ref,
   // head at +0x5C.
   // Gaps (host stand-in; no invent Watch/blob APIs):
   // - no Native.ptr gate / Mighty: still insert when script has no blob.
-  // - match key = InvObject* ref + etype (not *(handle+8) listener).
+  // - match key = InvObject* ref + etype (not *(handle+8) listener); on
+  //   the script boot any handle of the same node (watch_keys_of).
   // - list on GameType self (not GameRef instance+0x5C / free-list).
   if (!self) return;
   if (!ref) return;  // stock dest1==0
+  const std::vector<InvObject*> keys = watch_keys_of(self, ref, etype);
   std::lock_guard<std::mutex> lock(g_mu);
   auto& nlist = st(self).notifs;
   for (auto it = nlist.begin(); it != nlist.end(); ++it) {
-    if (it->ref == ref && it->etype == etype) {
+    if (watch_key_in(keys, it->ref) && it->etype == etype) {
       nlist.erase(it);  // stock Watch: first match only (like race111 add)
       break;
     }
@@ -510,6 +558,7 @@ void java_lang_GameType_addNotification_1(InvObject* self, InvObject* ref,
     if (const char* s = string_cstr(custmethod)) n.custmethod = s;
   }
   // stock Watch a6 → node+0x28 (copied C-string); race111 leaves +0x28=0
+  n.seq = ++g_notif_seq;
   nlist.insert(nlist.begin(), std::move(n));
   sync(self);
 }
@@ -718,6 +767,131 @@ void java_lang_GameType_dispatchCursorTo(InvObject* dest, InvObject* obj_ref,
                         /*custmsg=*/{}, /*custmethod=*/{}, mask);
 }
 
+namespace {
+
+// One entry of a node's notification list, copied out of the table.
+struct NotifSnap {
+  InvObject* listener = nullptr;
+  InvObject* ref = nullptr;
+  int32_t etype = 0;
+  int32_t ealias = 0;
+  std::string custmsg;
+  std::string custmethod;
+  uint64_t seq = 0;
+};
+
+// PE 940 FUN_0047c760(target, sender, event, param, method). `method` is
+// the method name of the notification entry that forwarded the event, null
+// for a first send.
+void send_event_node(InvObject* target, InvObject* sender, int32_t event,
+                     const char* text, const char* method, int depth,
+                     const char* log_tag) {
+  if (!target) return;
+  // Fork: the exe has no limit; a ring of notifications would recurse
+  // there until the stack ends.
+  if (depth > 16) return;
+  // The mask (payload+0xa0) and every entry whose mask has the event, copied
+  // out: nothing below runs with the table locked.
+  int32_t mask = 0;
+  std::vector<NotifSnap> on;
+  {
+    std::vector<NotifSnap> all;
+    {
+      std::lock_guard<std::mutex> lock(g_mu);
+      auto it = g_gt.find(target);
+      if (it != g_gt.end()) mask = it->second.event_mask;
+      for (const auto& kv : g_gt) {
+        if (!kv.first) continue;
+        for (const auto& n : kv.second.notifs)
+          if (n.ref && (n.etype & event) != 0)
+            all.push_back({kv.first, n.ref, n.etype, n.ealias, n.custmsg,
+                           n.custmethod, n.seq});
+      }
+    }
+    // An entry is on the list of the NODE the script named, whichever
+    // handle it passed (the exe's list hangs on the node's payload).
+    for (NotifSnap& e : all)
+      if (gameref_node_object(e.ref) == target) on.push_back(std::move(e));
+    std::sort(on.begin(), on.end(), [](const NotifSnap& a, const NotifSnap& b) {
+      return a.seq > b.seq;  // head of the list first: the newest
+    });
+  }
+  const bool direct = (mask & event) != 0;
+  if (log_tag) {
+    const char* cn = tree_host_class(target);
+    std::fprintf(stderr,
+                 "%s to=0x%08X '%s' mask=%d listeners=%d sender=0x%08X "
+                 "\"%s\"\n",
+                 log_tag,
+                 static_cast<unsigned>(java_util_resource_ResourceRef_id(target)),
+                 cn ? cn : "", direct ? 1 : 0, static_cast<int>(on.size()),
+                 static_cast<unsigned>(
+                     sender ? java_util_resource_ResourceRef_id(sender) : 0),
+                 text ? text : "");
+  }
+  const int32_t ev = event & kEventAny;
+  // PE case 0x80 hands the script an int; every other event its text.
+  const bool use_string = ev != kEventTime;
+  if (direct) {
+    // The handler of the native game object first (type vt+0x38); the
+    // script only when there is none or it returns 0. The script instance
+    // of a node is its node object on the host.
+    if (!native_event(target, ev, text ? text : ""))
+      engine_dispatch_script_event_call_named(
+          target, sender ? sender : target, ev,
+          use_string ? string_new(text ? text : "") : nullptr, 0, use_string,
+          method);
+  }
+  for (const NotifSnap& e : on) {
+    // The walk reads the next entry before each forward (0x47c890), so it
+    // survives the entry its handler deletes. Fork: an entry that an
+    // earlier handler of this walk removed is passed over (what the exe's
+    // walk does when the saved next entry is unlinked was not read, M4 Q3).
+    bool there = false;
+    bool dead = false;
+    {
+      std::lock_guard<std::mutex> lock(g_mu);
+      auto it = g_gt.find(e.listener);
+      if (it != g_gt.end()) {
+        for (const auto& n : it->second.notifs)
+          if (n.seq == e.seq) there = true;
+        dead = it->second.native_created != 0;
+      }
+    }
+    if (!there) continue;
+    // 0x47c89f: an entry whose listener handle reads id 0 (its node is
+    // gone) is deleted and not called. Host: a listener that was made a
+    // node and has no id any more.
+    if (dead && java_util_resource_ResourceRef_id(e.listener) != 0) dead = false;
+    if (dead) {
+      erase_oneshot_watch(e.listener, e.ref, e.etype);
+      continue;
+    }
+    // Entry mask bit 0x40000000: not forwarded when the event came with a
+    // sender. Bit 31: one-shot, deleted after the forward.
+    if (!((e.etype & kWatchEtypeSkipRelated) != 0 && sender != nullptr)) {
+      const int32_t fwd = watch_fwd_event(event, e.ealias);
+      const char* param = text;
+      if ((e.ealias & kWatchEaliasCustmsg) != 0) param = e.custmsg.c_str();
+      send_event_node(e.listener, sender ? sender : target, fwd, param,
+                      e.custmethod.empty() ? nullptr : e.custmethod.c_str(),
+                      depth + 1, nullptr);
+    }
+    if ((e.etype & kWatchEtypeOneshot) != 0)
+      erase_oneshot_watch(e.listener, e.ref, e.etype);
+  }
+}
+
+}  // namespace
+
+void gametype_send_event(InvObject* target, InvObject* sender, int32_t event,
+                         const char* text, const char* log_tag) {
+  // PE 940 FUN_0047d550(target handle, sender handle or 0, event, text, 0).
+  // Script boot only: the legacy tick keeps dispatchCursor / dispatchCursorTo.
+  if (!target || !native_script_boot()) return;
+  send_event_node(target, sender, event, text, nullptr, 0, log_tag);
+}
+
 void java_lang_GameType_setEventMask(InvObject* self, int32_t eventmask) {
   // PE @ 0x004819F0 → GameInstance_orEventMask @ 0x0048D3D0:
   // inner=*(handle+0xC); vtbl+0xC(1.0f); *(payload+0x70) |= mask.
@@ -826,6 +1000,15 @@ InvObject* gametype_get_parent(InvObject* self) {
   return it == g_gt.end() ? nullptr : it->second.parent;
 }
 
+// True when GameType.createNativeInstance was called on this script object:
+// the factory made its node with `script = this` (PE 940 FUN_005240e0).
+bool gametype_native_created(InvObject* self) {
+  if (!self) return false;
+  std::lock_guard<std::mutex> lock(g_mu);
+  auto it = g_gt.find(self);
+  return it != g_gt.end() && it->second.native_created != 0;
+}
+
 void java_lang_GameType_createNativeInstance(InvObject* self, InvObject* parent,
                                              int32_t typeID, InvObject* params,
                                              InvObject* alias) {
@@ -847,7 +1030,6 @@ void java_lang_GameType_createNativeInstance(InvObject* self, InvObject* parent,
   // handle+8=inst+0x50. Epilogue unlink temp type handle if var_4.
   // Not 1:1 (no PE factory/blob). Host: mark native_created + stash
   // parent/typeID (script GameType often has no blob; still proceed).
-  (void)params;
   (void)alias;
   if (!self) return;
   // PE @ 0x481AD6 typeID==0: ResourceEngine_type_gametype → class+0x1D4 cache.
@@ -864,6 +1046,16 @@ void java_lang_GameType_createNativeInstance(InvObject* self, InvObject* parent,
   // object that already has an id keeps it.
   if (native_script_boot() && java_util_resource_ResourceRef_id(self) == 0)
     script_node_register(self, self, gameref_node_object(parent), typeID, 0);
+  // PE 940 FUN_005240e0, as in GameRef.create (FUN_00523c80): the vt+0x0C of
+  // the type makes the node's native game object (payload+0x4C) from the
+  // params string. Of the shipped scripts only java.io.Controller passes a
+  // type with a `native` line (`player`, system.rpk:0x32, Controller.class
+  // L18); Dummy and Group name types without one and get no object. Script
+  // boot only (native_object_create does nothing elsewhere).
+  if (native_script_boot() && typeID != 0)
+    native_object_create(gametype_desc(typeID), self, self,
+                         gameref_node_object(parent),
+                         params ? string_cstr(params) : "");
   std::lock_guard<std::mutex> lock(g_mu);
   GameTypeState& s = st(self);
   s.native_created = 1;

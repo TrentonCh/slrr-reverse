@@ -15,7 +15,7 @@ Old-build regression (from `E:\NFS.SLRR Edition\NFS.SLRR Edition`):
 `timeout 150 slrr_engine.exe --game --no-wait` must print vehicleTypes=25,
 `hub EXIT ok=1` and exit 5. Delete `tree_rpk_scan_boot` after every run.
 
-## Next steps (ordered, 2026-10-11 evening)
+## Next steps (ordered, 2026-10-15)
 
 Where it stands: the 940 scripts boot to the main menu; NEW CAREER enters
 the garage, which matches the stock frame in 2D and 3D; LOAD CAR gives a
@@ -34,6 +34,13 @@ Steam install. Unattended checks (cwd = the test copy):
   profile name, with `SLRR_CLASS_CACHE=<tools/slrrc out dir>`.
 Stock frames: `../slrr-ghidra/notes/reference_frames/` (none with a car
 yet).
+Since 2026-10-15 the mouse works on the script boot: hover, press and
+click in the main menu, the dialogs and the garage top bar, and the
+garage camera orbits and zooms with the arrow keys, PgUp / PgDn, the
+wheel and a right-button drag. Mouse checks: `run_m4.sh <name> <secs>
+<keys> [VAR=VALUE ...]` and `m4_check.py <scenario> <frame> <log>
+[--base <frame> <log>]` in `../slrr-ghidra/notes/m4/` (scenario table
+SCENARIOS; `batch_fix.sh` / `score_fix.sh` run and score all of them).
 
 1. UI pass: done (75569af). What the exe does and what the host got wrong
    is in ENGINE.md section 7 and docs/VM.md session 5. Left over, none
@@ -128,9 +135,27 @@ yet).
    (needs a stock close-up to judge). NOT yet accepted against a stock
    frame: none with a car exists (wanted: LOAD CAR tamas in the stock
    game, 10 s in the garage, then the lift view and a quarter-turn orbit).
-3b. Mouse: `MouseCursor` (Controller `Mouse` device axes, `getPos`,
-   `getPickedPos`, EVENT_CURSOR to the Osd), `Osd.hoverEffect` /
-   `click` / `mapClickPosH`, pointer visibility.
+3b. Mouse: done for steps 0 to 3 (this commit). Spec, maps and step
+   reports in `../slrr-ghidra/notes/m4/` (`m4_spec.md`, `exe_mouse.md`,
+   `exe_mouse_q.md`, `impl_0..3.md`, `impl_fix.md`, `acceptance.md`).
+   Every unattended acceptance item passes: the garage and car checks
+   unchanged, 21 click and hover scenarios, the camera against its model
+   within 2 %. Open:
+   - step 4, the 3D pick of parts and of the map's collision triangles
+     (the three exe reads it waited on are answered in `exe_mouse_q.md`),
+     then the mechanic (remove, install, drag, the bin's `invitem` type);
+   - an interactive run by the user (Windows pointer shapes, `ShowCursor`,
+     the real `ClipCursor` of a right drag have never executed: every run
+     was unattended);
+   - stock captures M1..M10 and answers K1..K4 (end of `m4_spec.md`); M1
+     decides whether the stock pointer is the Windows cursor;
+   - the pointer is shown before the first cursor exists (the exe hides
+     it); fixing it needs the window procedure in `render_d3d9_part1.inc`,
+     which has no room;
+   - `Group.findGadgetEx` still answers null (a fresh `ResourceRef` on a
+     script-made body has no parent): bin-panel swaps need it;
+   - screens behind the top bar (city, dealers, catalog, paint booth, ...)
+     are not implemented, and the lift view is reported, not gated.
 4. Career-path script errors and loader gaps (none is a compiler case):
    - `String.getParams(Vector)` is a static script method that returns
      null on the host (`GameLogic.updateCodeROC` -> `null.trim()`).
@@ -171,9 +196,12 @@ yet).
      `PackNames` yet (needed by the C++ port);
    - stale detection for cache entries (the manifest records source size
      and hash; the host does not check it yet).
-8. Frame-loop differences listed in ENGINE.md section 3 (rate gates, four
-   `input_tick` calls per iteration, the load rate that never reaches
-   the pump). The window size from `save/game/options` is done (75569af).
+8. Frame-loop differences listed in ENGINE.md section 3. Done on the
+   script boot (this commit): one gated `input_tick` and one game tick
+   per pass after more than 15 ms, with the same whole-millisecond dt.
+   Open: the VM pump's 8 ms gate and `fps_lock` for the present, the
+   load rate that never reaches the pump, the legacy path's four polls.
+   The window size from `save/game/options` is done (75569af).
 9. Loader quick wins (ENGINE.md section 12, "independent"). Done: the
    MTHD rows are read at their real offsets and an empty script method
    (`Part.addStockParts`, `Part.check4warnings`, `Osd.pressEffect`: no
@@ -251,6 +279,7 @@ comes after the menu is up.
 | tools/slrrc: reference compiler for the script dialect, with its proofs | 1342f63 | 2,649 of 2,651 shipped class files byte-identical; all 635 source-only classes compile |
 | Car in the garage, second half: lit material classes with environment map and specular, paint, shadows | 430ab5e | painted car with reflections and a shadow; the lift matches stock in metals and shadow marks |
 | Class cache: classes missing in the install are read from `SLRR_CLASS_CACHE` | d3872e1 | a stock-written career with a source-only rim and tyre loads into the garage |
+| Mouse on the script boot: `cursor` and `player` types, ray pick and the eighteen cursor events, camera control, test rig; legacy pack scan 40 % faster | (this commit) | hover, press and click in menu, dialogs and garage; camera orbit and zoom within 2 % of the model; old-build regression 109 s -> 67 s |
 
 ## In progress
 
@@ -330,6 +359,14 @@ comes after the menu is up.
 
 ## Known problems / gotchas
 
+- The legacy hub smoke of the old-build regression sends a real
+  `keybd_event(VK_RETURN)` (`game_boot_part1.inc`, legacy path). A
+  regression run started while someone types sends ENTER to their front
+  window. Run it only when the machine is idle until this is gated.
+- Mouse runs are wall-clock timed: a mouse entry that falls into a
+  loading pass (the car creation after the welcome dialog, the second
+  ENTER of the GARAGE key script) runs late; the scenario rows place
+  their entries after those passes.
 - Patch scripts: write them as files under `..\slrr-ghidra\patch_*.py`;
   heredocs collapse backslashes, so build escaped newlines as
   `chr(92) + "n"`. Engine sources are CRLF.

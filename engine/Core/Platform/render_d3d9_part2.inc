@@ -534,6 +534,16 @@ float render_d3d9_viewport_get_aspect(void* key) {
   auto it = g_viewports.find(key);
   if (it == g_viewports.end()) return 1.f;
   if (g_h <= 0) return 1.f;
+  // PE 940 FUN_004e6db0 -> FUN_004e9a10 (asm 0x4e9a85..0x4e9aa0, M4 Q12):
+  // (float(W) x w) / (float(H) x w) in float32, with w the viewport's width
+  // fraction (payload+0x18) on BOTH sides; the height fraction is never
+  // read. That is the device's W / H for every viewport, a dialog and a bin
+  // panel alike, to within the rounding of the two products; the script
+  // layouts were made against this value. Build 940 boot only.
+  if (render_boot940()) {
+    const float w = it->second.w;
+    return (static_cast<float>(g_w) * w) / (static_cast<float>(g_h) * w);
+  }
   return static_cast<float>(g_w) / static_cast<float>(g_h);
 }
 

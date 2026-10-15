@@ -181,6 +181,22 @@ void physics_integrate(float dt) {
   g_phys_list156 = n156;
   g_phys_list184 = n184;
 
+  // PE 940: PhysicsRef.createBox and createSphere make their body from a
+  // body type of mass 0 (FUN_004e16a0 -> FUN_004f7d60(0, kind, ...): inverse
+  // mass 0 and type flag 4, so FUN_00501f30 never gives the body the bit
+  // body+0x58 & 1). Such a body stays where PhysicsRef.setMatrix put it,
+  // and the cursor's pick tests it there (physics_pick_bodies): a gadget box
+  // is the rectangle of its button.
+  // On the script boot every shaped body of this table is one of those (a
+  // body made by PhysicsRef.create from a body type has no shape here), so
+  // nothing below applies: the soft world of the legacy path would drop
+  // each box onto its flat ground, half its height above y = 0. Only the
+  // clock advances.
+  if (native_script_boot()) {
+    g_phys_world_clock += dt;
+    return;
+  }
+
   // Soft substep: PE one integrate pass per Physics_Step call; outer
   // SimulateFrame already slices by *(world+8)≈0.05. Internal kSub=4 was
   // over-subdividing — use 1 when dt already ≤ soft max, else ceil.
@@ -847,6 +863,57 @@ bool physics_pick_osd_gadget(float ndc_x, float ndc_y, InvObject** out_phy,
   if (out_py) *out_py = best_py;
   if (out_pz) *out_pz = best_pz;
   return have;
+}
+
+void physics_pick_bodies(std::vector<PhysicsPickBody>* out) {
+  // M4 step 2 (host_objects.hpp). The pose is the one PhysicsRef.setMatrix
+  // stored; a box made without one stands at the origin with no rotation,
+  // as the exe makes it (FUN_004e16a0: identity pose at (0, 0, 0)).
+  if (!out) return;
+  out->clear();
+  // Fork: the pick asks once per loop pass and the table holds every handle
+  // of the game (thousands), so the handles that are physics instances are
+  // kept and the table is looked through again only when one may have been
+  // added: PhysicsRef.create takes a new runtime id for every instance
+  // (g_next_id), and a handle leaves the table through deleteNative (its
+  // size). What a kept handle is now is read at every call.
+  static std::vector<InvObject*> keys;
+  static int32_t seen_next_id = 0;
+  static size_t seen_size = 0;
+  std::lock_guard<std::mutex> lock(g_mu);
+  if (seen_next_id != g_next_id || seen_size != g_res.size()) {
+    seen_next_id = g_next_id;
+    seen_size = g_res.size();
+    keys.clear();
+    for (const auto& kv : g_res)
+      if (kv.first && kv.second.type == 2 && kv.second.shape != 0)
+        keys.push_back(kv.first);
+  }
+  for (InvObject* key : keys) {
+    auto it = g_res.find(key);
+    if (it == g_res.end()) continue;
+    const ResState& r = it->second;
+    if (r.type != 2 || (r.shape != 1 && r.shape != 2)) continue;
+    if (!r.parent || r.id == 0) continue;
+    // ResourceRef.destroy on the instance: its node and body are gone.
+    if (r.destroyed_id == r.id) continue;
+    PhysicsPickBody b;
+    b.phy = key;
+    b.owner = r.parent;
+    b.id = r.id;
+    b.seq = r.seq;
+    b.shape = r.shape;
+    b.half[0] = r.hx;
+    b.half[1] = r.hy;
+    b.half[2] = r.hz;
+    b.pos[0] = r.px;
+    b.pos[1] = r.py;
+    b.pos[2] = r.pz;
+    b.ypr[0] = r.oy;
+    b.ypr[1] = r.op;
+    b.ypr[2] = r.or_;
+    out->push_back(b);
+  }
 }
 
 

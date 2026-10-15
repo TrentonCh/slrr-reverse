@@ -1,4 +1,5 @@
 #include "video_fmv.hpp"
+#include "input_win32.hpp"
 #include "render_d3d9.hpp"
 #include "rpak.hpp"
 
@@ -788,7 +789,13 @@ int32_t video_fmv_play_boot_intros(int32_t max_frames_each) {
   auto esc_down = []() -> bool {
     return (GetAsyncKeyState(VK_ESCAPE) & 0x8000) != 0;
   };
-  if (HWND hwnd = static_cast<HWND>(render_d3d9_hwnd())) {
+  // Fork: an unattended run on the script boot (SLRR_WINDOW_NOACTIVATE=1 or a
+  // mouse script) leaves the foreground alone, as its WS_EX_NOACTIVATE window
+  // does: once the user has been idle for the foreground lock timeout this
+  // call brings the test window to the front, and the user's typing and
+  // mouse would then reach the run.
+  HWND hwnd = static_cast<HWND>(render_d3d9_hwnd());
+  if (hwnd && !input_mouse_unattended()) {
     SetForegroundWindow(hwnd);
     SetFocus(hwnd);
   }

@@ -104,6 +104,10 @@ struct NativeInfo {
   float v[3] = {0.f, 0.f, 0.f};
   InvObject* obj = nullptr;
   int32_t i = 0;
+  // In: the argument of a query that takes one (the exe passes it in the
+  // place of the out pointer): the axis number of the player's 0x19 and
+  // 0x43.
+  int32_t arg = 0;
 };
 
 struct NativeCreate {
@@ -141,13 +145,18 @@ class NativeObject {
   // most). Fork: the host calls it once per frame with the frame dt and the
   // object cuts its own steps (the soft world keeps a 0.05 s substep).
   virtual void drive(float /*dt*/) {}
+  // vt+0x34, once per main-loop pass (the exe's animate walk FUN_0047ba10,
+  // with min(frame dt, 0.1)); only for an object that sets `animates`.
+  virtual void animate(float /*dt*/) {}
   // vt+0x38: events; 0x10 = GameRef.command text. false = not taken, the
   // host's generic command chain runs.
   virtual bool event(int32_t /*type*/, const char* /*text*/) { return false; }
   // vt+0x3C. Queries used so far: 1 physics instance, 2 position,
   // 3 velocity, 7 the kind of object (9 a part, 5 a car), 0x17 the first
   // render instance (the ground's, a part's), 0x22 the camera's, 0x27 the
-  // free slots and 0x2B the car of a part or car.
+  // free slots and 0x2B the car of a part or car; of the player 0x19 and
+  // 0x43 (a logical axis, NativeInfo::arg), of the cursor 2, 0x2A (mode),
+  // 0x2C (hover object) and 0x3B (picked position).
   // GameRef.getPos is query 2 of the type (FUN_004e3890 -> FUN_004ea7a0 ->
   // FUN_0047c640(handle, 2, out)).
   virtual bool getinfo(int32_t /*query*/, NativeInfo* /*out*/) { return false; }
@@ -168,6 +177,11 @@ class NativeObject {
   // (the exe: FUN_004ebd90(obj, 0x14, 0) sets the instance flags that put
   // it on the two callback lists). Read once, when the object is registered.
   bool ticks = false;
+  // Set by a type's create when the object wants animate() (the exe:
+  // getinfo 0x1C answers 1 and FUN_0047d560 puts the instance on the
+  // animate list at GameRef.create). Read once, when the object is
+  // registered.
+  bool animates = false;
   // Set by a type's create when it took the instance pose from the params
   // string (the exe hands the string to vt+0x0C and nothing else reads it).
   // GameRef.create then skips the host's generic stand-in, which parses six
@@ -205,6 +219,19 @@ void native_on_destroy(InvObject* handle);
 // Once per engine_simulate_frame.
 void native_tick_control(float dt);
 void native_tick_drive(float dt);
+// PE 940 FUN_0047ba10(dt), for the native objects on the animate list, in
+// creation order: once per main-loop pass, after the VM pump and before the
+// script animate() calls (engine_dispatch_animate_events). The cursor is
+// made at boot, before any Osd registers its animate(), so it ticks first
+// as in the exe's one list.
+// Fork: a call from inside a call returns at once (the exe has one call
+// site in its one loop pass and no flag, M4 Q2).
+void native_tick_animate(float dt);
+// Fork (diagnostic): the clock of the script-boot loop, seconds after loop
+// start: the clock of the key and mouse scripts. The loop sets it before
+// each game tick; the `[camera] ctl` lines print it.
+void native_set_loop_time(double seconds);
+double native_loop_time();
 
 // ---- Game instances (typeof 1) --------------------------------------------
 // A POLY vertex as stored, 56 bytes (940 FUN_00519940 copy loop). Positions

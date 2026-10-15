@@ -257,6 +257,7 @@ void render_d3d9_debug_dump(FILE* out) {
                  depth_name, create_flags, g_mesh_pending.size(), waiting, not_mesh, failed);
   }
   native_camera_debug_dump(out);  // one line per native camera
+  native_cursor_debug_dump(out);  // `[cursor] state` (SLRR_PE_NATIVE_PROF)
   native_part_debug_dump(out);    // the native parts that are drawn
   render_d3d9_bone_debug_dump(out);
   render_d3d9_lit_debug_dump(out);  // the class programs of the lit groups

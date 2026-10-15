@@ -913,6 +913,18 @@ int game_interactive_run(Jvm& jvm, const char* game_root,
     int32_t pe_max_frames = max_frames;
     if (const char* fenv = std::getenv("SLRR_PE_BOOT_FRAMES"))
       pe_max_frames = static_cast<int32_t>(std::strtol(fenv, nullptr, 10));
+    // PE 940 FUN_0047d760: the game tick's clock, whole milliseconds of the
+    // loop's own counter (`local_3c = (int)FUN_00569730()` before the loop;
+    // here: since boot_t0). The rest is for `[pe-boot] ticks` at loop end.
+    struct TickClock {
+      int64_t last_ms = 0;
+      int32_t n = 0;
+      double sum_ms = 0.0;
+      int32_t min_ms = 0, max_ms = 0, over100 = 0;
+      int32_t hist[258] = {};  // ticks per whole millisecond, 257 = longer
+      int32_t due = 0;         // ticks accounted at their due time
+      double late_ms = 0.0;    // how long after it those ran, summed
+    } pe_tick;
     while (!render_d3d9_quit_requested()) {
       // PE Engine_MainLoop presents every iteration; the Present path wakes
       // Frontend.render.wait() (LoadingScreen pacing).
@@ -925,30 +937,92 @@ int game_interactive_run(Jvm& jvm, const char* game_root,
       auto s0 = std::chrono::steady_clock::now(); render_d3d9_flush(); sec_ms[0] += lap(s0);
       s0 = std::chrono::steady_clock::now(); render_d3d9_pump(0); sec_ms[1] += lap(s0);
       s0 = std::chrono::steady_clock::now(); input_live_poll(); sec_ms[2] += lap(s0);
-      // PE Engine_MainLoop: Input_tick(dt) + Engine_SimulateFrame (tick sim
-      // objects, physics, timers) before Jvm_PumpFrame.
+      // PE 940 FUN_0047d760, after the message pump FUN_0056a1c0:
+      //   if (0xf < now - last) {            // whole ms of FUN_00569730 (QPC)
+      //     dt = (now - last) * 0.001;
+      //     FUN_00566160(dt);                // input tick: ONE device poll, the axes
+      //     FUN_0047e050();                  // game tick: control list, physics steps
+      //     FUN_0047b700();                  // timers
+      //     last = now;
+      //   }
+      // so the two run at most 62.5 times a second with the same dt, and a
+      // mouse delta or a wheel notch (relative DirectInput data, returned
+      // once) lives for exactly one game tick: the one whose control(dt)
+      // reads it. input_live_poll above polls no device on the script boot.
+      // The game tick caps its dt at 0.1 s itself (FUN_0047e050); the input
+      // tick gets the raw value. The timers run inside the game tick's steps
+      // on the host (engine_tick_timers); the exe's extra call after the
+      // tick finds the same world clock.
+      // Fork: the VM pump (the exe: when 7 ms have passed) and the present
+      // (fps_lock) still run in every pass.
+      // Fork: the host draws and presents the frame in every pass, 2 to 3
+      // ms; the exe draws only behind its `fps_lock` gate (FUN_0047b5b0,
+      // Config default 1 ms), so where a frame draws in well under a
+      // millisecond it looks at this gate about every millisecond and its
+      // tick is 16 ms long [I: the stock frame time was not measured]. With
+      // the exe's arithmetic alone the host finds each tick up to a pass
+      // late and hands it 16 to 19 ms (mean 16.4): the garage lift's arms
+      // then come to rest in another pose than in the stock frame (m2_check
+      // B1 0.74 against 0.30, lift box 1.42 against 0.38; the camera itself
+      // moves by 2 mm). So a tick that is found less than one tick length
+      // after it was due is accounted at its due time: dt = 16 ms and last
+      // += 16, which is what a loop with short passes does. A tick found
+      // later than that (a loading pass, long in the exe too) keeps the
+      // exe's arithmetic: dt = the whole difference, last = now.
       {
-        static auto last = std::chrono::steady_clock::now();
         const auto now = std::chrono::steady_clock::now();
-        float dt = std::chrono::duration<float>(now - last).count();
-        last = now;
-        if (dt > 0.1f) dt = 0.1f;
-        input_tick(dt);
+        const double now_s = std::chrono::duration<double>(now - boot_t0).count();
+        const int64_t now_ms = static_cast<int64_t>(now_s * 1000.0);
+        int64_t d_ms = now_ms - pe_tick.last_ms;
+        if (d_ms > 15) {
+          if (d_ms < 32) {
+            ++pe_tick.due;
+            pe_tick.late_ms += static_cast<double>(d_ms - 16);
+            pe_tick.last_ms += 16;
+            d_ms = 16;
+          } else {
+            pe_tick.last_ms = now_ms;
+          }
+          const float dt = static_cast<float>(static_cast<double>(d_ms) * 0.001);
+          // Fork: the loop clock of the `[camera] ctl` lines (the clock of
+          // the key and mouse scripts).
+          native_set_loop_time(now_s);
+          s0 = std::chrono::steady_clock::now(); input_tick(dt); sec_ms[2] += lap(s0);
+          s0 = std::chrono::steady_clock::now(); engine_simulate_frame_dt(dt); sec_ms[3] += lap(s0);
+          const int32_t ms = d_ms > 0x7fffffff ? 0x7fffffff : static_cast<int32_t>(d_ms);
+          if (pe_tick.n == 0 || ms < pe_tick.min_ms) pe_tick.min_ms = ms;
+          if (pe_tick.n == 0 || ms > pe_tick.max_ms) pe_tick.max_ms = ms;
+          ++pe_tick.n;
+          pe_tick.sum_ms += static_cast<double>(ms);
+          if (ms > 100) ++pe_tick.over100;
+          ++pe_tick.hist[ms > 257 ? 257 : ms];
+        }
       }
-      s0 = std::chrono::steady_clock::now(); engine_simulate_frame(); sec_ms[3] += lap(s0);
       s0 = std::chrono::steady_clock::now(); game_boot_mainloop_resource_pumps(); sec_ms[4] += lap(s0);
       const auto t_b = std::chrono::steady_clock::now();
       jvm_run_threads_budgeted(10.f);  // PE MainLoop: Jvm_PumpFrame(10.0)
+      // PE 940 FUN_0047ba10(min(DAT_005f0c88, 0.1)), the animate walk of
+      // the loop pass FUN_0047d760, with the time since the pass before:
+      // the native objects on the animate list first (the cursor, made at
+      // boot before any Osd), then the script animate() calls.
+      {
+        static auto pass_prev = t_a;
+        float pass_dt = std::chrono::duration<float>(t_a - pass_prev).count();
+        pass_prev = t_a;
+        if (pass_dt > 0.1f) pass_dt = 0.1f;
+        native_tick_animate(pass_dt);
+      }
       engine_dispatch_animate_events();  // PE Engine_DispatchAnimateEvents
       const auto t_c = std::chrono::steady_clock::now();
       sec_ms[5] += std::chrono::duration<double, std::milli>(t_c - t_b).count();
       pe_t_render += std::chrono::duration<double, std::milli>(t_b - t_a).count();
       pe_t_vm += std::chrono::duration<double, std::milli>(t_c - t_b).count();
       ++pe_frames;
-      // Fork: SLRR_PE_BOOT_KEYS="t:dik[,t:dik...]" presses DirectInput key
-      // `dik` for 150 ms at `t` seconds after loop start (unattended runs).
+      // Fork: SLRR_PE_BOOT_KEYS="t:dik[:secs][,t:dik[:secs]...]" presses
+      // DirectInput key `dik` at `t` seconds after loop start and holds it
+      // for `secs` (150 ms without the third field) (unattended runs).
       {
-        struct KeyAt { double t; int32_t dik; int state; double down_at; };  // state 0 pending, 1 down, 2 done
+        struct KeyAt { double t; int32_t dik; double hold; int state; double down_at; };  // state 0 pending, 1 down, 2 done
         static std::vector<KeyAt> keys = [] {
           std::vector<KeyAt> v;
           const char* e = std::getenv("SLRR_PE_BOOT_KEYS");
@@ -957,7 +1031,13 @@ int game_interactive_run(Jvm& jvm, const char* game_root,
             const double t = std::strtod(e, &end);
             if (end == e || *end != ':') break;
             const long dik = std::strtol(end + 1, &end, 0);
-            v.push_back({t, static_cast<int32_t>(dik), 0, 0.0});
+            double hold = 0.15;
+            if (*end == ':') {
+              const char* h0 = end + 1;
+              const double secs = std::strtod(h0, &end);
+              if (end != h0 && secs > 0.0) hold = secs;
+            }
+            v.push_back({t, static_cast<int32_t>(dik), hold, 0, 0.0});
             if (*end != ',') break;
             e = end + 1;
           }
@@ -977,15 +1057,149 @@ int game_interactive_run(Jvm& jvm, const char* game_root,
         }
         for (KeyAt& k : keys) {
           // Press when the clock crosses t; release on the first frame at least
-          // 150 ms later (a slow frame must not skip the press).
+          // the hold time (150 ms by default) later (a slow frame must not
+          // skip the press).
           if (k.state == 0 && el >= k.t) {
             k.state = 1; k.down_at = el;
             input_inject_key(k.dik, true);
             std::printf("[pe-boot] key 0x%02x down at %.2f s\n", k.dik, el);
-          } else if (k.state == 1 && el >= k.down_at + 0.15) {
+          } else if (k.state == 1 && el >= k.down_at + k.hold) {
             k.state = 2;
             input_inject_key(k.dik, false);
             std::printf("[pe-boot] key 0x%02x up at %.2f s\n", k.dik, el);
+          }
+        }
+        // Fork: SLRR_PE_BOOT_MOUSE="t:x,y[,op...];t:x,y[,op...];..." moves the
+        // mouse of an unattended run; same clock as the keys. x, y are
+        // back-buffer pixels. Ops, applied in order once (x, y) is reached:
+        // L / l left button down / up, R / r right button down / up, W<n>
+        // wheel by n notches (signed, +1 = away from the user), G<secs>
+        // glide: reach (x, y) linearly over that many seconds, one sub-move
+        // per loop pass, the last one exactly on the target. Entries run in
+        // the order written; one starts when its time has come and the one
+        // before it is done. input_inject_mouse (input_win32.cpp) is the
+        // hand, the OS and the device. One log line per entry; a glide has
+        // one when it starts and one when it ends, the second with the
+        // counts of the whole glide.
+        {
+          struct MouseAt {
+            double t = 0.0;
+            int32_t x = 0, y = 0;
+            std::vector<InputInjectMouseOp> ops;
+            double glide = 0.0;
+            int state = 0;  // 0 pending, 1 gliding, 2 done
+            double t0 = 0.0;
+            int32_t x0 = 0, y0 = 0, sum_dx = 0, sum_dy = 0;
+          };
+          static std::vector<MouseAt> mouse = [] {
+            std::vector<MouseAt> v;
+            const char* e = std::getenv("SLRR_PE_BOOT_MOUSE");
+            while (e && *e) {
+              MouseAt m;
+              char* end = nullptr;
+              m.t = std::strtod(e, &end);
+              bool ok = end != e && *end == ':';
+              if (ok) {
+                const char* p = end + 1;
+                const double fx = std::strtod(p, &end);
+                ok = end != p && *end == ',';
+                if (ok) {
+                  p = end + 1;
+                  const double fy = std::strtod(p, &end);
+                  ok = end != p;
+                  m.x = static_cast<int32_t>(std::lround(fx));
+                  m.y = static_cast<int32_t>(std::lround(fy));
+                }
+              }
+              while (ok && *end == ',') {
+                const char op = end[1];
+                if (op == 0) { ok = false; break; }
+                const char* p = end + 2;
+                end = const_cast<char*>(p);
+                if (op == 'L' || op == 'l' || op == 'R' || op == 'r') {
+                  m.ops.push_back({op, 0});
+                } else if (op == 'W') {
+                  const long n = std::strtol(p, &end, 10);
+                  ok = end != p;
+                  m.ops.push_back({'W', static_cast<int32_t>(n)});
+                } else if (op == 'G') {
+                  m.glide = std::strtod(p, &end);
+                  ok = end != p && m.glide >= 0.0;
+                } else {
+                  ok = false;
+                }
+              }
+              if (!ok || (*end != ';' && *end != 0)) {
+                // A script that cannot be read is not run in part.
+                std::printf("[pe-boot] mouse script not read: entry %d at '%s': nothing is injected\n",
+                            static_cast<int>(v.size()) + 1, e);
+                v.clear();
+                break;
+              }
+              v.push_back(m);
+              if (*end != ';') break;
+              e = end + 1;
+            }
+            return v;
+          }();
+          auto mouse_line = [&](const InputInjectMouseState& s, int32_t dx, int32_t dy, int32_t wheel) {
+            std::printf("[pe-boot] mouse t=%.2f pos=(%d,%d) d=(%d,%d) wheel=%d buttons=%s locked=%d\n",
+                        el, s.x, s.y, dx, dy, wheel,
+                        s.left ? (s.right ? "LR" : "L") : (s.right ? "R" : "-"), s.locked ? 1 : 0);
+          };
+          // An entry with ops (a button level, the wheel) is followed by the
+          // next entry only once the device slot has been polled since:
+          // the poll runs behind the 15 ms gate, and a press and its release
+          // applied in one pass (a loading pass covering both times) would
+          // be over before any poll, so the cursor would see no click.
+          static bool wait_poll = false;
+          static uint32_t wait_mark = 0;
+          for (MouseAt& m : mouse) {
+            if (m.state == 2) continue;
+            if (wait_poll) {
+              InputInjectMouseState w;
+              input_inject_mouse_peek(&w);
+              if (w.polls == wait_mark) break;
+              wait_poll = false;
+            }
+            if (m.state == 0) {
+              if (el < m.t) break;
+              InputInjectMouseState s;
+              input_inject_mouse_peek(&s);
+              if (m.glide > 0.0 && s.placed) {
+                // The glide starts where the hand is; its sub-moves begin
+                // with the next loop pass.
+                m.state = 1;
+                m.t0 = el;
+                m.x0 = s.hand_x;
+                m.y0 = s.hand_y;
+                mouse_line(s, 0, 0, 0);
+                break;
+              }
+            }
+            double f = 1.0;
+            if (m.state == 1) {
+              f = (el - m.t0) / m.glide;
+              if (f > 1.0) f = 1.0;
+            }
+            const bool last = f >= 1.0;
+            const int32_t tx = last ? m.x : m.x0 + static_cast<int32_t>(std::lround((m.x - m.x0) * f));
+            const int32_t ty = last ? m.y : m.y0 + static_cast<int32_t>(std::lround((m.y - m.y0) * f));
+            InputInjectMouseState s;
+            input_inject_mouse(tx, ty, last ? m.ops.data() : nullptr,
+                               last ? static_cast<int32_t>(m.ops.size()) : 0, &s);
+            m.sum_dx += s.dx;
+            m.sum_dy += s.dy;
+            if (!last) break;
+            int32_t wheel = 0;
+            for (const InputInjectMouseOp& o : m.ops)
+              if (o.op == 'W') wheel += o.n;
+            mouse_line(s, m.sum_dx, m.sum_dy, wheel);
+            m.state = 2;
+            if (!m.ops.empty()) {
+              wait_poll = true;
+              wait_mark = s.polls;
+            }
           }
         }
       }
@@ -1008,6 +1222,30 @@ int game_interactive_run(Jvm& jvm, const char* game_root,
     report("loop end", pe_frames);
     std::printf("[pe-boot] loop time: render+pumps %.0f ms, vm %.0f ms, vm steps %llu\n",
                 pe_t_render, pe_t_vm, static_cast<unsigned long long>(vmthread_step_count()));
+    input_debug_dump(stdout);  // Fork: `[input] mouse axes` (SLRR_PE_NATIVE_PROF)
+    // Fork: the game ticks of the loop (SLRR_PE_NATIVE_PROF): how many, and
+    // their dt in milliseconds. `over100` = ticks the game tick capped at
+    // 0.1 s (a loading pass); `mean100` = the mean of the others; `due` =
+    // ticks accounted at their due time (16 ms) and `late` = how long after
+    // it the host ran them, mean milliseconds.
+    if (native_type_log()) {
+      int32_t median = 0;
+      for (int32_t i = 0, seen = 0; i < 258; ++i) {
+        seen += pe_tick.hist[i];
+        if (seen * 2 >= pe_tick.n) { median = i; break; }
+      }
+      double sum100 = 0.0;
+      int32_t n100 = 0;
+      for (int32_t i = 0; i <= 100; ++i) {
+        sum100 += static_cast<double>(i) * pe_tick.hist[i];
+        n100 += pe_tick.hist[i];
+      }
+      std::printf("[pe-boot] ticks n=%d mean=%.3f min=%d max=%d median=%d over100=%d mean100=%.3f due=%d late=%.2f\n",
+                  pe_tick.n, pe_tick.n > 0 ? pe_tick.sum_ms / pe_tick.n : 0.0,
+                  pe_tick.min_ms, pe_tick.max_ms, median, pe_tick.over100,
+                  n100 > 0 ? sum100 / n100 : 0.0, pe_tick.due,
+                  pe_tick.due > 0 ? pe_tick.late_ms / pe_tick.due : 0.0);
+    }
     vmthread_native_prof_dump(stdout);
     vmthread_pump_stats_dump(stdout);
     render_d3d9_debug_dump(stdout);

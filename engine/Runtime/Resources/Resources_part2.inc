@@ -1411,7 +1411,12 @@ void java_util_resource_ResourceRef_destroy(InvObject* self) {
   {
     std::lock_guard<std::mutex> lock(g_mu);
     auto it = g_res.find(self);
-    if (it != g_res.end()) it->second.loaded = false;
+    if (it != g_res.end()) {
+      it->second.loaded = false;
+      // A physics instance: the pick no longer finds its body
+      // (physics_pick_bodies).
+      if (it->second.type == 2) it->second.destroyed_id = it->second.id;
+    }
   }
   if (node_id != 0) {
     // PE 940 FUN_00569890, the TreeNode destructor at the end of the node's

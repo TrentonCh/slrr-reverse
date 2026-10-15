@@ -1449,18 +1449,11 @@ void asyncload_finish_slice() {
 }
 
 
-void engine_simulate_frame() {
-  static unsigned s_last_ms = 0;
+// The game tick with `wall_dt` seconds since the tick before (before the
+// time warp and the 0.1 s cap). Its two callers measure that time.
+static void engine_simulate_frame_body(float wall_dt) {
   static float s_sim_dt_accum = 0.f;  // PE Engine_simDtAccum @ 0x63C538
   static int32_t s_sim_frame_counter = 0;  // PE Engine_simFrameCounter @ 0x63C54C
-  float wall_dt = 0.f;
-#ifdef _WIN32
-  const unsigned now = GetTickCount();
-  if (s_last_ms != 0) {
-    wall_dt = static_cast<float>(now - s_last_ms) * 0.001f;
-  }
-  s_last_ms = now;
-#endif
   // PE @ 0x42845F: fmul [ebx+110h] — Engine_timeWarp (InitState=1.0f).
   // Host: time_warp(-1) returns g_warp without apply (Java query path).
   float frame_dt = wall_dt * time_warp(-1.f);
@@ -1538,6 +1531,28 @@ void engine_simulate_frame() {
   if (++s_sim_frame_counter >= 1000) s_sim_frame_counter = 0;
   // PE @ 0x0042863C.. cam matrix table (hasCameraMatrix≡0 → skip).
   engine_copy_camera_matrices();
+}
+
+void engine_simulate_frame() {
+  static unsigned s_last_ms = 0;
+  float wall_dt = 0.f;
+#ifdef _WIN32
+  const unsigned now = GetTickCount();
+  if (s_last_ms != 0) {
+    wall_dt = static_cast<float>(now - s_last_ms) * 0.001f;
+  }
+  s_last_ms = now;
+#endif
+  engine_simulate_frame_body(wall_dt);
+}
+
+// PE 940 FUN_0047e050: the game tick of the loop pass FUN_0047d760. Its dt
+// is DAT_005f0c88, which the pass sets to the whole milliseconds since the
+// tick before (x 0.001) for the input tick and this call; the body scales
+// it by the time warp and caps it at 0.1 s as the exe does. Called by the
+// script-boot loop only (game_boot_part1.inc).
+void engine_simulate_frame_dt(float tick_dt) {
+  engine_simulate_frame_body(tick_dt);
 }
 
 

@@ -195,6 +195,14 @@ constexpr float kRollDampA = 0.03f;      // DAT_0059b190
 constexpr float kRollDampB = 0.3f;       // DAT_00593704
 constexpr float kRollTorqueMin2 = 9.999999974752427e-07f;  // DAT_0059a450
 constexpr float kCtlForceMin2 = 1.0000001111620804e-06f;   // _DAT_0059b188
+// FUN_004897b0, a controller bound and the camera not activated:
+constexpr float kCtlForceX = -400.f;    // _DAT_0059b1a4: axis 7, AXIS_LOOK_LEFTRIGHT
+constexpr float kCtlForceY = 400.f;     // _DAT_0059abdc: axis 8, AXIS_LOOK_UPDOWN
+constexpr float kCtlForceCap2 = 100.f;  // DAT_0059385c
+constexpr float kCtlForceCap = 10.f;    // DAT_0059373c
+constexpr float kCtlTorqueY = 0.009999999776482582f;   // DAT_005935d0
+constexpr float kCtlTorqueX = -0.009999999776482582f;  // DAT_0059adf4
+constexpr float kCtlDistRate = 100.f;   // DAT_0059385c: axis 10, AXIS_LOOK_FWDBACK
 constexpr float kCtlTorqueMin2 = 9.999999439624929e-11f;   // _DAT_0059b180
 constexpr float kHeightErrMin = 0.001f;  // DAT_00593584
 constexpr float kHeightSpring = 30.f;    // _DAT_00593858
@@ -473,6 +481,10 @@ class CameraObject final : public NativeObject {
   // steps.
   float clock_ = 0.f;
   uint32_t steps_ = 0, wakes_ = 0, sleeps_ = 0;
+  // Fork (diagnostic): what the last `[camera] ctl` line said.
+  bool ctl_logged_ = false;
+  int32_t ctl_log_id_ = 0;
+  float ctl_log_v_[3] = {0.f, 0.f, 0.f};
 
   bool registered() const {
     return render_d3d9_camera_get(key_, nullptr, nullptr, nullptr, nullptr,
@@ -580,28 +592,77 @@ class CameraObject final : public NativeObject {
     return true;
   }
 
+  // *FUN_0047c640(cam+0x20, 0x43, n): logical axis n of the bound
+  // controller, getinfo 0x43 of the `player` object (java.io.Controller).
+  // Fork: 0 when the controller's node has no game object (the exe reads
+  // through the pointer the query returns).
+  float ctl_axis(int32_t n) const {
+    InvObject* ctrl = script_node_object(controller_id_);
+    NativeInfo info;
+    info.arg = n;
+    return (ctrl && native_getinfo(ctrl, 0x43, &info)) ? info.v[0] : 0.f;
+  }
+
+  // Fork (diagnostic, SLRR_PE_NATIVE_PROF): `[camera] ctl t=<s>
+  // controller=0x<id> a7=<v> a8=<v> a10=<v> set=<distance> dt=<s>` when the
+  // controller or one of the three axis values differs from the tick
+  // before. t = the loop clock of the key and mouse scripts, set = the
+  // distance after this tick, dt = the tick's own.
+  void ctl_log(float v7, float v8, float v10, float dt) {
+    if (!native_type_log()) return;
+    if (ctl_logged_ && ctl_log_id_ == controller_id_ && ctl_log_v_[0] == v7 &&
+        ctl_log_v_[1] == v8 && ctl_log_v_[2] == v10)
+      return;
+    ctl_logged_ = true;
+    ctl_log_id_ = controller_id_;
+    ctl_log_v_[0] = v7;
+    ctl_log_v_[1] = v8;
+    ctl_log_v_[2] = v10;
+    std::fprintf(stderr,
+                 "[camera] ctl t=%.3f controller=0x%08X a7=%g a8=%g a10=%g "
+                 "set=%.4f dt=%.4f\n",
+                 native_loop_time(), static_cast<unsigned>(controller_id_),
+                 v7, v8, v10, distance_, dt);
+  }
+
   // ---- vt+0x2C FUN_004897b0, once per game tick ------------------------------
   void control(float dt) override {
     if (!activated_) {
       ctl_force_ = CamV3();
       ctl_torque_ = CamV3();
       if (controller_id_ != 0) {
-        // Controller axes 7 / 8 push the body (x -400 / x 400, capped at
-        // 10) and turn it, axis 10 scales the distance: distance *= 1 +
-        // axis10 * 100 * dt, kept inside the `dist` limits.
-        // Fork: the host has no controller game object yet (mouse orbit and
-        // wheel distance are M4), so every axis reads 0.
-        const float d = (0.f * 100.f * dt + 1.f) * distance_;
+        // A controller bound with `control <id>` (cam+0x28 != 0): its axes
+        // 7 / 8 are a camera-local force on the body, +x right and +y up,
+        // while the `move` spring holds the distance and the `look` spring
+        // keeps aiming: an orbit. Axis 10 scales the distance.
+        const float v7 = ctl_axis(7);
+        const float v8 = ctl_axis(8);
+        const float a7 = v7 * kCtlForceX;
+        const float a8 = v8 * kCtlForceY;
+        ctl_force_ = cam_v(a7, a8, 0.f);
+        const float len2 = cam_len2(ctl_force_);
+        if (kCtlForceCap2 < len2)
+          ctl_force_ = ctl_force_ * (kCtlForceCap / std::sqrt(len2));
+        // With a look target (cam+0x68 != 0) also a torque, from the values
+        // before the cap, times the `torque` gain cam+0x98.
+        if (look_.id != 0)
+          ctl_torque_ = cam_v(a8 * kCtlTorqueX * torque_,
+                              a7 * kCtlTorqueY * torque_, 0.f);
+        // distance *= 1 + axis10 * 100 * dt, kept inside the `dist` limits
+        // (the bound it passed).
+        const float v10 = ctl_axis(10);
+        const float d = (v10 * kCtlDistRate * dt + 1.f) * distance_;
         distance_ = d;
         if (d < dist_min_)
           distance_ = dist_min_;
         else if (dist_max_ < d)
           distance_ = dist_max_;
+        ctl_log(v7, v8, v10, dt);
       }
     } else {
       // Free flight from the controller axes 1..8, 10 and 11. Fork: all
-      // axes read 0 (as above). Axis 11 scales the aov target, which is
-      // then kept in [1, 120].
+      // axes read 0 here (no script of M4 activates a camera). Axis 11
+      // scales the aov target, which is then kept in [1, 120].
       ctl_force_ = CamV3();
       ctl_torque_ = CamV3();
       float a = (0.f + 1.f) * aov_target_;

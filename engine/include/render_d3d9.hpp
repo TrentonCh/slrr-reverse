@@ -25,6 +25,18 @@ bool render_d3d9_set_stock_cursor(int32_t cursor_id);
 int32_t render_d3d9_stock_cursor();
 bool render_d3d9_stock_icon_loaded();
 void render_d3d9_set_cursor_visible(int32_t visible);
+// PE 940 FUN_004223a0 (asm 0x4226c3..0x42275a): the ten pointer shapes of
+// Build 940, cursor group resources 116..121 and 123..126 of the game's exe,
+// in the order of the cursor type's shape table (DAT_005e93d4[0..9]).
+// Fork: the exe loads them from its own module with LoadCursorA; the host
+// maps `exe_path` (<game root>\StreetLegal_Redline.exe) as a data file and
+// puts shape n into stock cursor slot n + 2, so render_d3d9_set_stock_cursor
+// (n + 2) selects it and WM_SETCURSOR applies it. Returns how many were
+// loaded; `from_bits` (optional) how many of them came through the RT_CURSOR
+// bits because LoadCursor refused; `hot` (optional, 20 ints) the hot spot of
+// each as Windows reports it, -1 for a shape that did not load.
+int32_t render_d3d9_cursor_shapes_load(const char* exe_path, int32_t* from_bits,
+                                       int32_t* hot);
 
 void render_d3d9_close();
 
@@ -639,6 +651,34 @@ int32_t render_d3d9_mesh_bone_count(void* key);
 // `parent` (no WORLDTREELEAF container from `parent` up to the root).
 void* render_d3d9_camera_walk_parent(void* key);
 bool render_d3d9_camera_sees_below(void* root, void* parent);
+// M4 step 2, the cameras of the cursor's pick. PE 940 FUN_004eb000: for the
+// pointer (x, y) in window NDC (y down) the bound viewports are asked from
+// the top of the list (FUN_00421220: the one drawn last first), a viewport
+// whose rectangle does not hold the pointer is passed over, and inside one
+// its cameras from the top (FUN_00421260 / FUN_004210d0). Per camera the
+// segment runs from the far-plane point A = unproject(lx, -ly, 1.0) to the
+// near-plane point B = unproject(lx, -ly, 0.0) (FUN_00421e20 ->
+// FUN_00461c20: the inverse projection with the divide by w, then the
+// camera's world matrix), with (lx, ly) the pointer inside the viewport.
+// One entry per camera in that order: the node its walk starts from (the
+// root the pick casts the segment into, cam+0xac0) and the two points in
+// metres. Every camera on a bound viewport is listed, also one the pass
+// skipped for lack of members.
+// Fork: the exe unprojects with the matrices of the last frame the camera
+// was drawn in (cam+0x39c, cam+0x45c); the host builds them at the call
+// (camera_pass_matrices, the matrices its pass would draw with now).
+struct RenderPickRay {
+  void* viewport = nullptr;
+  void* camera = nullptr;
+  void* root = nullptr;
+  int32_t vp_pri = 0;
+  int32_t cam_pri = 0;
+  float far_pt[3] = {0.f, 0.f, 0.f};   // A
+  float near_pt[3] = {0.f, 0.f, 0.f};  // B
+};
+// Returns the number of entries written (at most `cap`).
+int32_t render_d3d9_pick_rays(float x, float y, RenderPickRay* out,
+                              int32_t cap);
 int32_t render_d3d9_mesh_index_count(void* key);
 int32_t render_d3d9_mesh_textured_count(void* key);
 void* render_d3d9_mesh_get_texture(void* key, int32_t submesh);

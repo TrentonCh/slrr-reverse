@@ -1,5 +1,6 @@
 #include "game_boot.hpp"
 
+#include "NativeTypes.hpp"  // native_tick_animate (the script-boot loop)
 #include "Resources.h"
 #include "host_objects.hpp"
 #include "input_win32.hpp"
