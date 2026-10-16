@@ -192,8 +192,16 @@ test copy's saves). Stock frames of the dealers and the car lot:
      ("29HP" for an Einvagen 110 GT; `calcDyno` not ported);
    - the dealer's check button shows a still interior view in the stock
      game (stock_64), not a test drive; not tried on the host;
-   - spec steps 5 to 7: car info and club info, the catalog, the paint
-     booth with car side files;
+   - done (this commit): car info (all four pages) and club info, also
+     from the new dealer's INFO button and back without rebuilding the
+     dealer's cars. The CAR page needed `Chassis.getMin / getMax / getCM`
+     ported onto the car object (the chassis compound's box, 0x4B3220 /
+     0x4B2DC0 / 0x4B2680); the ENGINE page's figures still come from the
+     dyno stand-in. The catalog works by the user's own play;
+   - spec step 7: the paint booth with car side files;
+   - next: the mechanic (taking parts off, putting them back, dragging,
+     filters, tuning) and the dyno port, specified in
+     `../slrr-ghidra/notes/m6/m6_spec.md` (stock frames 65..68);
    - copied light payloads are never freed.
 5. Field initialisers: done (this commit). The exe runs them at
    allocation for every class from `java.lang.Object` down
@@ -309,6 +317,7 @@ comes after the menu is up.
 | Class cache: classes missing in the install are read from `SLRR_CLASS_CACHE` | d3872e1 | a stock-written career with a source-only rim and tyre loads into the garage |
 | Mouse on the script boot: `cursor` and `player` types, ray pick and the eighteen cursor events, camera control, test rig; legacy pack scan 40 % faster | (this commit) | hover, press and click in menu, dialogs and garage; camera orbit and zoom within 2 % of the model; old-build regression 109 s -> 67 s |
 | Buying and keeping cars: by-name calls and native rows as the exe, field initialisers at allocation, `object` type, per-map fog, dealer ground programs | (this commit) | dealers open, buy / sell / trade-in, car lot park and fetch, stock-compatible saves |
+| Car info and club info: chassis box natives on the car object, anchored frame shots in the rig | (this commit) | all four car info pages and club info open and close; the CAR page reads the car's real dimensions |
 
 ## In progress
 

@@ -167,6 +167,11 @@ InvObject* java_game_parts_bodypart_Chassis_getCM(InvObject* self) {
   // host AABB / cm_set (CarInfo / smoke).
   float mn[3], mx[3], cm[3];
   if (!self) return vec3_new(0, 0, 0);
+  {
+    // PE 940 0x4B2680 on the chassis compound of the car object (m5 step 5).
+    float v[3];
+    if (native_car_cm(self, v)) return vec3_new(v[0], v[1], v[2]);
+  }
   chassis_bounds(self, mn, mx, cm);
   return vec3_new(cm[0], cm[1], cm[2]);
 }
@@ -316,6 +321,8 @@ InvObject* java_game_parts_bodypart_Chassis_getMin(InvObject* self) {
   // dual Res hop / raw parent mat@+0x1C — TREE Ypr stand-in.
   if (!self) return vec3_new(0, 0, 0);
   float v[3];
+  // PE 940 0x4B3220 on the chassis compound of the car object (m5 step 5).
+  if (native_car_bounds(self, /*want_max=*/false, v)) return vec3_new(v[0], v[1], v[2]);
   chassis_aabb_origin_mesh(self, /*want_max=*/false, v);
   return vec3_new(v[0], v[1], v[2]);
 }
@@ -325,6 +332,8 @@ InvObject* java_game_parts_bodypart_Chassis_getMax(InvObject* self) {
   // NOT wheels±r. race125 PARTIAL: same FINAL-node mesh path (ASM @ 0x43da3a).
   if (!self) return vec3_new(0, 0, 0);
   float v[3];
+  // PE 940 0x4B2DC0 on the chassis compound of the car object (m5 step 5).
+  if (native_car_bounds(self, /*want_max=*/true, v)) return vec3_new(v[0], v[1], v[2]);
   chassis_aabb_origin_mesh(self, /*want_max=*/true, v);
   return vec3_new(v[0], v[1], v[2]);
 }

@@ -634,3 +634,11 @@ defects came out: `GameRef.create` returned a stand-in where the exe
 returns null (a dealer car with an unset stock part logged six errors),
 and the legacy smoke tests pressed real keys into whatever window was in
 front; they now press them only while the host window is.
+
+Later the same day: car info and club info. Three of the four car info
+pages and club info worked once the dealers did; the CAR page read
+-200 mm for every dimension because `Chassis.getMin / getMax / getCM`
+still answered from an old stand-in that finds no mesh on a script-boot
+car. They now take the box of the car's chassis compound as the exe does
+(children's points grown by their margins, nocollision and steering
+bodies left out, padded by 0.1 per side).

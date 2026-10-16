@@ -450,6 +450,11 @@ void native_part_paint_dump(FILE* out);
 //     compound in kg.
 bool native_car_wheel_count(InvObject* chassis, int32_t* count);
 bool native_car_mass(InvObject* chassis, float* kg);
+//   native_car_cm: Chassis.getCM 0x4B2680; native_car_bounds:
+//     Chassis.getMin 0x4B3220 (want_max false) / getMax 0x4B2DC0, from the
+//     box of the chassis compound (m5 step 5, NativeTypes_part7.inc).
+bool native_car_cm(InvObject* chassis, float out[3]);
+bool native_car_bounds(InvObject* chassis, bool want_max, float out[3]);
 //   native_car_max_steer / _set_max_steer: Chassis.getMaxSteer 0x4B3110,
 //     setMaxSteer 0x4B5030; native_car_set_ackermann: setAckermann 0x4B47B0;
 //   native_car_force_update_begin: the first line of FUN_004aebf0

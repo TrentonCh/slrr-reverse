@@ -1108,7 +1108,8 @@ int game_interactive_run(Jvm& jvm, const char* game_root,
       const char* cl = std::getenv("SLRR_PE_CAREER_LOG");
       rig.log = cl && cl[0] == '1';
       bool at = false;
-      for (const char* v : {"SLRR_PE_BOOT_KEYS", "SLRR_PE_BOOT_MOUSE", "SLRR_PE_BOOT_END"}) {
+      for (const char* v : {"SLRR_PE_BOOT_KEYS", "SLRR_PE_BOOT_MOUSE", "SLRR_PE_BOOT_END",
+                            "SLRR_PE_BOOT_SHOTS"}) {
         const char* s = std::getenv(v);
         if (s && std::strchr(s, '@')) at = true;
       }
@@ -1529,6 +1530,63 @@ int game_interactive_run(Jvm& jvm, const char* game_root,
               wait_poll = true;
               wait_mark = s.polls;
             }
+          }
+        }
+        // Fork (m5 test rig): SLRR_PE_BOOT_SHOTS="<time>:<file.bmp>[;...]"
+        // writes the frame presented at the top of the pass in which an
+        // entry is due, as SLRR_PE_BOOT_SHOT does at the loop end; the
+        // times as in the key and mouse scripts (boot_entry_time), in the
+        // order written. One line per shot with the camera passes' counts of
+        // that frame. The exe has nothing of this.
+        {
+          struct ShotAt {
+            double t = 0.0;
+            std::string path;
+            BootAnchor a;
+            int32_t anchor = -1;
+            bool done = false;
+          };
+          static std::vector<ShotAt> shots = [&] {
+            std::vector<ShotAt> v;
+            const char* e = std::getenv("SLRR_PE_BOOT_SHOTS");
+            while (e && *e) {
+              ShotAt s;
+              const char* te = boot_entry_time(e, v.empty() ? nullptr : &v.back().a, &s.a, &s.t);
+              const char* q = te && *te == ':' ? std::strchr(te + 1, ';') : nullptr;
+              if (te && *te == ':')
+                s.path.assign(te + 1, q ? static_cast<size_t>(q - te - 1) : std::strlen(te + 1));
+              if (s.path.empty()) {
+                std::printf("[pe-boot] shot script not read: entry %d at '%s': no shot is taken\n",
+                            static_cast<int>(v.size()) + 1, e);
+                v.clear();
+                break;
+              }
+              v.push_back(s);
+              if (!q) break;
+              e = q + 1;
+            }
+            for (std::size_t i = 0; i < v.size(); ++i) {
+              if (v[i].a.state.empty()) continue;
+              v[i].anchor = static_cast<int32_t>(rig.anchors.size());
+              rig.anchors.push_back({"shot#" + std::to_string(i + 1), v[i].a, false, 0.0});
+            }
+            return v;
+          }();
+          for (std::size_t i = 0; i < shots.size(); ++i) {
+            ShotAt& s = shots[i];
+            if (s.done) continue;
+            if (s.anchor >= 0) {
+              const RigAnchor& r = rig.anchors[static_cast<size_t>(s.anchor)];
+              if (!r.due || el < r.t) break;
+            } else if (el < s.t) {
+              break;
+            }
+            s.done = true;
+            int32_t vps = 0, inst = 0, txt = 0;
+            render_d3d9_cam_pass_counts(&vps, &inst, &txt);
+            const bool ok = render_d3d9_print_screen(s.path.c_str());
+            std::printf("[pe-boot] shot#%zu t=%.2f %s -> %d (bound_vps=%d cam_instances=%d cam_texts=%d)\n",
+                        i + 1, el, s.path.c_str(), ok ? 1 : 0, vps, inst, txt);
           }
         }
       }

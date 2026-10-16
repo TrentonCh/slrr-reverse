@@ -654,6 +654,179 @@ bool native_car_mass(InvObject* chassis, float* kg) {
   return true;
 }
 
+// ---------------------------------------------------------------------------
+// The chassis compound's box and mass centre (m5 step 5: Chassis.getMin
+// 0x4B3220, getMax 0x4B2DC0, getCM 0x4B2680, read for car info)
+// ---------------------------------------------------------------------------
+namespace {
+
+// The world pose of a part's cfg frame: x_world = pos + rc * (x - ref_at).
+CamM3 part_cfg_rot(const PartObject& p) {
+  return cam_mm(p.rot_, part_transpose(p.type_->ref_rot));
+}
+
+void box_grow(CamV3* lo, CamV3* hi, bool* any, const CamV3& c) {
+  if (!*any) {
+    *lo = c;
+    *hi = c;
+    *any = true;
+    return;
+  }
+  *lo = cam_v((std::min)(lo->x, c.x), (std::min)(lo->y, c.y), (std::min)(lo->z, c.z));
+  *hi = cam_v((std::max)(hi->x, c.x), (std::max)(hi->y, c.y), (std::max)(hi->z, c.z));
+}
+
+// PE 940 FUN_005008c0 over a compound of shape kind 5 / 6 with children:
+// the box around every child body's points grown by the child's margin, in
+// the compound's frame. Here for the compound of part p, in p's cfg frame:
+// the type's own children (PartTypeDesc::has_box) and, for every part
+// installed on p, the eight corners of that part's box (its compound is a
+// child with children, so its margin is shape+0x10 = 0), each corner taken
+// through the child's frame. `bones` (the car only) leaves out the parts on
+// a slot that hangs on a wheel or the steering body: FUN_004c7d20 attaches
+// those to that body (flag 0x8000), not to the compound.
+// Fork: the exe rebuilds a compound's box in FUN_005032d0 whenever a child
+// is attached or detached (FUN_004c7d20, FUN_00501d00, FUN_004cb8d0) and
+// expresses it relative to the mass centre of that moment; the host builds
+// it from the poses at the time of the query, in the cfg frame (the same
+// box for a tree that has not moved since).
+bool part_tree_box(const PartObject& p, CamV3* lo, CamV3* hi, int depth,
+                   const std::vector<CarObject::SlotBone>* bones) {
+  const PartTypeDesc& d = part_type_box(*p.type_);
+  bool any = d.has_box;
+  if (any) {
+    *lo = d.box_lo;
+    *hi = d.box_hi;
+  }
+  if (depth > 64) return any;
+  const CamM3 rcp_t = part_transpose(part_cfg_rot(p));
+  for (size_t i = 0; i < p.slots_.size(); ++i) {
+    const PartObject::Slot& s = p.slots_[i];
+    if (!s.other || !(s.flags & 2u)) continue;
+    if (bones && i < bones->size() && (*bones)[i].body != CarObject::kBodyRef) continue;
+    std::shared_ptr<PartObject> q = part_of(s.other);
+    if (!q) continue;
+    CamV3 qlo, qhi;
+    if (!part_tree_box(*q, &qlo, &qhi, depth + 1, nullptr)) continue;
+    const CamM3 rcq = part_cfg_rot(*q);
+    for (int k = 0; k < 8; ++k) {
+      const CamV3 c = cam_v(k & 1 ? qhi.x : qlo.x, k & 2 ? qhi.y : qlo.y,
+                            k & 4 ? qhi.z : qlo.z);
+      const CamV3 w = q->pos_ + cam_mul(rcq, c - q->type_->ref_at);
+      box_grow(lo, hi, &any, d.ref_at + cam_mul(rcp_t, w - p.pos_));
+    }
+  }
+  return any;
+}
+
+// PE 940 FUN_005032d0 on the chassis compound: its origin goes to the mass
+// centre of its children, each weighted with 1 / its inverse mass: the
+// car's own bodies (PartTypeDesc::com_raw) and every part tree on a slot of
+// the reference body. In the car's cfg frame. Fork: the exe moves the
+// origin only when the shift is more than 3.2 mm (|C|^2 > 1e-5,
+// DAT_005936f8), so it trails the mass centre by up to that; the host
+// takes the mass centre itself.
+CamV3 car_compound_com(const CarObject& car) {
+  const PartTypeDesc& d = *car.type_;
+  float mass = d.total_mass;
+  CamV3 sum = d.com_raw * d.total_mass;
+  const CamM3 rc_t = part_transpose(part_cfg_rot(car));
+  for (size_t i = 0; i < car.slots_.size(); ++i) {
+    const PartObject::Slot& s = car.slots_[i];
+    if (!s.other || !(s.flags & 2u)) continue;
+    if (i < car.slot_bones_.size() && car.slot_bones_[i].body != CarObject::kBodyRef) continue;
+    std::shared_ptr<PartObject> c = part_of(s.other);
+    if (!c) continue;
+    float m = 0.f;
+    CamV3 sw;
+    part_tree_mass(c.get(), &m, &sw, 1);
+    if (m <= 0.f) continue;
+    // sum of m * (ref_at + rc^T (w - pos)) over the tree's bodies
+    sum = sum + d.ref_at * m + cam_mul(rc_t, sw - car.pos_ * m);
+    mass += m;
+  }
+  return mass > 0.f ? sum * (1.f / mass) : CamV3();
+}
+
+}  // namespace
+
+// PE 940 Chassis.getCM 0x4B2680: minus the type's `center` (type+0x1F1C)
+// through the reference body's world frame (FUN_005060d0), brought into
+// the chassis compound's frame (car+0x13EC: minus its position, through
+// the transpose of its rotation), negated, less the compound shape's
+// +0x40 (FUN_005008c0 leaves there minus the shift of the compound's last
+// recentring). In the car's cfg frame that is
+//   C - ref_at + refRot * center + s_last
+// with C the compound's origin (its mass centre) and ref_at the reference
+// body. Fork: s_last is taken as 0: which recentring of the compound was
+// the last one depends on the order of the installs and on the callers of
+// FUN_004cb8d0 (install, repair, setSlotPos, damage), which the host does
+// not replay; its size is one part's mass share times that part's offset
+// (Q31).
+bool native_car_cm(InvObject* chassis, float out[3]) {
+  std::shared_ptr<CarObject> car = car_of(chassis);
+  if (!car || !car->car_type_) return false;
+  const PartTypeDesc& d = *car->type_;
+  const CamV3 c = car_compound_com(*car) - d.ref_at +
+                  cam_mul(d.ref_rot, car->car_type_->center);
+  out[0] = c.x;
+  out[1] = c.y;
+  out[2] = c.z;
+  return true;
+}
+
+// PE 940 Chassis.getMin 0x4B3220 / getMax 0x4B2DC0: the type's `center`
+// through the local frames from the reference body up to the chassis
+// compound (body+0x1C, while body+0x58 has bit 4 and the body is not
+// car+0x13EC) = p = ref_at - C + refRot * center in the compound's frame;
+// then the smallest / largest coordinates of the compound shape's hull
+// points (shape+0x90 -> +0x24, count +0x20: the eight corners FUN_0050e550
+// makes of the box of FUN_005008c0), starting from 0; the result is
+//   min: p + min(0, box_lo - C) + 0.1,   max: p + max(0, box_hi - C) - 0.1
+// (_DAT_005935d4 = 0.1). In the car's cfg frame, C the mass centre
+// (car_compound_com). A car without points answers p + 0.1 / p - 0.1.
+bool native_car_bounds(InvObject* chassis, bool want_max, float out[3]) {
+  std::shared_ptr<CarObject> car = car_of(chassis);
+  if (!car || !car->car_type_) return false;
+  const PartTypeDesc& d = *car->type_;
+  const CamV3 c = car_compound_com(*car);
+  const CamV3 p = d.ref_at - c + cam_mul(d.ref_rot, car->car_type_->center);
+  CamV3 lo = CamV3(), hi = CamV3();
+  const bool any = part_tree_box(*car, &lo, &hi, 0, &car->slot_bones_);
+  constexpr float kPad = 0.1f;  // _DAT_005935d4
+  float v[3];
+  for (int k = 0; k < 3; ++k) {
+    const float pk = k == 0 ? p.x : k == 1 ? p.y : p.z;
+    const float ck = k == 0 ? c.x : k == 1 ? c.y : c.z;
+    float h = 0.f;
+    if (any) {
+      const float b = want_max ? (k == 0 ? hi.x : k == 1 ? hi.y : hi.z) - ck
+                               : (k == 0 ? lo.x : k == 1 ? lo.y : lo.z) - ck;
+      h = want_max ? (std::max)(0.f, b) : (std::min)(0.f, b);
+    }
+    v[k] = want_max ? pk + h - kPad : pk + h + kPad;
+  }
+  out[0] = v[0];
+  out[1] = v[1];
+  out[2] = v[2];
+  if (native_type_log()) {
+    static int s_logged = 0;
+    if (s_logged < 8) {
+      ++s_logged;
+      const PartTypeDesc& own = part_type_box(d);
+      std::fprintf(stderr,
+                   "[native-type] Chassis.%s of car '%s': mass centre (%.4f, %.4f, %.4f), box "
+                   "(%.4f, %.4f, %.4f) .. (%.4f, %.4f, %.4f)%s (the car's own bodies and click: "
+                   "(%.4f, %.4f, %.4f) .. (%.4f, %.4f, %.4f)) -> (%.4f, %.4f, %.4f)\n",
+                   want_max ? "getMax" : "getMin",
+                   car->type_->cfg_path.c_str(), c.x, c.y, c.z, lo.x, lo.y, lo.z, hi.x,
+                   hi.y, hi.z, any ? "" : " (no points)", own.box_lo.x, own.box_lo.y,
+                   own.box_lo.z, own.box_hi.x, own.box_hi.y, own.box_hi.z, v[0], v[1], v[2]);
+    }
+  }
+  return true;
+}
+
 // PE 940 Chassis.getMaxSteer 0x4B3110 / setMaxSteer 0x4B5030 = header+0xA20
 // and Chassis.setAckermann 0x4B47B0 = header+0xA30 of the drive-train
 // header the car points to (car+0x2050): the largest steer angle and the

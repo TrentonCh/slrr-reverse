@@ -189,6 +189,9 @@ bool render_d3d9_viewport_unproject(void* vp, void* cam, float vx, float vy,
 
 // Phase 2.86 — screenshot stub (writes tiny marker file + counter).
 bool render_d3d9_print_screen(const char* path);
+// Fork (m5 test rig, SLRR_PE_BOOT_SHOTS): the camera passes of the last
+// flushed frame: bound viewports, instances and texts drawn.
+void render_d3d9_cam_pass_counts(int32_t* bound_vps, int32_t* instances, int32_t* texts);
 int32_t render_d3d9_print_screen_count();
 const char* render_d3d9_print_screen_last();
 

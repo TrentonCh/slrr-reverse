@@ -776,4 +776,12 @@ int32_t render_d3d9_pick_rays(float x, float y, RenderPickRay* out,
 #endif
 }
 
+// Fork (m5 test rig): the counts of the last flushed frame's camera passes
+// (draw_viewport_cameras), for the `[pe-boot] shot#n` lines.
+void render_d3d9_cam_pass_counts(int32_t* bound_vps, int32_t* instances, int32_t* texts) {
+  if (bound_vps) *bound_vps = g_cam_pass_stats.bound_vps;
+  if (instances) *instances = g_cam_pass_stats.instances;
+  if (texts) *texts = g_cam_pass_stats.texts;
+}
+
 }  // namespace inv

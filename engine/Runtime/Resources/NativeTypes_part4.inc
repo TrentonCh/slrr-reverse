@@ -305,6 +305,16 @@ struct PartEntry {
   float reach = 0.f;
   CamV3 com;                   // shape+0x40
   double volume = 0.0;         // shape+0x4C (mesh shapes with a mass)
+  // (m5 step 5) The points of the shape in the frame of its body, as
+  // FUN_005008c0 reads them for the box of the compound the body is a child
+  // of: a ball its centre, a rod its two ends (+-shape+0xB4 along its
+  // axis), a box its eight corners (+-shape+0xB4..+0xBC), a mesh its
+  // vertices (shape+0xB8; less shape+0x40 for a shape with a mass,
+  // FUN_00508d20, raw without one: FUN_00505760 returns at once). Each point
+  // is grown by `margin` = shape+0x10 (the ball's radius, the rod's) + 0.01
+  // (DAT_005935d0, the child has no children). FUN_004f7d60, FUN_004f5b90.
+  std::vector<CamV3> pts;
+  float margin = 0.f;
 };
 
 // One node of the slot list at type+0x116C (0x170 bytes, FUN_004bfc10).
@@ -389,6 +399,21 @@ struct PartTypeDesc {
   bool has_click = false;          // type+0x1040
   CamV3 click_off;                 // type+0x1000
   CamM3 click_rot = cam_identity();
+  // (m5 step 5) The first word of the `click` line and the cfg's pack: the
+  // click body's shape, read when the box below is first asked for.
+  std::string click_word;
+  int32_t click_pack = 0;
+  // (m5 step 5) The box FUN_005008c0 builds for the part's compound from
+  // its own children, in the cfg frame: every body without body flag 0x20
+  // (`nocollision`, the car's `steering` body) and the click body, each
+  // point grown by its margin. has_box is false for a type without points.
+  // Fork: the exe reads the click shape at the type's init; the host reads
+  // it on the first query (part_type_box: car info is the only reader so
+  // far), which keeps the type init as fast as before. Natives only, on the
+  // VM thread.
+  mutable bool box_built = false;
+  mutable bool has_box = false;
+  mutable CamV3 box_lo, box_hi;
   std::vector<PartSlot> slots;     // type+0x116C
   std::vector<float> lods;         // the numbers of the `lods` line
   // type+0xFAC / +0xFB0 as the tail of the `lods` handler leaves them
@@ -519,12 +544,32 @@ void part_body_shape(const char* shape, float mass, PartEntry* e,
     e->shape_path = shape;
   }
   // FUN_00505760: the centre of a ball, box or rod is (0, 0, 0).
+  constexpr float kLeafMargin = 0.01f;  // DAT_005935d0 (FUN_005008c0)
   if (e->shape_kind != 6) {
     e->reach = e->shape_kind == 1
                    ? std::fabs(e->dims[0])
                    : 0.5f * std::sqrt(e->dims[0] * e->dims[0] +
                                       e->dims[1] * e->dims[1] +
                                       e->dims[2] * e->dims[2]);
+    // FUN_004f7d60: ball shape+0x10 = shape+0xB4 = size 1; rod shape+0xB4 =
+    // size 1 (the half length), shape+0x10 = size 2 (the radius); box
+    // shape+0xB4..+0xBC = the three sizes, shape+0x10 = 0.
+    const float a = e->dims[0], b = e->dims[1], c = e->dims[2];
+    if (e->shape_kind == 1) {
+      e->pts.push_back(CamV3());
+      e->margin = a + kLeafMargin;
+    } else if (e->shape_kind >= 2 && e->shape_kind <= 4) {
+      const CamV3 axis = e->shape_kind == 2 ? cam_v(a, 0.f, 0.f)
+                         : e->shape_kind == 3 ? cam_v(0.f, a, 0.f)
+                                              : cam_v(0.f, 0.f, a);
+      e->pts.push_back(axis);
+      e->pts.push_back(CamV3() - axis);
+      e->margin = b + kLeafMargin;
+    } else if (e->shape_kind == 5) {
+      for (int k = 0; k < 8; ++k)
+        e->pts.push_back(cam_v(k & 1 ? a : -a, k & 2 ? b : -b, k & 4 ? c : -c));
+      e->margin = kLeafMargin;
+    }
     return;
   }
   std::vector<uint8_t> file;
@@ -551,6 +596,56 @@ void part_body_shape(const char* shape, float mass, PartEntry* e,
     if (far2 < d2) far2 = d2;
   }
   e->reach = std::sqrt(far2);
+  // (m5 step 5) The vertices in the body's frame: recentred on shape+0x40
+  // for a shape with a mass (FUN_00508d20), as read without one. A mesh
+  // shape's shape+0x10 stays 0 (FUN_004ba8c0; FUN_004f5b90 does not write
+  // it).
+  const CamV3 shift = mass == 0.f ? CamV3() : e->com;
+  e->pts.reserve(mesh.xyz.size() / 3);
+  for (size_t i = 0; i + 2 < mesh.xyz.size(); i += 3)
+    e->pts.push_back(cam_v(mesh.xyz[i], mesh.xyz[i + 1], mesh.xyz[i + 2]) - shift);
+  e->margin = kLeafMargin;
+}
+
+// (m5 step 5) The click body's shape (FUN_004bf230): the first word of the
+// `click` line is a physics body record of the cfg's pack (typeof 9, its
+// text `shape <mesh file>`, FUN_004f7b50) or a mesh file (FUN_004f7d60(0,
+// 7, ..)). Either way the shape has no mass, so its vertices stay as read.
+void part_click_shape(const char* word, int32_t pack, std::vector<CamV3>* out) {
+  out->clear();
+  std::string path;
+  int32_t local = 0;
+  if (engine_sscanf(word, "%d", &local) != 0 && local != 0) {
+    const int32_t id = static_cast<int32_t>(
+        rpak_remap_local_id(pack, static_cast<uint32_t>(local)));
+    std::vector<uint8_t> blob;
+    if (!id || !rpak_read_entry(id, &blob)) return;
+    // Fork: the record's text is scanned here for its `shape` line; the
+    // exe's loader of the typeof-9 payload was not read (Q31).
+    std::string text(reinterpret_cast<const char*>(blob.data()), blob.size());
+    size_t at = 0;
+    while (at < text.size()) {
+      size_t eol = text.find('\n', at);
+      if (eol == std::string::npos) eol = text.size();
+      const std::string ln = text.substr(at, eol - at);
+      at = eol + 1;
+      char w[64] = {0};
+      char p[1025] = {0};
+      if (engine_sscanf(ln.c_str(), "%63s %1024s", w, p) == 2 && word_is(w, "shape")) {
+        path = p;
+        break;
+      }
+    }
+  } else {
+    path = word;
+  }
+  std::vector<uint8_t> file;
+  PartShapeMesh mesh;
+  if (path.empty() || !part_read_file(path, &file) || !part_shape_mesh_read(file, &mesh))
+    return;
+  out->reserve(mesh.xyz.size() / 3);
+  for (size_t i = 0; i + 2 < mesh.xyz.size(); i += 3)
+    out->push_back(cam_v(mesh.xyz[i], mesh.xyz[i + 1], mesh.xyz[i + 2]));
 }
 
 // The words only the car's keyword table has (NativeTypes_part6.inc).
@@ -655,6 +750,9 @@ void parse_part_cfg(const std::string& text, int32_t pack, PartTypeDesc* d) {
                     &d->click_off.y, &d->click_off.z, &ypr[0], &ypr[1], &ypr[2]);
       d->click_rot = cam_ypr_to_matrix(ypr[0], ypr[1], ypr[2]);
       d->has_click = shape[0] != 0;
+      // (m5 step 5) the shape, for the box of the compound (part_type_box).
+      d->click_word = shape;
+      d->click_pack = pack;
     } else if (word_is(l.word, "bone")) {
       // FUN_004bfb30: the entry before the line is the body bone00 follows.
       if (last) {
@@ -868,6 +966,49 @@ void part_type_derive(PartTypeDesc* d) {
     const float r = std::sqrt(cam_len2(at)) + e.reach;
     if (d->bound_r < r) d->bound_r = r;
   }
+}
+
+// (m5 step 5) The box of the compound's own children (FUN_005008c0, the
+// branch for a compound of shape kind 5 / 6): every body but those with
+// body flag 0x20 (the entry flag 0x100 of `nocollision`, FUN_004c1f90 at
+// 0x4c2474; the car's `steering` body, 0x8020 at 0x4c2445), each at (line
+// offset + line rotation * shape+0x40) with the line rotation, and the
+// click body at the click line's offset and rotation (0x4c25a4). Points are
+// grown by their margin. Bodies with mass 0 count too (only the mass
+// centre leaves them out). Built on the first call (PartTypeDesc::box_built).
+const PartTypeDesc& part_type_box(const PartTypeDesc& td) {
+  if (td.box_built) return td;
+  const PartTypeDesc* d = &td;
+  d->box_built = true;
+  d->has_box = false;
+  auto grow = [d](const CamV3& c, float m) {
+    const CamV3 lo = cam_v(c.x - m, c.y - m, c.z - m);
+    const CamV3 hi = cam_v(c.x + m, c.y + m, c.z + m);
+    if (!d->has_box) {
+      d->box_lo = lo;
+      d->box_hi = hi;
+      d->has_box = true;
+      return;
+    }
+    d->box_lo = cam_v((std::min)(d->box_lo.x, lo.x), (std::min)(d->box_lo.y, lo.y),
+                      (std::min)(d->box_lo.z, lo.z));
+    d->box_hi = cam_v((std::max)(d->box_hi.x, hi.x), (std::max)(d->box_hi.y, hi.y),
+                      (std::max)(d->box_hi.z, hi.z));
+  };
+  for (size_t i = 0; i < d->entries.size(); ++i) {
+    const PartEntry& e = d->entries[i];
+    if (e.kind != 1 || e.pts.empty() || (e.flags & 0x100u)) continue;
+    if (d->car && static_cast<int>(i) == d->car->steer_index) continue;
+    const CamV3 at = e.off + cam_mul(e.rot, e.com);
+    for (const CamV3& p : e.pts) grow(at + cam_mul(e.rot, p), e.margin);
+  }
+  if (d->has_click && !d->click_word.empty()) {
+    std::vector<CamV3> click;
+    part_click_shape(d->click_word.c_str(), d->click_pack, &click);
+    for (const CamV3& p : click)
+      grow(d->click_off + cam_mul(d->click_rot, p), 0.01f);  // DAT_005935d0
+  }
+  return td;
 }
 
 // PE 940 FUN_004c3780, the end of the type's init: every slot is put on
