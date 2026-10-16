@@ -170,6 +170,11 @@ struct CameraState {
   uint32_t pass_frame = 0;
   float dmin = 0.1f;
   float dmax = 100.f;
+  // PE 940 params+0x24 / +0x1C / +0x20 / +0x28: on, near and far x 10, the
+  // colour (render_d3d9_camera_set_fog; camera_pass_fog draws with them).
+  bool fog_on = false;
+  float fog_near = 0.f, fog_far = 0.f;
+  uint32_t fog_colour = 0;
   float lod_bias = 1.f;
   float lod_amp = 1.f;
   int32_t oc = 1;
@@ -1777,6 +1782,9 @@ static bool render_boot940() {
 // Fragment 5: the detail a camera gives the nodes of its walk, and a
 // section with two bone matrices.
 static void camera_offer_detail(void* cam_key);
+// Fragment 5: the D3D fog of a camera pass (FUN_00427260); g_pass_fog = on.
+static void camera_pass_fog(const CameraState& cam);
+static bool g_pass_fog = false;
 static bool draw_two_bone_section(void* key, const MeshState& ms,
                                   const MeshSubmesh& sm,
                                   const D3DMATRIX& world,
@@ -1805,7 +1813,7 @@ struct Mode3Sec {
 static void draw_object_prelit_group(const std::vector<Mode3Sec>& secs);
 static void draw_object_prelit_transparent(const Mode3Sec& sec);
 // True for the material classes whose mode 3 stage setup the host has
-// (CMaterial_Tex, CMaterial_MixVCA).
+// (render_d3d9_part4.inc).
 static bool mode3_object_class(int32_t shader);
 
 // The device lights of a camera pass (render_d3d9_part4.inc): `any` when
@@ -2023,10 +2031,9 @@ static void draw_camera_instances(const std::vector<void*>& members,
         // Mode 3 with a lightmap: CMaterial_Tex takes FUN_00436230 when its
         // lightmap entry has a slot (FUN_00434170 case 3: entry [0] slot !=
         // -1). slot_bound is only ever set on the Build 940 boot.
-        // Fork: a class whose mode 3 setup was not read (12 of the 97 v4
-        // materials of the install that have a lightmap entry: MixTA,
-        // ColorMixTex, the specular and sphere-map classes, Color*) stays
-        // on the object path below.
+        // Fork: a class whose mode 3 setup was not read (TexSpheremap,
+        // Color*, the bump classes; mode3_object_class) stays on the
+        // object path below.
         sec.mode3 = prelit && !uploaded && sm->slot_bound &&
                     sm->slot_lightmap != -1 && !sm->wide.empty() &&
                     mode3_object_class(sm->mat_shader);
@@ -2327,6 +2334,7 @@ static void draw_camera_instances(const std::vector<void*>& members,
     g_dev->SetTransform(D3DTS_VIEW, &view_rot);
     g_dev->SetRenderState(D3DRS_ZFUNC, D3DCMP_ALWAYS);
     g_dev->SetRenderState(D3DRS_ZWRITEENABLE, FALSE);
+    if (g_pass_fog) g_dev->SetRenderState(D3DRS_FOGENABLE, FALSE);
     for (const Sec& s : horizon) {
       draw_section(s, false, true, true);
       ++g_cam_pass_stats.horizon_sections;
@@ -2334,6 +2342,7 @@ static void draw_camera_instances(const std::vector<void*>& members,
     g_dev->SetRenderState(D3DRS_ZFUNC, D3DCMP_LESSEQUAL);
     g_dev->SetTransform(D3DTS_VIEW, &saved_view);
     g_dev->SetRenderState(D3DRS_ZWRITEENABLE, TRUE);
+    if (g_pass_fog) g_dev->SetRenderState(D3DRS_FOGENABLE, TRUE);
   }
   // rg_ground, then the object groups. The ground group leaves the state
   // the object groups start from.
@@ -2615,7 +2624,7 @@ void draw_viewport_cameras() {
     g_dev->SetTransform(D3DTS_PROJECTION, &proj);
     g_dev->SetTransform(D3DTS_VIEW, &view);
     g_fold_own_bone0 = true;  // instances and texts: own bone00 pose folded
-    g_dev->SetRenderState(D3DRS_FOGENABLE, FALSE);
+    camera_pass_fog(cam);  // FUN_00461dd0 -> FUN_00427260
     // FUN_00460ba0 -> FUN_004231a0: depth only, never the target.
     g_dev->Clear(0, nullptr, D3DCLEAR_ZBUFFER, 0, kPeClearZ, 0);
     void* const top = mesh_root_of(start);
@@ -2700,6 +2709,9 @@ void draw_viewport_cameras() {
     draw_camera_text_section(texts);  // rg_text_section: after every mesh group
     g_fold_own_bone0 = false;
   }
+  // Fork: the host's 2D layers after the passes draw without fog.
+  if (g_pass_fog) g_dev->SetRenderState(D3DRS_FOGENABLE, FALSE);
+  g_pass_fog = false;
   g_mesh_queue = saved_queue;
   g_active_vp = saved_vp;
   if (g_active_vp) apply_active_viewport();

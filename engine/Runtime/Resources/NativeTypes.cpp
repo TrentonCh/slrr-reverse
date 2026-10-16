@@ -40,6 +40,11 @@
 //                        (the cursor's create), FUN_004b7d70 (commands),
 //                        FUN_004b78f0 and the head of FUN_004b8430 (the
 //                        animate tick), FUN_004b7c60 (getinfo)
+//   object               NativeTypes_part10.inc: FUN_004be2b0 (init and the
+//                        cfg words), FUN_004bd040 (create), FUN_004bdb90
+//                        (render instances), FUN_004befc0 (setMatrix /
+//                        setState), FUN_004be540 (getinfo), FUN_004be3f0
+//                        (destroy)
 //   animate walk         FUN_0047ba10 (native_tick_animate)
 
 #include "NativeTypes.hpp"
@@ -333,6 +338,7 @@ std::shared_ptr<NativeObject> part_create(const NativeCreate& c);
 std::shared_ptr<NativeObject> car_create(const NativeCreate& c);
 std::shared_ptr<NativeObject> player_create(const NativeCreate& c);
 std::shared_ptr<NativeObject> cursor_create(const NativeCreate& c);
+std::shared_ptr<NativeObject> object_create(const NativeCreate& c);
 
 using NativeFactory = std::shared_ptr<NativeObject> (*)(const NativeCreate&);
 struct NativeTypeRow {
@@ -347,7 +353,7 @@ struct NativeTypeRow {
 const NativeTypeRow kNativeTypes[kNativeTypeCount] = {
     {"ground", &ground_create},
     {"camera", &camera_create},
-    {"object", nullptr},
+    {"object", &object_create},
     {"car", &car_create},
     {"part", &part_create},
     {"trigger", nullptr},
@@ -740,6 +746,70 @@ bool native_get_ori(InvObject* handle, float ypr[3]) {
 bool native_owns_create_pose(InvObject* handle) {
   std::shared_ptr<NativeObject> o = native_object_of(handle);
   return o ? o->owns_create_pose : false;
+}
+
+// PE 940 0x4DBF20 (GameRef.setState): the twelve floats as one "ffffffffffff"
+// event to the type's vt+0x1C. One `[native-type] setState` line per object
+// and second of the loop clock (diagnostic, SLRR_PE_NATIVE_PROF).
+bool native_set_state(InvObject* handle, const float pos[3], const float ypr[3],
+                      const float vel[3], const float ang[3]) {
+  std::shared_ptr<NativeObject> o = native_object_of(handle);
+  if (!o || !o->set_state(pos, ypr, vel, ang)) return false;
+  if (native_type_log()) {
+    static std::unordered_map<const NativeObject*, double> s_logged;
+    const double t = native_loop_time();
+    bool log = false;
+    {
+      std::lock_guard<std::mutex> lock(g_nt_mu);
+      auto it = s_logged.find(o.get());
+      if (it == s_logged.end() || t - it->second >= 1.0) {
+        s_logged[o.get()] = t;
+        log = true;
+      }
+    }
+    if (log)
+      std::fprintf(stderr,
+                   "[native-type] setState %s %p node=0x%08X (handle %p "
+                   "instance %p) t=%.3f pos=(%.4f, %.4f, %.4f) ypr=(%.5f, "
+                   "%.5f, %.5f) vel=(%.3f, %.3f, %.3f) ang=(%.3f, %.3f, "
+                   "%.3f)\n",
+                   native_type_name(o->type_index), static_cast<void*>(handle),
+                   static_cast<unsigned>(java_util_resource_ResourceRef_id(handle)),
+                   static_cast<void*>(o->handle), static_cast<void*>(o->instance),
+                   t, pos[0], pos[1], pos[2], ypr[0], ypr[1], ypr[2], vel[0],
+                   vel[1], vel[2], ang[0], ang[1], ang[2]);
+  }
+  return true;
+}
+
+// PE 940 FUN_004e4500 -> FUN_004ec800 (ResourceRef.unload): a loaded game
+// instance node is put on the world's unload list (FUN_0047e340, world+0x10C,
+// count +0x220), whose processing releases the node's payload and with it
+// the game object (the type's vt+0x10); the node and its handles stay.
+// [I]: the processing of that list was not read; the host's unload of a
+// pack instance (instance_node_unload) is the same reading.
+// Fork: at once, for a node GameRef.create or create_native made (a pack
+// instance node has instance_node_unload).
+void native_on_unload(InvObject* handle) {
+  if (!handle || !native_script_boot()) return;
+  std::shared_ptr<NativeObject> obj;
+  {
+    std::lock_guard<std::mutex> lock(g_nt_mu);
+    auto it = g_objects.find(handle);
+    if (it == g_objects.end()) return;
+    obj = it->second;
+    g_objects.erase(it);
+    for (InvObject* other : {obj->handle, obj->instance}) {
+      auto oi = g_objects.find(other);
+      if (oi != g_objects.end() && oi->second == obj) g_objects.erase(oi);
+    }
+    ticking_remove(obj);
+  }
+  if (native_type_log())
+    std::fprintf(stderr, "[native-type] unload %s handle=%p t=%.3f\n",
+                 native_type_name(obj->type_index), static_cast<void*>(handle),
+                 native_loop_time());
+  obj->destroy();
 }
 
 void native_on_destroy(InvObject* handle) {
@@ -1210,6 +1280,10 @@ class GroundObject final : public NativeObject {
   std::string material_file;  // params[7], `.scm`
   std::string ai_file;        // params[8], `.trc`
   InvObject* r_ground = nullptr;  // ground+0x68: the render instance
+  // ground+0x84: the fog block (GroundRef.setFog, the `fog` command). The
+  // constructor FUN_004ba790 does not write it (q18) [U]; the host starts
+  // without one, which is what the stock garage shows (no fog) [I].
+  std::unique_ptr<NativeFog> fog_block;
 
   // vt+0x10 FUN_004bb3d0.
   void destroy() override {
@@ -1235,8 +1309,19 @@ class GroundObject final : public NativeObject {
       case 0x17:
         out->obj = r_ground;
         return r_ground != nullptr;
+      case 0x4A:
+        // With a block (GroundRef.setFog): the old one is freed and the new
+        // one kept (FUN_0056a42f, ground+0x84), return 0. Without: the
+        // block, or null when there is none.
+        if (out->fog_set) {
+          fog_block = std::make_unique<NativeFog>(*out->fog_set);
+          return true;
+        }
+        if (!fog_block) return false;
+        out->fog = *fog_block;
+        return true;
       default:
-        return false;  // 1: Fork, no `groundbody`; 0x39 / 0x3D / 0x4A: later
+        return false;  // 1: Fork, no `groundbody`; 0x39 / 0x3D: later
     }
   }
 
@@ -1255,9 +1340,22 @@ class GroundObject final : public NativeObject {
     return true;
   }
 
-  // vt+0x38 FUN_004bb6b0 takes `fog ...`, `obs_add %d`, `obs_rem %d`.
-  // Fork: none is ported; the host's generic chain sees the command as
-  // before (fog reaches the renderer through GroundRef.setFog today).
+  // vt+0x38 FUN_004bb6b0 takes `fog ...`, `obs_add %d`, `obs_rem %d`
+  // (event 0x10, the first word compared with _stricmp). `fog` scans
+  // "%*s %d &f &f" (sic): the `&f` are literals and the test is for four
+  // fields, which cannot happen, so the command always stores a new block
+  // with on = 0, fog off (q05). Script boot only, like every native object.
+  // Fork: obs_add / obs_rem (AI obstacles, ground+0x88) are not ported; the
+  // host's generic chain sees them as before.
+  bool event(int32_t type, const char* text) override {
+    if (type != 0x10 || !text) return false;
+    char word[64];
+    word[0] = 0;
+    engine_sscanf(text, "%63s", word);
+    if (!word_is(word, "fog")) return false;
+    fog_block = std::make_unique<NativeFog>();
+    return true;
+  }
 };
 
 // PE 940 FUN_004bade0.
@@ -1365,5 +1463,8 @@ std::shared_ptr<NativeObject> ground_create(const NativeCreate& c) {
 
 // The `player` type (table row 6) and the `cursor` type (row 8).
 #include "NativeTypes_part9.inc"
+
+// The `object` type (table row 2): props with bodies and render instances.
+#include "NativeTypes_part10.inc"
 
 }  // namespace inv

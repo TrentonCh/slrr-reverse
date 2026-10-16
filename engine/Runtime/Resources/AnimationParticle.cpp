@@ -1,6 +1,7 @@
 // Split from natives_generated_world.cpp — AnimationParticle.cpp
 #include "natives.hpp"
 #include "host_objects.hpp"
+#include "NativeTypes.hpp"
 #include "runtime.hpp"
 #include "render_d3d9.hpp"
 #include "tree_interp.hpp"
@@ -285,6 +286,29 @@ void java_util_resource_GroundRef_setFog(InvObject* self, int32_t color, float n
   tree_field_set_int(self, "fog_color", color);
   tree_field_set_float(self, "fog_near", n);
   tree_field_set_float(self, "fog_far", f);
+  if (native_script_boot()) {
+    // PE 940 0x4DE640 (X 3.3, q04): the 16-byte block {u8 on = 1, f32 near
+    // x 10 (DAT_0059373c), f32 far x 10, u32 colour} goes to the map node's
+    // game object (getinfo 0x4A, FUN_0047c640 -> ground FUN_004bb570), and
+    // a camera picks it up when its `render` command runs
+    // (NativeTypes_part2.inc). There is no global fog in the exe: the
+    // legacy render_d3d9_set_fog is not called on the script boot.
+    NativeFog block;
+    block.on = 1;
+    block.near_x10 = n;
+    block.far_x10 = f;
+    block.colour = static_cast<uint32_t>(color);
+    NativeInfo info;
+    info.fog_set = &block;
+    const bool stored = native_getinfo(self, 0x4A, &info);
+    if (native_type_log())
+      std::fprintf(stderr,
+                   "[native-type] GroundRef.setFog colour 0x%08X near %g far "
+                   "%g -> block on 1 near %g far %g%s\n",
+                   static_cast<unsigned>(color), near, far, n, f,
+                   stored ? "" : " (no ground object: not stored)");
+    return;
+  }
   render_d3d9_set_fog(color & 0x00ffffff, n, f);
 }
 

@@ -371,6 +371,9 @@ int32_t native_render_owner(void* node);
 // Fork: one `[render-dbg]` line per native camera (NativeTypes.cpp), printed
 // by render_d3d9_debug_dump.
 void native_camera_debug_dump(FILE* out);
+// Fork: one `[render-dbg] light type` line per light type payload the host
+// read or copied (NativeTypes_part4.inc), printed after the camera lines.
+void native_light_type_debug_dump(FILE* out);
 // Fork: `[cursor] state ...`, one line per native cursor object
 // (NativeTypes_part9.inc), printed by render_d3d9_debug_dump beside the
 // camera line when SLRR_PE_NATIVE_PROF is set.

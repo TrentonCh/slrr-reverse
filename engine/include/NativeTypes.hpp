@@ -98,6 +98,15 @@ struct GameTypeDesc {
 const GameTypeDesc* gametype_desc(int32_t type_id);
 
 // ---- Native objects -------------------------------------------------------
+// The 16-byte fog block of a map (940 GroundRef.setFog 0x4DE640): u8 on,
+// f32 near x 10, f32 far x 10, u32 colour (as the script passed it).
+struct NativeFog {
+  uint8_t on = 0;
+  float near_x10 = 0.f;
+  float far_x10 = 0.f;
+  uint32_t colour = 0;
+};
+
 // The answer of a getinfo query (the exe's vt+0x3C writes through a pointer
 // whose meaning depends on the query).
 struct NativeInfo {
@@ -108,6 +117,12 @@ struct NativeInfo {
   // place of the out pointer): the axis number of the player's 0x19 and
   // 0x43.
   int32_t arg = 0;
+  // Query 0x4A of a ground (FUN_004bb570): with `fog_set` the block is
+  // stored (the exe frees the old one and keeps the pointer); without, the
+  // ground's block is copied into `fog` and the query is answered only when
+  // the ground has one.
+  const NativeFog* fog_set = nullptr;
+  NativeFog fog;
 };
 
 struct NativeCreate {
@@ -138,6 +153,13 @@ class NativeObject {
   // does not take it and the host's generic GameRef pose is used.
   virtual bool set_matrix(const float /*pos*/[3], const float /*ypr*/[3]) {
     return false;
+  }
+  // vt+0x1C with all twelve floats GameRef.setState sends (0x4DBF20:
+  // position, angles, velocity, angular velocity). A type that keeps no
+  // velocities takes the first six as GameRef.setMatrix's event.
+  virtual bool set_state(const float pos[3], const float ypr[3],
+                         const float /*vel*/[3], const float /*ang*/[3]) {
+    return set_matrix(pos, ypr);
   }
   // vt+0x2C, once per game tick.
   virtual void control(float /*dt*/) {}
@@ -210,12 +232,18 @@ std::shared_ptr<NativeObject> native_object_of(InvObject* handle);
 bool native_event(InvObject* handle, int32_t type, const char* text);
 bool native_set_matrix(InvObject* handle, const float pos[3],
                        const float ypr[3]);
+// GameRef.setState (0x4DBF20): the twelve floats to the native object.
+bool native_set_state(InvObject* handle, const float pos[3], const float ypr[3],
+                      const float vel[3], const float ang[3]);
 bool native_get_pos(InvObject* handle, float pos[3]);   // getinfo 2
 bool native_get_ori(InvObject* handle, float ypr[3]);
 // True when the handle's native object took its pose from the create string.
 bool native_owns_create_pose(InvObject* handle);
 bool native_getinfo(InvObject* handle, int32_t query, NativeInfo* out);
 void native_on_destroy(InvObject* handle);
+// ResourceRef.unload of a node GameRef.create or create_native made: its
+// game object goes (940 FUN_004ec800; the node stays).
+void native_on_unload(InvObject* handle);
 // Once per engine_simulate_frame.
 void native_tick_control(float dt);
 void native_tick_drive(float dt);
@@ -455,6 +483,20 @@ const RenderLightDesc* light_type_payload(int32_t id);
 // False when the id is no light type.
 bool light_type_set_colours(int32_t id, int32_t diffuse, int32_t ambient,
                             int32_t specular);
+// ResourceRef.duplicate of a light type (940 0x4E32E0 -> FUN_004e9470 ->
+// FUN_0051ee30): `copy_id` names a new runtime node with a copy of the
+// payload of `src_id`, which stays as it is. False when `src_id` is no light
+// type (record or copy).
+bool light_type_duplicate(int32_t src_id, int32_t copy_id);
+// The pack record a light type copy was made from (through copies of
+// copies); 0 when `id` is no copy.
+int32_t light_type_source(int32_t id);
+// RenderRef.setFlare on a light type (940 0x4E2950 -> FUN_004ebe00): the
+// five lens flare fields and the glow texture into the payload. False when
+// the id is no light type.
+bool light_type_set_flare(int32_t id, int32_t texture_id, int32_t colour,
+                          float min_size, float max_size, int32_t flare_count,
+                          int32_t ray_count);
 
 // ---- The ground mesh ------------------------------------------------------
 // The pack node whose ground object owns this render instance (`r_ground`,

@@ -470,6 +470,9 @@ class CameraObject final : public NativeObject {
   int32_t create_flag2_ = 0;       // +0x1B0
   float lod_amp_ = 1.f;            // camera params +0x38
   float lod_bias_ = 0.f;           // camera params +0x34
+  // Camera params +0x24 (on), +0x1C / +0x20 (near / far x 10), +0x28
+  // (colour): off until a `render` command finds a block on the root.
+  NativeFog fog_;
 
   // Fork: the renderer camera (params node + `r_camera` + CameraNode) is
   // keyed by the GameRef the script holds; its parent is the node the
@@ -1004,12 +1007,39 @@ class CameraObject final : public NativeObject {
       // (FUN_0047b560; inferred: the audio listeners). Fork: not ported.
     }
     // Always: far = Config.camera_ext_viewrange, the fog of the world-tree
-    // root (its getinfo 0x4A; Fork: the ground type answers none, fog off)
-    // and the aspect override zeroed (asm 0x48bebe), so the projection uses
-    // the viewport's pixel width / height of the frame.
+    // root and the aspect override zeroed (asm 0x48bebe), so the projection
+    // uses the viewport's pixel width / height of the frame.
     far_ = cam_config("camera_ext_viewrange");
     render_d3d9_camera_set_planes(key_, near_, far_);
+    copy_root_fog();
     render_d3d9_camera_set_aspect(key_, 0.f);
+  }
+
+  // asm 0x48be7f..0x48bebb: root = the camera's world-tree root
+  // (FUN_004ea900, the map), p = getinfo(root, 0x4A, 0); with a block,
+  // params+0x24 = (float) p[0], +0x28 = the colour, +0x1C / +0x20 = near /
+  // far x 10; without one the params keep what they held (X 3.3).
+  void copy_root_fog() {
+    InvObject* root = static_cast<InvObject*>(
+        render_d3d9_camera_root(root_parent_ ? root_parent_ : key_));
+    NativeInfo info;
+    const bool found = root && native_getinfo(root, 0x4A, &info);
+    if (found) fog_ = info.fog;
+    push_fog();
+    if (native_type_log())
+      std::fprintf(stderr,
+                   "[native-type] camera %p render: root %p (%s) %s -> fog "
+                   "%s near %g far %g colour 0x%08X\n",
+                   static_cast<void*>(key_), static_cast<void*>(root),
+                   root && tree_host_class(root) ? tree_host_class(root) : "",
+                   found ? "has a fog block" : "has no fog block (kept)",
+                   fog_.on ? "on" : "off", fog_.near_x10, fog_.far_x10,
+                   static_cast<unsigned>(fog_.colour));
+  }
+
+  void push_fog() {
+    render_d3d9_camera_set_fog(key_, fog_.on != 0, fog_.near_x10,
+                               fog_.far_x10, fog_.colour);
   }
 
   // `hide <vp id>`: FUN_00420ad0 + FUN_00420f60 take the CameraNode off that
@@ -1043,8 +1073,9 @@ class CameraObject final : public NativeObject {
     } else if (word_is(word, "fog")) {
       // "%*s %d &f &f" (sic): the `&f` are literals and the test is for
       // four conversions, which cannot happen, so this always turns the
-      // camera's fog off (params+0x24 = 0). Fork: the camera pass has no
-      // fog of its own.
+      // camera's fog off (params+0x24 = 0, m2 exe_camera).
+      fog_.on = 0;
+      push_fog();
     } else if (word_is(word, "hide")) {
       cmd_hide(text);
     } else if (word_is(word, "activate")) {
@@ -1289,18 +1320,30 @@ void native_camera_debug_dump(FILE* out) {
       target = cam->move_offset_ + mt.pos;
       dist = std::sqrt(cam_len2(target - cam->world_point(cam->move_ref_)));
     }
+    // The fog the pass uses: the renderer camera's (the params), the
+    // object's own while the camera is not registered.
+    bool fog_on = cam->fog_.on != 0;
+    float fog_n = cam->fog_.near_x10, fog_f = cam->fog_.far_x10, fog_k = 0.f;
+    uint32_t fog_c = cam->fog_.colour;
+    render_d3d9_camera_get_fog(cam->key_, &fog_on, &fog_n, &fog_f, &fog_c,
+                               &fog_k);
     std::fprintf(out,
                  "[render-dbg] native camera %p registered=%d vp=%p pri=%d "
                  "eye=(%.4f, %.4f, %.4f) ypr=(%.5f, %.5f, %.5f) aov=%.2f "
                  "near=%g far=%g aspect=%g distance=%.4f move=0x%08X at "
                  "(%g, %g, %g) set %g look=0x%08X asleep=%d steps=%u wakes=%u "
-                 "sleeps=%u\n",
+                 "sleeps=%u fog=%s block=(%g, %g) colour=0x%08X k=%.4f "
+                 "fog_d3d=(%.2f, %.2f) fog_x10k=(%.1f, %.1f)\n",
                  static_cast<void*>(cam->key_), reg ? 1 : 0, vp, pri,
                  cam->pos_.x, cam->pos_.y, cam->pos_.z, yaw, pitch, roll, aov,
                  dmin, dmax, aspect, dist,
                  static_cast<unsigned>(cam->move_.id), target.x, target.y,
                  target.z, cam->distance_,
                  static_cast<unsigned>(cam->look_.id), cam->asleep_ ? 1 : 0,
-                 cam->steps_, cam->wakes_, cam->sleeps_);
+                 cam->steps_, cam->wakes_, cam->sleeps_, fog_on ? "on" : "off",
+                 fog_n, fog_f, static_cast<unsigned>(fog_c), fog_k,
+                 fog_n * 0.1f * fog_k, fog_f * 0.1f * fog_k, fog_n * fog_k,
+                 fog_f * fog_k);
   }
+  native_light_type_debug_dump(out);  // the light types after the cameras
 }

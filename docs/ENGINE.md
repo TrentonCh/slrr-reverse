@@ -336,6 +336,39 @@ menu or garage path needs them.
 
 ### 4.6 Natives: how a call crosses into C++
 
+**Update, 2026-10-16 (buying and keeping cars; maps and spec in `../slrr-ghidra/notes/m5/`).**
+Three rules of the exe, now followed on the script boot, that this section and 4.4 had
+wrong or did not cover:
+
+- **Calls by bare name.** The exe types each operand by the runtime class of its value
+  (FUN_005603e0; the class descriptor at class+8): an array as its array class
+  (`[Ljava.game.VehicleDescriptor;`, built by JVM::getArrayClass), a Vector as
+  `Ljava.util.Vector;`. The type score FUN_0055bd80(operand, parameter) switches on the
+  PARAMETER: identical 0, float parameter from an int 101, int from a float 100, an int or
+  float into String or a subclass of it 100 (into Object or Native -1), an object of a
+  class d levels below the parameter class 100 + d, unrelated -1; the method vector is
+  scanned from the end and the first of equal scores is kept. The host had typed every
+  array as a bare `[`, split `(I[)V` into three parameters, swapped the roles of operand
+  and parameter, and left a failed call's operands behind, so every `new X(array)` failed
+  (`CarMarket.<init>(I[)V not found`: no dealer opened). Two host Forks stay: an int
+  carried for a rid literal scores 100 into a ResourceRef parameter, and an interface
+  parameter scores a weak 500 (the loader drops interface lists).
+- **Native rows.** The exe registers each row with its own interned descriptor. The host's
+  Java-form rows erase every object parameter to `java.lang.Object`, so `File.write(String)`
+  and `File.write(ResourceRef)` read alike and the String row ran: every resource id a
+  script saved came out as an empty string (a host-written career `main` read back money
+  6,400,000). On the script boot the row whose parameters NAME the descriptor's types now
+  wins before the first-row fallback; that changes six descriptors, each to the exe's
+  row (`File.write(ResourceRef)`, `Vector3.rotate(Ypr)` used by the parts bin, and four on
+  driving paths).
+- **Field initialisers run at allocation.** Instance::initialize (FUN_0054cab0, thread
+  `THRD-INSTVAR-INI`) runs the instance field initialisers of every class from
+  `java.lang.Object` down when an object is allocated, before any constructor, exactly
+  once. The host ran them only after an `<init>` resolved, so a class without a
+  constructor (`MessagePort`, `VehicleDescriptor`, `Scene`, ...) kept null fields and the
+  car lot ignored every command. `GameRef.create` returns null when the create made no
+  script instance (FUN_004da620).
+
 A method is native when bit 0x40 is set in its MTHD flags. The exe finds the
 implementation in a 128-bucket hash keyed by `73 * sum(method bytes) + sum(class bytes)`
 and matches class, method and interned descriptor (`jvm_register.cpp:29-60`). The host's
@@ -536,6 +569,19 @@ itself is `[unknown]` (start from the old-exe `File_SdatType2_WriteUnsavedList`,
 0x484FA0).
 
 ## 6. Resources and data formats
+
+**Update, 2026-10-16 (dealers and car lot).** The four dealer and car-lot maps
+(`misc.dealer`, `dealer2`, `dealer3`, `misc.carlot`) use the garage's instance-tree format
+with one RSD chunk on the root. Two more mode-3 ground programs are in the host: MixTA (the
+new dealer's floor, with a lightmap) and ColorMixTex (the car lot). The trade-in map has no
+lightmaps at all (the M2 Q13 case); its hall is drawn grey where the stock frame is
+blue-grey, still open. Fog is stored per map: `GroundRef.setFog` writes {on, near x 10,
+far x 10, colour} on the ground, the camera's `render` command copies it, and each frame
+the camera sets D3D linear fog with the distances multiplied by k = cot(aov/2)^0.25. The
+trade-in turntable is the `native object` type (factory 0x4BF190; cfg words body, render,
+light, nocollision, damage, flags, lod, lods, colors). In a save, `File.write(ResourceRef)`
+writes `(ordinal << 16) | local` against the close trailer's pack table, whose paths are
+game-relative with backslashes (`cars\racers\Einvagen.rpk`).
 
 **Update, 2026-10-11 (06384ba).** The garage work corrected four statements of this section;
 the text below is kept as written and these override it. (1) A map's geometry is not a mesh
@@ -919,6 +965,7 @@ usable; host-only = no exe counterpart. PE / Soft / OOS are upstream's code mark
 | DirectInput | partial | keyboard (64-event buffer) + mouse, background mode with foreground gate; no joysticks; one gated device poll per game tick on the script boot; unattended runs never read the real mouse | `input_win32.cpp:245-346, 743-760` |
 | Controller / ControlSet / hotkeys / lastKey | soft | host axis-map table (152 per Controller) and host smoothing filter, the PE blob is mirrored but inert; 512-slot hotkey semantics, ascii packing and cheat ring follow the PE | `IO_part1.inc:563-611, 720-795`, `IO_part2.inc:326-600` |
 | MouseCursor | done (script boot) | `cursor` and `player` native types, ray pick per camera over the bound viewports, the eighteen EVENT_CURSOR forms, four natives, Windows shapes from the game's exe, camera control from the controller axes; not yet: the 3D pick of parts and the map triangles. The legacy stand-in stays for the old build | `NativeTypes_part9.inc`, `GameType.cpp` (`gametype_send_event`), `render_d3d9_part5.inc` (pick rays), `input_win32.cpp` |
+| Dealers, trade-in, car lot | done (script boot) | new and used dealers, buying, NOT ENOUGH MONEY, selling, trade-in with the turning stand, the car lot (park, fetch, browse), saves that read like stock ones; not yet: a completed trade-in shown in a run, the trade-in hall's blue-grey shading, the dealer's check view | `jvm_vmthread_part1/2.inc`, `jvm_register.cpp`, `GameRef_core.cpp`, `NativeTypes_part10.inc`, `AnimationParticle.cpp` (fog), `render_d3d9_part4.inc` (ground programs) |
 | Force feedback | missing | slots exist, no effect created, no joystick | `input_win32.cpp:859-861, 1104-1111` |
 | Steam | soft | since 75569af: the five natives have stand-ins on the script boot (`initAPI` returns 1). Before 75569af: 0 of 5 natives; `GameLogic` exits when `Steam.postInit()` is 0, yet the boot reaches Garage: why is `[unknown]` | natives_stubs.cpp; GameLogic.java:335 |
 | Vehicle build (`forceUpdate`) | partial | since 2f5111a: the `car` native type with analytic stance, parts on slots, wheel records written by the scripts, `forceUpdate` running `updatevariables`; no rigid body, the dyno figures are a stand-in. bookkeeping as side maps; no body | `Chassis_part2.inc:636-958` |
@@ -1009,7 +1056,7 @@ brought in line; this table says why each milestone comes when it does.
 | **M2. Garage scene** | It is the first visible 3D output and the proving ground for the native `ground`, `camera` and `part` types, the five-number `render` command, render objects bound by record id and bones; it depends on no other milestone than M1. | A frame dump with the garage shell (`garazs_01`), its props (`garazs_01_targyak`) and the lift under the Osd, lit by the `neon` directional light (misc.garage:0x1D, Garage.java:273-275); the `[jvm] class file missing camera/cursor/lift_support` lines gone. | Numbers two to four of the camera `render` command, the INVO material, bone and LOD encoding and the `ground` type are undecoded and need Ghidra time on the 940 exe; the three-number vehicle form of `render` is still live and M6 needs it too. |
 | **M3. Compiler as a standalone tool, run in parallel with M2** | It needs nothing from M1-M2, has the 2,819-pair oracle, and gates complete cars (lights, doors, kits, some wheels and running gear); starting it early also forces the loader fixes of section 4.3. | A tool whose output is byte-equal to the 2,663 paired classes at build 0x24F9D and equal past the header for the other 156, and which then produces the 635 missing classes; the host calls it where `class file missing` is logged, although none of the six lines a 940 run logs there today is a compiler case. | The oracle is untested until the first class is compiled; what is established so far is weak (where a source declares methods, 767 pairs, the class's method names match in all). The stopgap (let the stock exe compile) works but rewrites classes in the install and stays local. |
 | **M4. Mouse and garage operation** | Steps 0 to 3 DONE (mouse commit): pointer, gadget hover and click in the menu, dialogs and garage, camera orbit and zoom. Open: step 4, the 3D pick of parts (the exe reads it waited on are in `../slrr-ghidra/notes/m4/exe_mouse_q.md`), then the mechanic's remove / install / drag. Original text: With M1-M2 the garage draws, and the Mechanic, MOVE PARTS and paint booth are pointer-driven; menus already work from the keyboard. Two prerequisites come first: a cursor and click injector beside `SLRR_PE_BOOT_KEYS` (only `input_inject_key` exists, and physical mouse input is ignored unless the window is in the foreground), and a car, because a new career starts with money and no car (Garage.java:1693-1701): the run must load a stock-written car or career (LOAD CAR / LOAD CAREER, which pulls the save format forward from M5) or buy one in the CarMarket state. | A scripted key-and-click run that installs and removes a part, with the mesh count in `[render-dbg]` changing and no "not found" from `Part.addStockParts`. | The `Cursor_tick` scene pick needs the `PhysicsRef` hotspot boxes in the camera's space, which touches the Soft PhysicsRef state. |
-| **M5. Career path and Soft-shim retirement** | Nothing in the dependency map ties these items to M1-M4, so they are parallel work rather than a stage after the mouse. The career-path errors reproduce on today's key script (the null from `String.getParams`, Steam natives with a `neutralize` path, field initialisers for classes without `<init>`, the host-written `main`), and shim retirement needs only the five boot switches as defaults, a replacement for the E: regression and the `Jvm::invoke` hooks gone; remove the shim files last, because the cursor pick still reads `game_logic_actual_state()`. | A career saved and reloaded with `main` and `PlayerCar0` byte-compatible with a stock profile, `SLRR_PE_STREAM_ERRORS=1` silent from menu to garage, and a regression replacing the E: hub check (the E: scripts on the script boot, or the 940 key script). | The `[unknown]` Class_newInstance behaviour and the Steam `postInit` path can change what the menu does on a clean profile. |
+| **M5. Career path and Soft-shim retirement** | Buying and keeping cars DONE (cars commit, 2026-10-16): dealers, car lot, trade-in, stock-compatible saves; field initialisers at allocation. Open: catalog, car info, club info, paint booth (`../slrr-ghidra/notes/m5/m5_spec.md` steps 5 to 7). Original text: Nothing in the dependency map ties these items to M1-M4, so they are parallel work rather than a stage after the mouse. The career-path errors reproduce on today's key script (the null from `String.getParams`, Steam natives with a `neutralize` path, field initialisers for classes without `<init>`, the host-written `main`), and shim retirement needs only the five boot switches as defaults, a replacement for the E: regression and the `Jvm::invoke` hooks gone; remove the shim files last, because the cursor pick still reads `game_logic_actual_state()`. | A career saved and reloaded with `main` and `PlayerCar0` byte-compatible with a stock profile, `SLRR_PE_STREAM_ERRORS=1` silent from menu to garage, and a regression replacing the E: hub check (the E: scripts on the script boot, or the 940 key script). | The `[unknown]` Class_newInstance behaviour and the Steam `postInit` path can change what the menu does on a clean profile. |
 | **M6. Driving: bind physics, ground, cameras, HUD, audio** (FORK.md step 5; steps 1-3, the standalone module, run in parallel from now) | Binding needs cars in the garage (M2-M4), the GameRef camera path (M2) and the Track Osd (M1), plus the `ground` type's collision, the largest remaining reversing task, and joystick enumeration, which a wheel needs as much as FFB does (the stock control set already names a third, non-system device). | `HITTHESTREET` reaches `Valocity.enter`, the car rests on the city ground under gravity, a frame dump shows the follow camera and the HUD, and the engine SfxTable plays through DirectSound. | The `ground` type and the `GroundRef` traffic natives are the least documented part of the exe. |
 | **M7. Force feedback** (FORK.md step 4) | Rack torque needs M6's tire model and its type-3 device slot. | A constant-force effect updated per physics tick on a wheel, with a clipping meter in the log. | Low; the DirectInput plumbing is small once a type-3 device exists. |
 | **M8. Modern renderer, platform abstraction, Linux** (BACKGROUND.md sections 5-6) | It needs the native contract and present walk complete (M1-M2) so the backend can be swapped behind unchanged natives, and a Linux build needs the whole platform layer. | The same frame dumps from a second backend, and a MinGW or native Linux build passing the 940 key script. | The fixed-function material semantics (envmap flag, 30 `CMaterial_*` classes) must be recovered before a shader backend matches the look. |

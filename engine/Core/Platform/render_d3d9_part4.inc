@@ -1146,6 +1146,27 @@ struct Mode3Caps {
 };
 Mode3Caps g_mode3_caps;
 
+// Fork (diagnostic): the sections of the last frame that the class programs
+// of M5 step 4 drew, or that drew nothing, by group (render_d3d9_ground_
+// debug_dump). `g_mode3_ground` is set while rg_ground draws.
+struct Mode3ClassFrame {
+  uint32_t frame = 0;
+  int32_t sections[2][3] = {};   // [ground, object][MixTA, ColorMixTex, no pass]
+  int32_t triangles[2][3] = {};
+};
+Mode3ClassFrame g_mode3_class;
+bool g_mode3_ground = false;
+
+void mode3_class_note(int kind, const MeshSubmesh& sm) {
+  if (g_mode3_class.frame != g_cam_pass_frame) {
+    g_mode3_class = Mode3ClassFrame{};
+    g_mode3_class.frame = g_cam_pass_frame;
+  }
+  const int g = g_mode3_ground ? 0 : 1;
+  ++g_mode3_class.sections[g][kind];
+  g_mode3_class.triangles[g][kind] += static_cast<int32_t>(sm.indices.size() / 3);
+}
+
 const Mode3Caps& mode3_caps() {
   if (g_mode3_caps.dev == g_dev) return g_mode3_caps;
   g_mode3_caps = Mode3Caps{};
@@ -1194,6 +1215,31 @@ bool shader_is_mix_vca(int32_t shader) {
   return shader >= 2 && shader <= 0x26 && (shader & 3) == 2;
 }
 
+// CMaterial_MixTA: ids 1 and 0x19; CMaterial_ColorMixTex: 3 and 0x1B
+// (FUN_0042bff0, m2 exe_ground 4.4). Only 1 and 3 occur in the maps of M5
+// (X 3.2 census); 0x19 and 0x1B take the same programs [I].
+bool shader_is_mix_ta(int32_t shader) { return shader == 1 || shader == 0x19; }
+bool shader_is_color_mix_tex(int32_t shader) {
+  return shader == 3 || shader == 0x1B;
+}
+
+// The classes whose begin answers no pass in material mode 3 (it answers 1
+// for modes 0 and 1 only): TexSpecular 4 (FUN_004295e0), TexSpecularSpheremap
+// 0xC / 0x14 / 0x24 (FUN_004290a0), ColorSpecularSpheremap 0x33
+// (FUN_004290d0) (q22, q23). Prelit object sections of these classes do not
+// come here (mode3_object_class).
+// Fork (M5 Q8, settled by stock_55): the stock game DRAWS such ground
+// sections: the trade-in's kiosks (map material 8, TexSpecular, 9 kiosks,
+// 2,052 triangles; one beside the stand and one beside the SunStrip of
+// stock_55) show in the stock frame, and s4_r8s1, drawn without them, lost
+// the kiosk beside the stand. How the exe draws them (the group loop
+// FUN_0045f6d0 or the material's mode) was not read; the host draws them
+// on the Tex path as before step 4, and counts them.
+bool shader_mode3_no_pass(int32_t shader) {
+  return shader == 4 || shader == 0xC || shader == 0x14 || shader == 0x24 ||
+         shader == 0x33;
+}
+
 // CMaterial_Tex: id 0 and every id the factory switch FUN_0042bff0 does
 // not know (its default case). The ids it knows: 1 .. 0x27, 0x30 .. 0x35,
 // 0x37 and 0xFFFFFB .. 0xFFFFFF.
@@ -1232,6 +1278,9 @@ void mode3_draw(const MeshSubmesh& sm) {
 // ALPHAREF and ALPHATESTENABLE when material+0xC is not zero).
 void draw_mode3_section(const MeshSubmesh& sm, bool group_alpha_test = false) {
   if (sm.wide.empty() || sm.indices.size() < 3) return;
+  // begin(3) of these classes answers 0 passes, yet the stock game draws
+  // their ground sections (Fork Q8 above): the Tex path below, counted.
+  if (shader_mode3_no_pass(sm.mat_shader)) mode3_class_note(2, sm);
   // FUN_0043f3a0, mode 3: the vertex colours are the material sources.
   // (With lighting off, as in rg_ground, D3D passes both through as they
   // are; D3DTA_SPECULAR below reads the second one.)
@@ -1359,9 +1408,117 @@ void draw_mode3_section(const MeshSubmesh& sm, bool group_alpha_test = false) {
     return;
   }
 
+  if (lightmap && shader_is_mix_ta(sm.mat_shader)) {
+    // CMaterial_MixTA, entries [3] primary 0x6000000 (+0x6C), [4] second
+    // 0x6000001 (+0x90), [0] lightmap; begin(3) FUN_004291b0: one pass
+    // (selector DAT_005da0b0 = 2 in the image, q17). FUN_00435b80, sel 2,
+    // pass 0:
+    //   stage 0 = primary, COLOROP SELECTARG1;
+    //   stage 1 = second, COLOROP BLENDTEXTUREALPHA: second x a + current x
+    //   (1 - a), a = the second texture's alpha;
+    //   stage 2 = lightmap, COLOROP MODULATE;
+    //   TEXTUREFACTOR = byte(colour 0 alpha (+0xC8) x fade) << 24 (above).
+    // The pass after the last: the three entries unbound (FUN_0043d930),
+    // stage 0 MODULATE, stages 1 and 2 DISABLE.
+    // The program sets no TEXCOORDINDEX: stage k reads set k of the class's
+    // stream, set 0 = the primary channel (+0x46), set 1 = the second
+    // channel (+0x48). Fork (M5 Q9): set 2 = the lightmap channel, as in the
+    // MixVCA program (the stream description FUN_0042c560 was not read).
+    // The new dealer floor (`marketbelso` material 0): primary unbound (the
+    // default texture), second `falak27.dds` (DXT1, opaque), so it shows
+    // second x lightmap.
+    mode3_bind_entry(0, sm.texture_key, sm.addr_primary);
+    mode3_bind_entry(1, sm.texture_second, sm.addr_second);
+    mode3_bind_entry(2, sm.texture_lightmap, sm.addr_lightmap);
+    // Stage 2's filters as the frame defaults have them (C3DLow[0xcc..0xce]
+    // = LINEAR); put back after the pass.
+    DWORD saved_filter[3] = {};
+    const D3DSAMPLERSTATETYPE kFilters[3] = {
+        D3DSAMP_MINFILTER, D3DSAMP_MAGFILTER, D3DSAMP_MIPFILTER};
+    for (int i = 0; i < 3; ++i) {
+      g_dev->GetSamplerState(2, kFilters[i], &saved_filter[i]);
+      g_dev->SetSamplerState(2, kFilters[i], D3DTEXF_LINEAR);
+    }
+    g_dev->SetTextureStageState(0, D3DTSS_TEXCOORDINDEX,
+                                mode3_texcoord_index(sm.chan_primary));
+    g_dev->SetTextureStageState(1, D3DTSS_TEXCOORDINDEX,
+                                mode3_texcoord_index(sm.chan_second));
+    g_dev->SetTextureStageState(2, D3DTSS_TEXCOORDINDEX,
+                                mode3_texcoord_index(sm.chan_lightmap));
+    g_dev->SetTextureStageState(0, D3DTSS_COLOROP, D3DTOP_SELECTARG1);
+    g_dev->SetTextureStageState(0, D3DTSS_COLORARG1, D3DTA_TEXTURE);
+    g_dev->SetTextureStageState(1, D3DTSS_COLOROP, D3DTOP_BLENDTEXTUREALPHA);
+    g_dev->SetTextureStageState(1, D3DTSS_COLORARG1, D3DTA_TEXTURE);
+    g_dev->SetTextureStageState(1, D3DTSS_COLORARG2, D3DTA_CURRENT);
+    g_dev->SetTextureStageState(2, D3DTSS_COLOROP, D3DTOP_MODULATE);
+    g_dev->SetTextureStageState(2, D3DTSS_COLORARG1, D3DTA_TEXTURE);
+    g_dev->SetTextureStageState(2, D3DTSS_COLORARG2, D3DTA_CURRENT);
+    // Fork: as on stage 1, the alpha is passed on (the exe leaves stage 2's
+    // alpha op at DISABLE while its colour op runs).
+    g_dev->SetTextureStageState(2, D3DTSS_ALPHAOP, D3DTOP_SELECTARG1);
+    g_dev->SetTextureStageState(2, D3DTSS_ALPHAARG1, D3DTA_CURRENT);
+    mode3_draw(sm);
+    mode3_class_note(0, sm);
+    for (DWORD st = 0; st < 3; ++st) g_dev->SetTexture(st, nullptr);
+    g_dev->SetSamplerState(2, D3DSAMP_ADDRESSU, D3DTADDRESS_WRAP);
+    g_dev->SetSamplerState(2, D3DSAMP_ADDRESSV, D3DTADDRESS_WRAP);
+    for (int i = 0; i < 3; ++i)
+      g_dev->SetSamplerState(2, kFilters[i], saved_filter[i]);
+    g_dev->SetTextureStageState(0, D3DTSS_TEXCOORDINDEX, 0);
+    g_dev->SetTextureStageState(2, D3DTSS_TEXCOORDINDEX, 2);
+    g_dev->SetTextureStageState(0, D3DTSS_COLOROP, D3DTOP_MODULATE);
+    g_dev->SetTextureStageState(0, D3DTSS_COLORARG1, D3DTA_TEXTURE);
+    g_dev->SetTextureStageState(0, D3DTSS_COLORARG2, D3DTA_CURRENT);
+    g_dev->SetTextureStageState(1, D3DTSS_COLOROP, D3DTOP_DISABLE);
+    g_dev->SetTextureStageState(1, D3DTSS_COLORARG2, D3DTA_CURRENT);
+    g_dev->SetTextureStageState(2, D3DTSS_COLOROP, D3DTOP_DISABLE);
+    g_dev->SetTextureStageState(2, D3DTSS_ALPHAOP, D3DTOP_DISABLE);
+    return;
+  }
+
+  if (lightmap && shader_is_color_mix_tex(sm.mat_shader)) {
+    // CMaterial_ColorMixTex, entries [3] the texture (+0x6C), [0] lightmap;
+    // begin(3) FUN_00428f80: one pass (DAT_005da110 = 1 in the image).
+    // FUN_00435650, sel 1, pass 0:
+    //   stage 0 = the texture, COLOROP BLENDTEXTUREALPHA, COLORARG2 =
+    //   D3DTA_SPECULAR: texture x a + specular x (1 - a), the specular being
+    //   the vertex's second colour (the POLY c0 rgb, m2 4.6);
+    //   stage 1 = lightmap, COLOROP MODULATE;
+    //   TEXTUREFACTOR = byte(colour 0 alpha (+0xA4) x fade) << 24 (above).
+    // The pass after the last: both entries unbound, stage 0 MODULATE with
+    // COLORARG2 CURRENT, stage 1 DISABLE. No TEXCOORDINDEX either: set 0 =
+    // the texture's channel, set 1 = the lightmap channel.
+    // Not kept apart (scx_v3_material): the texture is the header's +0x2C
+    // map on its channel. The car lot's signs and lamps (18 materials).
+    mode3_bind_entry(0, sm.texture_key, sm.addr_primary);
+    mode3_bind_entry(1, sm.texture_lightmap, sm.addr_lightmap);
+    g_dev->SetTextureStageState(0, D3DTSS_TEXCOORDINDEX,
+                                mode3_texcoord_index(sm.chan_primary));
+    g_dev->SetTextureStageState(1, D3DTSS_TEXCOORDINDEX,
+                                mode3_texcoord_index(sm.chan_lightmap));
+    g_dev->SetTextureStageState(0, D3DTSS_COLOROP, D3DTOP_BLENDTEXTUREALPHA);
+    g_dev->SetTextureStageState(0, D3DTSS_COLORARG1, D3DTA_TEXTURE);
+    g_dev->SetTextureStageState(0, D3DTSS_COLORARG2, D3DTA_SPECULAR);
+    g_dev->SetTextureStageState(1, D3DTSS_COLOROP, D3DTOP_MODULATE);
+    g_dev->SetTextureStageState(1, D3DTSS_COLORARG1, D3DTA_TEXTURE);
+    g_dev->SetTextureStageState(1, D3DTSS_COLORARG2, D3DTA_CURRENT);
+    mode3_draw(sm);
+    mode3_class_note(1, sm);
+    g_dev->SetTexture(0, nullptr);
+    g_dev->SetTexture(1, nullptr);
+    g_dev->SetTextureStageState(0, D3DTSS_TEXCOORDINDEX, 0);
+    g_dev->SetTextureStageState(0, D3DTSS_COLOROP, D3DTOP_MODULATE);
+    g_dev->SetTextureStageState(0, D3DTSS_COLORARG2, D3DTA_CURRENT);
+    g_dev->SetTextureStageState(1, D3DTSS_COLOROP, D3DTOP_DISABLE);
+    g_dev->SetTextureStageState(1, D3DTSS_COLORARG2, D3DTA_CURRENT);
+    return;
+  }
+
   // CMaterial_Tex (FUN_0042af10; entries [3] primary, [0] lightmap) and,
-  // Fork, every class whose mode 3 setup was not read (MixTA, ColorMixTex,
-  // the specular and sphere-map variants: none in garage1).
+  // Fork, every class whose mode 3 setup was not read (TexSpheremap 8 and
+  // Color 0x30: M5 Q8; the classes without a mode-3 pass, see
+  // shader_mode3_no_pass; MixTA and ColorMixTex without a lightmap; the
+  // bump and other classes: none in the maps of M5).
   // With a lightmap FUN_00436230, variant 1, one pass:
   //   stage 0 = primary, COLOROP SELECTARG1 (the texture alone);
   //   stage 1 = lightmap, COLOROP MODULATE.
@@ -1520,6 +1677,7 @@ static void draw_ground_group(const std::vector<GroundSec>& secs) {
   }
   Mode3Scope scope;
   scope.begin();
+  g_mode3_ground = true;  // the class counters of rg_ground
   const int32_t default_binds_before = g_cam_pass_stats.default_tex_binds;
   const MeshState* world_of = nullptr;
   for (const GroundSec& gs : order) {
@@ -1535,11 +1693,20 @@ static void draw_ground_group(const std::vector<GroundSec>& secs) {
   }
   g_cam_pass_stats.ground_default_tex_binds +=
       g_cam_pass_stats.default_tex_binds - default_binds_before;
+  g_mode3_ground = false;
   scope.end();
 }
 
+// The classes a prelit object section with a lightmap draws in material
+// mode 3 (draw_mode3_section): the Tex family, MixVCA, MixTA, ColorMixTex.
+// Fork (M5 Q8): every other class stays on the host's object path, the
+// classes without a mode-3 pass included: the new dealer's window frames
+// (`marketkulso`, 3 prelit sections of such a class, 1,706 triangles) show
+// in stock_50, so the exe draws them in a group or mode not read here
+// (rg_objectprelit, FUN_00468090, is the candidate).
 static bool mode3_object_class(int32_t shader) {
-  return shader_is_tex(shader) || shader_is_mix_vca(shader);
+  return shader_is_tex(shader) || shader_is_mix_vca(shader) ||
+         shader_is_mix_ta(shader) || shader_is_color_mix_tex(shader);
 }
 
 // PE 940 rg_object_prelit (cam+0x69c): the opaque prelit sections of the
@@ -1639,6 +1806,21 @@ void render_d3d9_ground_debug_dump(FILE* out) {
                  g_cam_pass_stats.ground_default_tex_binds,
                  mode3_caps().multiply_add ? 1 : 0, mode3_caps().lerp ? 1 : 0);
   }
+  // The class programs of M5 step 4 in the last frame (section counts and
+  // triangles, rg_ground and the prelit object groups).
+  const Mode3ClassFrame z{};
+  const Mode3ClassFrame& m =
+      g_mode3_class.frame == g_cam_pass_frame ? g_mode3_class : z;
+  std::fprintf(out,
+               "[render-dbg] mode3 classes (last frame): ground mixta=%d/%d "
+               "colormixtex=%d/%d no_pass=%d/%d; object mixta=%d/%d "
+               "colormixtex=%d/%d no_pass=%d/%d (sections/triangles; "
+               "no_pass: drawn on the Tex path, Fork Q8)\n",
+               m.sections[0][0], m.triangles[0][0], m.sections[0][1],
+               m.triangles[0][1], m.sections[0][2], m.triangles[0][2],
+               m.sections[1][0], m.triangles[1][0], m.sections[1][1],
+               m.triangles[1][1], m.sections[1][2], m.triangles[1][2]);
+  render_d3d9_fog_debug_dump(out);  // fog and the legacy flare sprites
 }
 
 // ---------------------------------------------------------------------------

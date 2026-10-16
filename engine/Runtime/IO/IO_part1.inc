@@ -4,6 +4,10 @@
 
 
 namespace inv {
+
+// The script-boot gate (Runtime/Resources/NativeTypes.cpp).
+bool native_script_boot();
+
 namespace {
 
 std::recursive_mutex g_mu;
@@ -1001,6 +1005,18 @@ int32_t java_io_File_write_2(InvObject* self, InvObject* value) {
   FileRemountPack node;
   node.ordinal = static_cast<int32_t>(st->remount.size() + 1);
   node.pack_key = pack_key;
+  // m5 step 1: the exe writes the path the pack was opened with
+  // (FUN_00517b80(id)+8), game-relative with backslashes: "frontend.rpk",
+  // "cars\racers\Yotta.rpk" (stock bman-1\main). The host opened it as
+  // "./cars/racers/Yotta.rpk" (rpak resolve_path). Script boot only.
+  if (native_script_boot()) {
+    size_t cut = 0;
+    while (pack_path.size() >= cut + 2 && pack_path[cut] == '.' &&
+           (pack_path[cut + 1] == '/' || pack_path[cut + 1] == '\\'))
+      cut += 2;
+    pack_path.erase(0, cut);
+    std::replace(pack_path.begin(), pack_path.end(), '/', '\\');
+  }
   node.path = std::move(pack_path);
   const int32_t wired =
       (node.ordinal << 16) | static_cast<int32_t>(uid & 0xFFFF);

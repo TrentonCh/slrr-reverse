@@ -1385,7 +1385,7 @@ void native_part_debug_dump(FILE* out) {
                  "asleep=%d steer=%.4f bbone=(%.4f, %.4f, %.4f) ypr=(%.5f, "
                  "%.5f, %.5f) getinfo2=(%.4f, %.4f, %.4f) mass own=%.3f "
                  "compound=%.3f slots=%d/%zu parts=%zu maxsteer=%.4f "
-                 "ack=%.4f flags=0x%X detail=%.4f lod=%d/%d\n",
+                 "ack=%.4f flags=0x%X detail=%.4f lod=%d/%d under=0x%08X\n",
                  static_cast<void*>(car->key_),
                  static_cast<unsigned>(part_node_id(car->key_)),
                  static_cast<unsigned>(d.type_id), car_type_alias(d.type_id),
@@ -1394,7 +1394,8 @@ void native_part_debug_dump(FILE* out) {
                  gp.y, gp.z, d.total_mass, car->compound_mass(), used,
                  car->slots_.size(), car->attached_.size(), car->max_steer_,
                  car->ackermann_, static_cast<unsigned>(car->flags_),
-                 car->detail_, car->level_, d.lod_count);
+                 car->detail_, car->level_, d.lod_count,
+                 static_cast<unsigned>(part_node_id(gameref_get_parent(car->key_))));
     for (size_t wi = 0; wi < car->wheels_.size(); ++wi) {
       const CarWheel& w = car->wheels_[wi];
       // centre = the hub body in the world; contact_y = the world height

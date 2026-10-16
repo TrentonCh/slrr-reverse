@@ -15,7 +15,7 @@ Old-build regression (from `E:\NFS.SLRR Edition\NFS.SLRR Edition`):
 `timeout 150 slrr_engine.exe --game --no-wait` must print vehicleTypes=25,
 `hub EXIT ok=1` and exit 5. Delete `tree_rpk_scan_boot` after every run.
 
-## Next steps (ordered, 2026-10-15)
+## Next steps (ordered, 2026-10-16)
 
 Where it stands: the 940 scripts boot to the main menu; NEW CAREER enters
 the garage, which matches the stock frame in 2D and 3D; LOAD CAR gives a
@@ -41,6 +41,14 @@ wheel and a right-button drag. Mouse checks: `run_m4.sh <name> <secs>
 <keys> [VAR=VALUE ...]` and `m4_check.py <scenario> <frame> <log>
 [--base <frame> <log>]` in `../slrr-ghidra/notes/m4/` (scenario table
 SCENARIOS; `batch_fix.sh` / `score_fix.sh` run and score all of them).
+Since 2026-10-16 a new career can buy a car at the new and used dealers
+(or get NOT ENOUGH MONEY), sell its car, trade in, park cars in the car
+lot and fetch them, and the saves the host writes read like stock ones.
+Car checks: `run_m5.sh` and `m5_check.py` in `../slrr-ghidra/notes/m5/`
+(`m5_check.py --list` for the routes, `--cmd <route>` for the command;
+score a route right after its run, because the S section reads the
+test copy's saves). Stock frames of the dealers and the car lot:
+`reference_frames/stock_50..64` (`stock_50s_README.md`).
 
 1. UI pass: done (75569af). What the exe does and what the host got wrong
    is in ENGINE.md section 7 and docs/VM.md session 5. Left over, none
@@ -164,12 +172,32 @@ SCENARIOS; `batch_fix.sh` / `score_fix.sh` run and score all of them).
      `stock_Battery_silver` was a dotted `script <class name>` payload
      (137 such entries), fixed;
      `SplashScreen` is a pre-940 class only the legacy path asks for.
-   - The autosave on NEW CAREER writes a `main` that is not stock
-     compatible (`write(new GameRef(id))` comes out empty). Test runs
-     create `save/career/ted-1` in the install; real profiles are not
-     touched.
-5. Field initialisers for classes without an explicit `<init>` (confirm
-   Class_newInstance behaviour in the exe).
+   - Done (this commit): the autosave writes a stock-compatible `main`
+     (the native row of `File.write(ResourceRef)`, docs/ENGINE.md 4.6).
+   - Careers made in a modded install crash or hang LOAD CAREER on the
+     host (`trent-3`: access violation; `trentv2-2`: `Part.load` reads
+     for minutes): missing packs; not looked into.
+3c. Buying and keeping cars: done for spec steps 0 to 4 (this commit).
+   Spec, maps, step reports and acceptance in `../slrr-ghidra/notes/m5/`.
+   Verified: buying at the used dealer back to the garage (money minus
+   price, the car on the lift), NOT ENOUGH MONEY at the new dealer,
+   parking and fetching in the car lot (the car file has every part),
+   selling, the trade-in stand; the empty car lot matches stock_56
+   within about 1.5 grey levels. Open:
+   - a completed trade-in was not shown: no run drew a profitable deal
+     and the fixture careers with money come from a modded install;
+   - the trade-in hall is grey where stock_55 is blue-grey (sections
+     without a lightmap, M2 Q13); a thin dark-blue sliver at the bottom
+     left of the car lot; the top bar's horsepower is the old stand-in
+     ("29HP" for an Einvagen 110 GT; `calcDyno` not ported);
+   - the dealer's check button shows a still interior view in the stock
+     game (stock_64), not a test drive; not tried on the host;
+   - spec steps 5 to 7: car info and club info, the catalog, the paint
+     booth with car side files;
+   - copied light payloads are never freed.
+5. Field initialisers: done (this commit). The exe runs them at
+   allocation for every class from `java.lang.Object` down
+   (FUN_0054cab0); the host now does the same on the script boot.
 6. Retire the C++ Soft boot shims; then physics / FFB behind the native
    contract (FORK.md).
 7. Source compiler. Done so far: the reference compiler `tools/slrrc`
@@ -280,6 +308,7 @@ comes after the menu is up.
 | Car in the garage, second half: lit material classes with environment map and specular, paint, shadows | 430ab5e | painted car with reflections and a shadow; the lift matches stock in metals and shadow marks |
 | Class cache: classes missing in the install are read from `SLRR_CLASS_CACHE` | d3872e1 | a stock-written career with a source-only rim and tyre loads into the garage |
 | Mouse on the script boot: `cursor` and `player` types, ray pick and the eighteen cursor events, camera control, test rig; legacy pack scan 40 % faster | (this commit) | hover, press and click in menu, dialogs and garage; camera orbit and zoom within 2 % of the model; old-build regression 109 s -> 67 s |
+| Buying and keeping cars: by-name calls and native rows as the exe, field initialisers at allocation, `object` type, per-map fog, dealer ground programs | (this commit) | dealers open, buy / sell / trade-in, car lot park and fetch, stock-compatible saves |
 
 ## In progress
 
@@ -359,10 +388,10 @@ comes after the menu is up.
 
 ## Known problems / gotchas
 
-- The legacy hub smoke of the old-build regression sends a real
-  `keybd_event(VK_RETURN)` (`game_boot_part1.inc`, legacy path). A
-  regression run started while someone types sends ENTER to their front
-  window. Run it only when the machine is idle until this is gated.
+- The legacy smoke tests (`game_boot_part1.inc`, `main_part1.inc`)
+  press real keys with `keybd_event`; since the cars commit they do so
+  only while the host window is in front, so a regression run no longer
+  types into the user's window.
 - Mouse runs are wall-clock timed: a mouse entry that falls into a
   loading pass (the car creation after the welcome dialog, the second
   ENTER of the GARAGE key script) runs late; the scenario rows place

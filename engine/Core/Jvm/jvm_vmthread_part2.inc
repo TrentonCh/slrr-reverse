@@ -245,6 +245,18 @@ bool vmthread_op1007_literal(VmThread* thr, const JvmClass* cls, int32_t tag,
       if (!j->find_class(fqn.c_str())) j->load_class(fqn.c_str());
     }
     InvObject* obj = tree_host_new(fqn.c_str());
+    // PE 940 0x5638D0 / 0x5640FE: the allocation is FUN_00549ee0 = new
+    // Instance + Instance::initialize (FUN_0054cab0, THRD-INSTVAR-INI): the
+    // instance field initialisers of the whole chain, java.lang.Object
+    // first, FILD order, run here, before the constructor's arguments and
+    // its separate op 0x21 call, and whether or not an <init> below Object
+    // resolves (java.util.MessagePort and java.game.VehicleDescriptor have
+    // none). Script boot only; the mark makes the <init> paths (VM1 frame
+    // switch, Jvm::invoke) skip the object. The legacy path is unchanged.
+    if (j && obj && native_script_boot()) {
+      tree_host_mark_inited(obj);
+      jvm_apply_field_inits_chain(j, fqn.c_str(), obj);
+    }
     vmthread_value_stack_push(thr, JvmValue::make_obj(obj));
     return true;
   }
@@ -1773,6 +1785,87 @@ size_t vmthread_frame_depth(const VmThread* thr) {
   return thr->frame_list->frames.size();
 }
 
+// Fork diagnostic (m5 step 2 item 5, Q5; SLRR_PE_NOINIT_REPORT=1, inert
+// without): the live script objects whose instance field initialisers did
+// not run at their allocation (PE: every allocation runs them, through
+// Instance::initialize FUN_0054cab0, 30 call sites), by class, printed at
+// the end of the script-boot loop. `late` = run at an <init> by the older
+// paths (VM1 frame switch, Jvm::invoke); `refused` = an initialiser tree the
+// stream did not run (jvm_apply_field_inits_chain has no tree_eval fallback).
+static bool jvm_noinit_report_on() {
+  static const bool on = [] {
+    const char* v = std::getenv("SLRR_PE_NOINIT_REPORT");
+    return v && v[0] == '1';
+  }();
+  return on;
+}
+static std::unordered_map<InvObject*, bool> g_noinit_late;
+static std::map<std::string, uint32_t> g_noinit_refused;
+
+static void jvm_noinit_note_refused(const std::string& cls, const std::string& field) {
+  if (jvm_noinit_report_on()) ++g_noinit_refused[cls + "." + field];
+}
+
+void jvm_noinit_note_late(InvObject* obj) {
+  if (obj && jvm_noinit_report_on()) g_noinit_late[obj] = true;
+}
+
+void jvm_noinit_report() {
+  Jvm* j = jvm_active();
+  if (!j || !jvm_noinit_report_on()) return;
+  struct Row {
+    size_t alloc = 0, late = 0, never = 0;
+    std::string inits;
+  };
+  std::map<std::string, Row> rows;
+  std::unordered_map<std::string, std::string> chain_inits;  // "" = none
+  std::map<std::string, size_t> unloaded;  // classes the Jvm never loaded
+  size_t n_obj = 0;
+  for (const auto& kv : g_tree_host_class) {
+    const std::string& cn = kv.second;
+    if (cn.empty() || cn[0] == '[' || cn == "java.util.Vector") continue;
+    auto it = chain_inits.find(cn);
+    if (it == chain_inits.end()) {
+      std::string d;
+      const JvmClass* c = j->find_class(cn.c_str());
+      if (!c) ++unloaded[cn];
+      for (int guard = 0; c && guard < 64; ++guard) {
+        std::string f;
+        for (const JvmFieldInit& fi : c->field_inits)
+          if (fi.tree_index >= 0) f += (f.empty() ? "" : ",") + fi.name;
+        if (!f.empty()) d += (d.empty() ? "" : "; ") + c->name + "{" + f + "}";
+        if (c->super_name.empty()) break;
+        c = j->find_class(c->super_name.c_str());
+      }
+      it = chain_inits.emplace(cn, d).first;
+    } else if (!j->find_class(cn.c_str())) {
+      ++unloaded[cn];
+    }
+    if (it->second.empty()) continue;
+    Row& r = rows[cn];
+    r.inits = it->second;
+    ++n_obj;
+    if (tree_host_inited(kv.first)) ++r.alloc;
+    else if (g_noinit_late.count(kv.first)) ++r.late;
+    else ++r.never;
+  }
+  size_t n_never = 0, n_late = 0;
+  for (const auto& kv : rows) {
+    n_never += kv.second.never;
+    n_late += kv.second.late;
+  }
+  std::printf("[noinit] report: %zu live objects of %zu classes with instance initialisers;"
+              " at allocation %zu, late %zu, never %zu\n",
+              n_obj, rows.size(), n_obj - n_never - n_late, n_late, n_never);
+  for (const auto& kv : rows)
+    std::printf("[noinit] %s alloc=%zu late=%zu never=%zu inits: %.160s\n", kv.first.c_str(),
+                kv.second.alloc, kv.second.late, kv.second.never, kv.second.inits.c_str());
+  for (const auto& kv : g_noinit_refused)
+    std::printf("[noinit] refused by the stream: %s x%u\n", kv.first.c_str(), kv.second);
+  for (const auto& kv : unloaded)
+    std::printf("[noinit] class not loaded: %s objects=%zu\n", kv.first.c_str(), kv.second);
+}
+
 // Fork: PE JVM_newObject — run the instance field initializer trees of the
 // class chain, root first, on the stream (see Jvm::invoke apply_field_inits).
 void jvm_apply_field_inits_chain(Jvm* j, const char* class_fqn, InvObject* self) {
@@ -1794,7 +1887,10 @@ void jvm_apply_field_inits_chain(Jvm* j, const char* class_fqn, InvObject* self)
       fim.signature = "()Ljava.lang.Object;";
       fim.tree_index = fi.tree_index;
       JvmValue fv{};
-      if (!vmthread_try_stream_eval(&c, &fim, self, {}, &fv)) continue;
+      if (!vmthread_try_stream_eval(&c, &fim, self, {}, &fv)) {
+        jvm_noinit_note_refused(c.name, fi.name);  // Fork diagnostic (above)
+        continue;
+      }
       if (fv.tag == JvmTag::Obj) tree_field_set_obj(self, fi.name.c_str(), fv.v.o);
       else if (fv.tag == JvmTag::Int) tree_field_set_int(self, fi.name.c_str(), fv.v.i);
       else if (fv.tag == JvmTag::Float) tree_field_set_float(self, fi.name.c_str(), fv.v.f);
@@ -1871,6 +1967,29 @@ int vmthread_run(VmThread* thr, float budget_ms) {
     m = cls ? j->find_method(*cls, thr->pending.method.c_str(),
                              thr->pending.signature.c_str())
             : nullptr;
+    // PE Thread.start -> Object_callMethod(target, thread, "run") ->
+    // Thread_callMethod: the lookup scans the target's class chain
+    // (FUN_005494c0 / FUN_0054a150) and the frame goes on THIS thread. The
+    // leaf-only lookup sent an inherited run() (GameType.run of an async
+    // state: CarLot) to the soft invoke below, whose ephemeral thread parked
+    // apart from the Thread object, so Thread.stop stopped nothing. Script
+    // boot only.
+    if (cls && !m && native_script_boot()) {
+      const JvmClass* c = cls;
+      for (int guard = 0; c && !m && guard < 64; ++guard) {
+        if (c->super_name.empty()) break;
+        if (!j->find_class(c->super_name.c_str())) j->load_class(c->super_name.c_str());
+        c = j->find_class(c->super_name.c_str());
+        if (!c) break;
+        for (const JvmMethod& mm : c->methods) {
+          if (mm.name == thr->pending.method && mm.signature == thr->pending.signature) {
+            m = &mm;
+            break;
+          }
+        }
+      }
+      if (m) cls = c;
+    }
   }
   if (cls) {
     if (m) {

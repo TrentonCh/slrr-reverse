@@ -31,6 +31,10 @@
 
 namespace inv {
 
+// Fork (m5 step 2): PE Instance::initialize at THRD-CREATE
+// (Core/Jvm/jvm_vmthread_part2.inc).
+void jvm_apply_field_inits_chain(Jvm* j, const char* class_fqn, InvObject* self);
+
 InvObject* gameref_live_phys_key(InvObject* self) {
   if (!self) return nullptr;
   if (InvObject* chassis = tree_field_get_obj(self, "chassis")) {
@@ -454,6 +458,15 @@ InvObject* java_util_resource_GameRef_create(InvObject* self, InvObject* parent,
     }
     if (Jvm* j = jvm_active()) {
       if (!j->find_class(fqn.c_str())) j->load_class(fqn.c_str());
+      // PE 940 FUN_00523c80 THRD-CREATE: the script instance is allocated by
+      // FUN_00549ee0, whose Instance::initialize (FUN_0054cab0) runs the
+      // chain's instance field initialisers before <init> (VehicleType:
+      // vtdarr, prevalence, preferredColorIndexes, which the stand-in above
+      // also sets). Script boot only; Jvm::invoke skips the marked object.
+      if (script_boot_create) {
+        tree_host_mark_inited(inst);
+        jvm_apply_field_inits_chain(j, fqn.c_str(), inst);
+      }
       j->invoke(fqn.c_str(), "<init>", "(I)V",
                 {JvmValue::make_obj(inst), JvmValue::make_int(type_id)}, false);
     }
@@ -515,6 +528,16 @@ InvObject* java_util_resource_GameRef_create(InvObject* self, InvObject* parent,
     native_object_create(gtype, self, inst, parent,
                          params ? string_cstr(params) : "");
   if (script_cls) {
+    // PE 940 FUN_00523c80 THRD-CREATE: the script instance is allocated by
+    // FUN_00549ee0 after the native game object (+0x4C, above), and its
+    // Instance::initialize (FUN_0054cab0) runs the instance field
+    // initialisers of the chain there, before <init> and apart from it.
+    // Fork: the host object exists since the bind above, and its id is set;
+    // the exe sets the instance's id field after the initialisers
+    // (FUN_004ed320). Script boot only (script_cls is); Jvm::invoke skips
+    // the marked object.
+    tree_host_mark_inited(inst);
+    jvm_apply_field_inits_chain(jvm_for_create, fqn.c_str(), inst);
     // PE THRD-CREATE: <init>(I) with the instance rid when declared, else
     // the no-arg constructor. The rid is the id of the new node (940
     // FUN_00523c80: `*(arg + 8) = local_14`, the value FUN_00518a40
@@ -528,6 +551,40 @@ InvObject* java_util_resource_GameRef_create(InvObject* self, InvObject* parent,
       jvm_for_create->invoke(fqn.c_str(), "<init>", "()V", {JvmValue::make_obj(inst)}, false);
   }
   finish_create(inst);
+  // PE 940 FUN_004da620 (the native) returns *(payload + 0x50), the script
+  // instance THRD-CREATE made, and 0 when the node got none: a type id 0
+  // (an unset stock-part entry), a type without a script class, a type the
+  // packs do not have ("create: Wrong GameType!"). The scripts test it
+  // (`if (part)`, Part.addPart). Script boot only; the handle the script
+  // called create on stays bound to the node either way. The host's C++
+  // callers on the script boot either ignore the result or test it.
+  if (script_boot_create && !script_cls) {
+    // Fork diagnostic (SLRR_PE_CREATE_LOG=1, inert without): one line per
+    // type id that returns null.
+    static const bool log_null = [] {
+      const char* e = std::getenv("SLRR_PE_CREATE_LOG");
+      return e && e[0] == '1';
+    }();
+    if (log_null) {
+      static std::mutex seen_mu;
+      static std::vector<int32_t> seen;
+      bool first = false;
+      {
+        std::lock_guard<std::mutex> lock(seen_mu);
+        if (std::find(seen.begin(), seen.end(), type_id) == seen.end()) {
+          seen.push_back(type_id);
+          first = true;
+        }
+      }
+      if (first)
+        std::fprintf(stderr,
+                     "[native-type] GameRef.create type=0x%08X '%s' alias '%s': no script instance, "
+                     "returns null (FUN_004da620)\n",
+                     static_cast<unsigned>(type_id), ent ? ent->name.c_str() : "",
+                     alias_cstr ? alias_cstr : "");
+    }
+    return nullptr;
+  }
   return inst;
 }
 
@@ -1183,11 +1240,27 @@ void java_util_resource_GameRef_setState(InvObject* self, InvObject* p, InvObjec
   // then restore linvel on GameRefState and live phys. Angular →
   // physics_set_ang_vel on phys key (Java GameRef has getVel only).
   if (!self) return;
-  java_util_resource_GameRef_setMatrix(self, p, o);
   float lx = 0.f, ly = 0.f, lz = 0.f;
   if (l) vec3_get(l, &lx, &ly, &lz);
   float ax = 0.f, ay = 0.f, az = 0.f;
   if (a) vec3_get(a, &ax, &ay, &az);
+  // PE 940 0x4DBF20: null arguments read zeros, and the twelve floats go to
+  // the type's vt+0x1C as one "ffffffffffff" event. On the script boot a
+  // native object takes them (the car: its setMatrix placement, M3; the
+  // object type: the pose of its body and both velocities); everything else
+  // goes through GameRef.setMatrix as before. The velocity bookkeeping below
+  // is the host's, as before.
+  bool taken = false;
+  if (native_script_boot()) {
+    float np[3] = {0.f, 0.f, 0.f};
+    float no[3] = {0.f, 0.f, 0.f};
+    if (p) vec3_get(p, &np[0], &np[1], &np[2]);
+    if (o) ypr_get(o, &no[0], &no[1], &no[2]);
+    const float nl[3] = {lx, ly, lz};
+    const float na[3] = {ax, ay, az};
+    taken = native_set_state(self, np, no, nl, na);
+  }
+  if (!taken) java_util_resource_GameRef_setMatrix(self, p, o);
   {
     std::lock_guard<std::mutex> lock(g_gr_mu);
     auto& r = ref(self);

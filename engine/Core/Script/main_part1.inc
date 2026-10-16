@@ -5,6 +5,28 @@
 
 namespace {
 
+#ifdef _WIN32
+// Fork: the legacy smoke tests press a REAL key. keybd_event goes to the
+// foreground window of the desktop, not to this process, so with the host
+// window in the background (SLRR_WINDOW_NOACTIVATE=1, or the user working in
+// another window) the key landed in the user's editor or chat. The host reads
+// no key while its window is not in front (the foreground gate of
+// input_win32.cpp), so such a press never reached the test either. Send it
+// only while the host window is in front; send the key-up only after a
+// key-down that was sent, so no key is left held down.
+bool g_smoke_key_down = false;
+void smoke_key(BYTE vk, bool up) {
+  if (!up) {
+    g_smoke_key_down =
+        GetForegroundWindow() == static_cast<HWND>(inv::render_d3d9_hwnd());
+    if (g_smoke_key_down) keybd_event(vk, 0, 0, 0);
+  } else if (g_smoke_key_down) {
+    keybd_event(vk, 0, KEYEVENTF_KEYUP, 0);
+    g_smoke_key_down = false;
+  }
+}
+#endif
+
 const char* class_index_path() {
   // Prefer beside the executable (POST_BUILD copy), then source-tree relative.
   static const char* candidates[] = {
@@ -252,7 +274,7 @@ int main(int argc, char** argv) {
     java_io_Input_mapAxis(ctrl_map, kAxisSelect, /*device*/ 0, kDikReturn, 0.f,
                           1.f, 0.f, 1.f);
 #ifdef _WIN32
-    keybd_event(VK_RETURN, 0, 0, 0);
+    smoke_key(VK_RETURN, false);
 #endif
     input_live_poll();
     const float select_phys = java_io_Input_getAxis(0, kDikReturn);
@@ -260,7 +282,7 @@ int main(int argc, char** argv) {
         java_io_Controller_user_GetAxisVal(ctrl_map, kAxisSelect);
     const int32_t live_key = java_io_Input_lastKey() & 0xFF;
 #ifdef _WIN32
-    keybd_event(VK_RETURN, 0, KEYEVENTF_KEYUP, 0);
+    smoke_key(VK_RETURN, true);
 #endif
     input_live_poll();
     java_io_Controller_user_Reset(ctrl_map);
@@ -845,12 +867,12 @@ int main(int argc, char** argv) {
     java_io_Input_mapAxis(drv, kAxisThrottle, 0, kDikUp, 0.f, 1.f, 0.f, 1.f);
     input_live_enable(true);
 #ifdef _WIN32
-    keybd_event(VK_UP, 0, 0, 0);
+    smoke_key(VK_UP, false);
 #endif
     input_live_poll();
     for (int i = 0; i < 20; ++i) physics_drive(car, drv, 0.05f);
 #ifdef _WIN32
-    keybd_event(VK_UP, 0, KEYEVENTF_KEYUP, 0);
+    smoke_key(VK_UP, true);
 #endif
     input_live_poll();
     input_live_enable(false);

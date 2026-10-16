@@ -46,5 +46,9 @@ void tree_vector_resize(InvObject* vec, int32_t n);
 // Opaque instance tagged with class FQN (field bag).
 InvObject* tree_host_new(const char* class_fqn);
 const char* tree_host_class(InvObject* obj);
+// Fork (m5 step 2): PE Instance::initialize ran at the allocation (script
+// boot); the <init> paths skip a marked object.
+void tree_host_mark_inited(InvObject* obj);
+bool tree_host_inited(InvObject* obj);
 
 }  // namespace inv

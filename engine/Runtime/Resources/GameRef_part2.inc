@@ -1123,6 +1123,9 @@ void game_logic_set_racesetup(InvObject* rs) {
   g_racesetup = rs;
 }
 
+// m5 step 2 item 5 (Core/Jvm/jvm_vmthread_part2.inc).
+void jvm_apply_field_inits_chain(Jvm* j, const char* class_fqn, InvObject* self);
+
 InvObject* frontend_loading_screen() {
   InvObject* ls = nullptr;
   bool need_start = false;
@@ -1138,6 +1141,16 @@ InvObject* frontend_loading_screen() {
       need_start = true;
     }
     ls = g_loading_screen;
+  }
+  // PE: every allocation runs Instance::initialize (FUN_0054cab0); the exe
+  // makes this object in script, the host stand-in here. Script boot only,
+  // outside g_gr_mu: Thread.extended, LoadingScreen.termSig = new Object()
+  // (which replaces the one set above).
+  if (need_start && native_script_boot()) {
+    if (Jvm* j = jvm_active()) {
+      tree_host_mark_inited(ls);
+      jvm_apply_field_inits_chain(j, "java.render.LoadingScreen", ls);
+    }
   }
   // Stock LoadingScreen() { start(); }. Defer OS thread — concurrent
   // frontend_loading_screen_run + SplashScreen.enter TREE raced to stack overflow.

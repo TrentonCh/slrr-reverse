@@ -1504,6 +1504,9 @@ std::shared_ptr<NativeObject> part_create(const NativeCreate& c) {
 namespace {
 
 std::unordered_map<int32_t, std::unique_ptr<RenderLightDesc>> g_light_types;
+// The light type copies ResourceRef.duplicate made: copy id -> the pack
+// record at the start of the chain (a copy of a copy names the record).
+std::unordered_map<int32_t, int32_t> g_light_copies;
 
 // PE 940 FUN_005219c0: the payload is text, one keyword per line
 // (`_stricmp`). The colour lines carry alpha first: "%s %f %f %f %f" into
@@ -1608,15 +1611,24 @@ const RenderLightDesc* light_type_payload(int32_t id) {
   return light_type_mutable(id);
 }
 
-// PE 940 FUN_004ebef0: each colour byte x 1 / 256 (DAT_005a6930).
-// Fork: the exe writes the payload of the handle's own node, and a light
-// type made with ResourceRef.duplicate has a node of its own; the host's
-// duplicate shares the record id (Resources_part2.inc), so the copies of
-// one record share these values.
+// PE 940 FUN_004ebef0: each colour byte x 1 / 256 (DAT_005a6930), into the
+// payload of the handle's own node: a light type made with
+// ResourceRef.duplicate is a node of its own (light_type_duplicate), so the
+// record it was copied from keeps its values.
 bool light_type_set_colours(int32_t id, int32_t diffuse, int32_t ambient,
                             int32_t specular) {
   RenderLightDesc* d = light_type_mutable(id);
   if (!d) return false;
+  if (native_type_log()) {
+    const int32_t record = light_type_source(id);
+    std::fprintf(stderr,
+                 "[native-type] light type 0x%08X%s setLight diffuse "
+                 "0x%06X ambient 0x%06X specular 0x%06X\n",
+                 static_cast<unsigned>(id), record ? " (copy)" : "",
+                 static_cast<unsigned>(diffuse & 0xffffff),
+                 static_cast<unsigned>(ambient & 0xffffff),
+                 static_cast<unsigned>(specular & 0xffffff));
+  }
   constexpr float k = 0.00390625f;
   auto put = [](float* rgb, int32_t packed, float scale) {
     rgb[0] = static_cast<float>((packed >> 16) & 0xff) * scale;
@@ -1628,6 +1640,125 @@ bool light_type_set_colours(int32_t id, int32_t diffuse, int32_t ambient,
   put(d->specular, specular, k);
   render_d3d9_scene_light_update_type(id, d);
   return true;
+}
+
+// PE 940 ResourceRef.duplicate 0x4E32E0 -> FUN_004e9470: a light type
+// (typeof 13) is copied by FUN_0051ee30 into a NEW node and the handle is
+// bound to it (X 3.4, q18 / q19). Host: the copy is a payload of its own
+// under the new runtime id; RenderRef.setLight / setFlare on it leave the
+// record alone, and the lights made from it (`new RenderRef(map, suntype,
+// "sunny")`, Scene.java:309) read the copy.
+bool light_type_duplicate(int32_t src_id, int32_t copy_id) {
+  if (!src_id || !copy_id || src_id == copy_id) return false;
+  RenderLightDesc* src = light_type_mutable(src_id);
+  if (!src) return false;
+  int32_t record = src_id;
+  {
+    std::lock_guard<std::mutex> lock(g_nt_mu);
+    auto c = g_light_copies.find(src_id);
+    if (c != g_light_copies.end()) record = c->second;
+    g_light_types[copy_id] = std::make_unique<RenderLightDesc>(*src);
+    g_light_copies[copy_id] = record;
+  }
+  if (native_type_log()) {
+    const RpakEntry* e = rpak_find_entry(record);
+    std::fprintf(stderr,
+                 "[native-type] duplicate light type 0x%08X '%s' -> copy "
+                 "0x%08X (record 0x%08X): diffuse (%g, %g, %g) ambient (%g, "
+                 "%g, %g) specular (%g, %g, %g)\n",
+                 static_cast<unsigned>(src_id), e ? e->name.c_str() : "",
+                 static_cast<unsigned>(copy_id), static_cast<unsigned>(record),
+                 src->diffuse[0], src->diffuse[1], src->diffuse[2],
+                 src->ambient[0], src->ambient[1], src->ambient[2],
+                 src->specular[0], src->specular[1], src->specular[2]);
+  }
+  return true;
+}
+
+int32_t light_type_source(int32_t id) {
+  if (!id) return 0;
+  std::lock_guard<std::mutex> lock(g_nt_mu);
+  auto it = g_light_copies.find(id);
+  return it == g_light_copies.end() ? 0 : it->second;
+}
+
+// PE 940 RenderRef.setFlare 0x4E2950 -> FUN_004ebe00 on the light type's
+// payload: +0xD4 = glow min size, +0xD8 = glow max size, +0xE0 = colour,
+// +0x100 = flare count, +0xE4 = ray count (asm 0x4e2989..0x4e29dc), and the
+// texture handle relinked into the payload. The cLights re-read their
+// type's payload every frame (FUN_004592d0).
+// Fork (Q10): stored only; nothing draws a lens flare from it yet.
+bool light_type_set_flare(int32_t id, int32_t texture_id, int32_t colour,
+                          float min_size, float max_size, int32_t flare_count,
+                          int32_t ray_count) {
+  RenderLightDesc* d = light_type_mutable(id);
+  if (!d) return false;
+  d->flare_set = true;
+  d->flare_texture = texture_id;
+  d->flare_colour = static_cast<uint32_t>(colour);
+  d->flare_min = min_size;
+  d->flare_max = max_size;
+  d->flare_count = flare_count;
+  d->flare_rays = ray_count;
+  render_d3d9_scene_light_update_type(id, d);
+  if (native_type_log())
+    std::fprintf(stderr,
+                 "[native-type] light type 0x%08X%s setFlare texture 0x%08X "
+                 "colour 0x%08X glow %g .. %g flares %d rays %d (stored, not "
+                 "drawn)\n",
+                 static_cast<unsigned>(id),
+                 light_type_source(id) ? " (copy)" : "",
+                 static_cast<unsigned>(texture_id),
+                 static_cast<unsigned>(colour), min_size, max_size,
+                 flare_count, ray_count);
+  return true;
+}
+
+// Fork (diagnostic): the payloads as they stand, records first.
+void native_light_type_debug_dump(FILE* out) {
+  if (!out || !native_script_boot()) return;
+  struct Row {
+    int32_t id;
+    int32_t record;
+    RenderLightDesc d;
+  };
+  std::vector<Row> rows;
+  {
+    std::lock_guard<std::mutex> lock(g_nt_mu);
+    for (const auto& kv : g_light_types) {
+      if (!kv.second) continue;
+      auto c = g_light_copies.find(kv.first);
+      rows.push_back({kv.first, c == g_light_copies.end() ? 0 : c->second,
+                      *kv.second});
+    }
+  }
+  std::sort(rows.begin(), rows.end(), [](const Row& a, const Row& b) {
+    const bool ac = a.record != 0, bc = b.record != 0;
+    if (ac != bc) return !ac;
+    return static_cast<uint32_t>(a.id) < static_cast<uint32_t>(b.id);
+  });
+  for (const Row& r : rows) {
+    const RpakEntry* e = rpak_find_entry(r.record ? r.record : r.id);
+    char from[48] = "";
+    if (r.record)
+      std::snprintf(from, sizeof from, " copy of 0x%08X",
+                    static_cast<unsigned>(r.record));
+    std::fprintf(out,
+                 "[render-dbg] light type 0x%08X '%s'%s: type %d diffuse "
+                 "(%g, %g, %g) ambient (%g, %g, %g) specular (%g, %g, %g) "
+                 "flare %s",
+                 static_cast<unsigned>(r.id), e ? e->name.c_str() : "", from,
+                 r.d.type, r.d.diffuse[0], r.d.diffuse[1], r.d.diffuse[2],
+                 r.d.ambient[0], r.d.ambient[1], r.d.ambient[2],
+                 r.d.specular[0], r.d.specular[1], r.d.specular[2],
+                 r.d.flare_set ? "set" : "none");
+    if (r.d.flare_set)
+      std::fprintf(out, " (texture 0x%08X colour 0x%08X %g .. %g, %d, %d)",
+                   static_cast<unsigned>(r.d.flare_texture),
+                   static_cast<unsigned>(r.d.flare_colour), r.d.flare_min,
+                   r.d.flare_max, r.d.flare_count, r.d.flare_rays);
+    std::fprintf(out, "\n");
+  }
 }
 
 // native_part_debug_dump, the `[render-dbg]` lines of the parts and cars,

@@ -142,6 +142,25 @@ void render_d3d9_camera_set_planes(void* key, float dmin, float dmax);
 // PE 940 params+0xC, the aspect override: 0 = the viewport's pixel width /
 // height of the frame (FUN_00461dd0).
 void render_d3d9_camera_set_aspect(void* key, float aspect);
+// PE 940 camera params+0x24 / +0x1C / +0x20 / +0x28: the fog the camera's
+// `render` command copied from the block of its world-tree root
+// (FUN_0048bce0, asm 0x48be7f..0x48bebb): on, near and far as the block
+// holds them (the exe's units, metres x 10) and the colour. Each frame the
+// camera pass hands {on, near x k, far x k, colour} to D3D linear fog with
+// k = cot(aov / 2) ^ 0.25 (FUN_00461dd0, FUN_00427260). Build 940 boot only;
+// nothing for an unknown key.
+void render_d3d9_camera_set_fog(void* key, bool on, float near_x10,
+                                float far_x10, uint32_t colour);
+// The camera's fog as stored and the k of its current angle of view; false
+// for an unknown key.
+bool render_d3d9_camera_get_fog(void* key, bool* on, float* near_x10,
+                                float* far_x10, uint32_t* colour, float* k);
+// The world-tree root of a camera whose node hangs under `start`
+// (FUN_004ea900; the root the camera pass walks from).
+void* render_d3d9_camera_root(void* start);
+// Fork (diagnostic): one `[render-dbg] fog` line: what the camera passes of
+// the last frame did with fog, and the legacy flare sprites.
+void render_d3d9_fog_debug_dump(FILE* out);
 // PE 940 FUN_00420900 + FUN_00420080 -> FUN_00464f60: the camera goes on
 // the viewport's camera list with this priority (ascending priority, the
 // newest first among equals). Fork: one viewport per camera; the exe keeps
@@ -214,6 +233,20 @@ struct RenderLightDesc {
   // payload+0x84 bit 0: set by the constructor and by `lit_dynamic 0`,
   // cleared by `lit_dynamic <non-zero>`.
   bool is_static = true;
+  // payload+0xD4..+0x100 as RenderRef.setFlare writes them (940
+  // FUN_004ebe00, asm 0x4e2989..0x4e29dc): +0xD4 glow min size, +0xD8 glow
+  // max size, +0xE0 glow colour, +0x100 flare count, +0xE4 ray count, and
+  // the glow texture relinked into the payload. The names are those of the
+  // lf_* words of the payload parser FUN_005219c0 [I].
+  // Fork (M5 Q10): stored, not drawn; how the exe draws a lens flare from
+  // them was not read.
+  bool flare_set = false;
+  int32_t flare_texture = 0;  // resource id of the glow texture
+  uint32_t flare_colour = 0;
+  float flare_min = 0.f;
+  float flare_max = 0.f;
+  int32_t flare_count = 0;
+  int32_t flare_rays = 0;
 };
 // PE 940 FUN_00462b40 -> FUN_00462970: a render instance whose resource is
 // a light type becomes a cLight on the list of the camera whose walk met

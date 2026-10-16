@@ -90,6 +90,11 @@ int vmthread_exec_stream(VmThread* thr, const JvmClass* cls,
 size_t vmthread_frame_depth(const VmThread* thr);  // Fork
 // Fork: PE JVM_newObject — instance field initializer trees, root class first.
 void jvm_apply_field_inits_chain(Jvm* j, const char* class_fqn, InvObject* self);
+// Fork diagnostic (m5 step 2, SLRR_PE_NOINIT_REPORT=1; inert without): an
+// object whose initialisers an <init> path ran instead of its allocation,
+// and the loop end's report by class (alloc / late / never).
+void jvm_noinit_note_late(InvObject* obj);
+void jvm_noinit_report();
 // PE CallFrame seed @ 0x420211 — used by VMThread_run and Jvm::invoke.
 VmCallFrame* vmthread_build_tree_frame(VmThread* thr, const JvmClass* cls,
                                        const JvmMethod* m, InvObject* self,

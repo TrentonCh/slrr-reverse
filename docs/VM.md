@@ -604,3 +604,33 @@ garage, and a lost click when press and release fall in one loop pass are
 fixed. Separately, the old-build regression spent 100 of its 109 s in a
 pack scan that searched the pack table again for every entry; one lookup
 per pack makes it 67 s with identical output.
+
+### 2026-10-15 to 2026-10-16 (session 8): buying and keeping cars
+
+A new career starts with money and no car, and the host could not give
+it one: the dealer icons did nothing and the car lot ignored every key.
+Mapped first (notes in `../slrr-ghidra/notes/m5/`), with stock captures
+of every dealer screen, the dialogs and the car lot made by the user.
+Nothing in the game logic was missing; three VM rules were:
+
+- A call by bare name types its operands by their runtime class. The
+  host typed arrays as a bare `[`, split the descriptor wrongly and
+  scored with the operand and parameter roles swapped, so
+  `new CarMarket(used, vds)` never found its constructor.
+- The exe matches each native row by its own descriptor. The host's rows
+  erased object parameters, `File.write(String)` answered for
+  `File.write(ResourceRef)`, and every saved resource id was an empty
+  string: host-written careers did not load back.
+- Field initialisers run when an object is allocated, before any
+  constructor. The host ran them only after a constructor, so a
+  `MessagePort` (no constructor of its own) kept a null queue and the
+  car lot dropped every command.
+
+With those fixed the dealer scenes needed only what the garage and the
+car had built, plus the `native object` type (the trade-in's turning
+stand), fog stored per map, and two ground programs. The empty car lot
+matches the stock frame within about 1.5 grey levels. Two more host
+defects came out: `GameRef.create` returned a stand-in where the exe
+returns null (a dealer car with an unset stock part logged six errors),
+and the legacy smoke tests pressed real keys into whatever window was in
+front; they now press them only while the host window is.

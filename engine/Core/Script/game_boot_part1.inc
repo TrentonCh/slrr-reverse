@@ -1,4 +1,5 @@
 #include "tree_interp_internal.hpp"
+#include "Resources_internal.hpp"  // m5 rig: g_res / g_mu (the car's node id)
 #include <chrono>
 #include <cstdlib>
 // Fragment 1/2 of game_boot.cpp — included, not compiled on its own.
@@ -8,6 +9,28 @@
 
 namespace inv {
 namespace {
+
+#ifdef _WIN32
+// Fork: the legacy smoke tests press a REAL key. keybd_event goes to the
+// foreground window of the desktop, not to this process, so with the host
+// window in the background (SLRR_WINDOW_NOACTIVATE=1, or the user working in
+// another window) the key landed in the user's editor or chat. The host reads
+// no key while its window is not in front (the foreground gate of
+// input_win32.cpp), so such a press never reached the test either. Send it
+// only while the host window is in front; send the key-up only after a
+// key-down that was sent, so no key is left held down.
+bool g_smoke_key_down = false;
+void smoke_key(BYTE vk, bool up) {
+  if (!up) {
+    g_smoke_key_down =
+        GetForegroundWindow() == static_cast<HWND>(inv::render_d3d9_hwnd());
+    if (g_smoke_key_down) keybd_event(vk, 0, 0, 0);
+  } else if (g_smoke_key_down) {
+    keybd_event(vk, 0, KEYEVENTF_KEYUP, 0);
+    g_smoke_key_down = false;
+  }
+}
+#endif
 
 // Soft PE ResHandle (16B on stock): +8 remapped key, +0xC owner.
 // Host callers (GameRef_core) use a 16B scratch with int32 key @ +8 —
@@ -191,6 +214,207 @@ bool game_boot_warmup(Jvm& jvm, const char* game_root) {
   }
   frontend_init();
   return true;
+}
+
+// Fork (m5 test rig; the exe has nothing of this, and nothing below runs
+// without its variables). The time of an entry of SLRR_PE_BOOT_KEYS,
+// SLRR_PE_BOOT_MOUSE or SLRR_PE_BOOT_END: `t` = seconds after loop start
+// (as before), `@<State>[#n][+secs]` = secs after the n-th return of the
+// state's `enter` (the `[career] entered <State>` line; <State> = the simple
+// class name of GameLogic.actualState, n from 1), or a bare `+secs` after an
+// anchored entry = the anchor of the entry before it, secs after it. An
+// anchored entry has no time until its anchor is reached. Returns the
+// character after the time, or nullptr when there is none to read.
+struct BootAnchor {
+  std::string state;  // empty: an absolute time
+  int32_t n = 1;
+  double secs = 0.0;
+};
+
+bool boot_name_char(char c) {
+  return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+         (c >= '0' && c <= '9') || c == '_' || c == '$';
+}
+
+const char* boot_entry_time(const char* p, const BootAnchor* prev,
+                            BootAnchor* a, double* t) {
+  *a = BootAnchor{};
+  *t = 0.0;
+  char* e = nullptr;
+  if (*p == '@') {
+    const char* q = p + 1;
+    while (boot_name_char(*q)) ++q;
+    if (q == p + 1) return nullptr;
+    a->state.assign(p + 1, q);
+    if (*q == '#') {
+      const long n = std::strtol(q + 1, &e, 10);
+      if (e == q + 1 || n < 1) return nullptr;
+      a->n = static_cast<int32_t>(n);
+      q = e;
+    }
+    if (*q == '+' || *q == '-') {
+      a->secs = std::strtod(q, &e);
+      if (e == q) return nullptr;
+      q = e;
+    }
+    return q;
+  }
+  if (*p == '+' && prev && !prev->state.empty()) {
+    a->secs = std::strtod(p, &e);
+    if (e == p) return nullptr;
+    a->state = prev->state;
+    a->n = prev->n;
+    return e;
+  }
+  *t = std::strtod(p, &e);
+  return e == p ? nullptr : e;
+}
+
+std::string boot_anchor_text(const BootAnchor& a) {
+  char b[192];
+  std::snprintf(b, sizeof b, "@%s#%d%+.2f", a.state.c_str(), a.n, a.secs);
+  return b;
+}
+
+// Fork (m5 test rig): the `[career]` lines (SLRR_PE_CAREER_LOG=1) and the
+// anchors of the entry times. Field reads only: the GameLogic statics as
+// they stand (no class initializer run), instance fields by name (no slot
+// made), the car's node id from its resource record; no VM call.
+struct RigAnchor {
+  std::string what;  // "key#3", "mouse#4", "end"
+  BootAnchor a;
+  bool due = false;
+  double t = 0.0;
+};
+
+struct CareerRig {
+  bool log = false;    // SLRR_PE_CAREER_LOG=1
+  bool watch = false;  // log, or an `@` in one of the three scripts
+  InvObject* state = nullptr;
+  std::string lot;  // the last `lot` text printed
+  std::unordered_map<std::string, std::vector<double>> entered;
+  std::vector<std::string> returns;
+  std::vector<RigAnchor> anchors;
+};
+
+const JvmValue* rig_static(const char* name) {
+  const auto bit = g_tree_statics.find("java.game.GameLogic");
+  if (bit == g_tree_statics.end()) return nullptr;
+  const auto it = bit->second.by_name.find(name);
+  if (it == bit->second.by_name.end()) return nullptr;
+  return &bit->second.slots[it->second];
+}
+
+InvObject* rig_obj(const JvmValue* v) {
+  return (v && v->tag == JvmTag::Obj) ? v->v.o : nullptr;
+}
+
+const char* rig_simple(const char* fqn) {
+  if (!fqn || !fqn[0]) return "null";
+  const char* d = std::strrchr(fqn, '.');
+  return d ? d + 1 : fqn;
+}
+
+std::string rig_int_text(const JvmValue* v) {
+  if (v && v->tag == JvmTag::Int) return std::to_string(v->v.i);
+  if (v && v->tag == JvmTag::Float) return std::to_string(static_cast<int64_t>(v->v.f));
+  return "?";
+}
+
+}  // namespace
+
+// m5 rig: jvm_vmthread_part1.inc.
+void vmthread_set_enter_watch(bool on);
+std::size_t vmthread_take_enter_returns(std::vector<std::string>* out);
+void vmthread_set_enter_call_hook(void (*cb)(const char* cls, const char* method));
+JvmValue vm_array_elem_get(InvObject* arr, int32_t idx);
+// m5 step 2 diagnostic (jvm_vmthread_part2.inc; SLRR_PE_NOINIT_REPORT=1).
+void jvm_noinit_report();
+
+namespace {
+
+// <slots>/<curcar> of player.carlot (the slots whose carSlots flag is set,
+// `-` for none), or `null`.
+std::string rig_lot_text() {
+  InvObject* pl = rig_obj(rig_static("player"));
+  InvObject* lot = pl ? rig_obj(tree_field_slot(pl, "carlot", false)) : nullptr;
+  if (!lot) return "null";
+  std::string s;
+  InvObject* slots = rig_obj(tree_field_slot(lot, "carSlots", false));
+  const int32_t n = slots ? tree_vector_size(slots) : 0;
+  bool any = false;
+  for (int32_t i = 0; i < n; ++i) {
+    const JvmValue v = vm_array_elem_get(slots, i);
+    if ((v.tag == JvmTag::Int && v.v.i != 0) || (v.tag == JvmTag::Obj && v.v.o)) {
+      if (any) s += ',';
+      s += std::to_string(i);
+      any = true;
+    }
+  }
+  if (!any) s += slots ? "-" : "null";
+  return s + "/" + rig_int_text(tree_field_slot(lot, "curcar", false));
+}
+
+// The `[career] state` line at the call of the state's own `enter` (the
+// VM's callback, vmthread_set_enter_call_hook): the start of the scene
+// build, which a dealer click's VM pump runs to its userWait before the
+// loop end could poll it. The loop's poll stays for an inherited `enter`.
+CareerRig* g_rig_cb = nullptr;
+std::chrono::steady_clock::time_point g_rig_cb_t0;
+std::string rig_fields();
+
+void rig_enter_call(const char* cls, const char* method) {
+  if (!g_rig_cb) return;
+  if (std::strcmp(method, "autoSaveQuiet") == 0) {
+    const double el = std::chrono::duration<double>(std::chrono::steady_clock::now() - g_rig_cb_t0).count();
+    std::printf("[career] t=%.2f autosave %s\n", el, rig_fields().c_str());
+    return;
+  }
+  InvObject* so = rig_obj(rig_static("actualState"));
+  if (!so || so == g_rig_cb->state) return;
+  g_rig_cb->state = so;
+  const double el = std::chrono::duration<double>(std::chrono::steady_clock::now() - g_rig_cb_t0).count();
+  std::printf("[career] t=%.2f state %s %s\n", el, rig_simple(cls), rig_fields().c_str());
+}
+
+// money=, car=<chassis class>/0x<node id>, lot=<slots>/<curcar>,
+// time=<h:mm>, day=, mode= (Racer.money and .car, Player.carlot, CarLot
+// .carSlots and .curcar, GameLogic.time, .day, .gameMode).
+std::string rig_fields() {
+  std::string s;
+  char b[256];
+  InvObject* pl = rig_obj(rig_static("player"));
+  s += "money=";
+  s += pl ? rig_int_text(tree_field_slot(pl, "money", false)) : "null";
+  InvObject* car = pl ? rig_obj(tree_field_slot(pl, "car", false)) : nullptr;
+  if (car) {
+    InvObject* ch = rig_obj(tree_field_slot(car, "chassis", false));
+    const char* cc = ch ? tree_host_class(ch) : nullptr;
+    int32_t id = 0;
+    {
+      std::lock_guard<std::mutex> lock(g_mu);
+      const auto it = g_res.find(car);
+      if (it != g_res.end()) id = it->second.id;
+    }
+    std::snprintf(b, sizeof b, " car=%s/0x%08X", cc && cc[0] ? cc : "null",
+                  static_cast<uint32_t>(id));
+    s += b;
+  } else {
+    s += " car=null";
+  }
+  s += " lot=" + rig_lot_text();
+  const JvmValue* tv = rig_static("time");
+  if (tv && (tv->tag == JvmTag::Float || tv->tag == JvmTag::Int)) {
+    const int64_t ts = static_cast<int64_t>(tv->tag == JvmTag::Float ? tv->v.f : tv->v.i);
+    std::snprintf(b, sizeof b, " time=%d:%02d", static_cast<int>(ts / 3600),
+                  static_cast<int>(ts / 60 % 60));
+    s += b;
+  } else {
+    s += " time=?";
+  }
+  s += " day=" + rig_int_text(rig_static("day"));
+  s += " mode=" + rig_int_text(rig_static("gameMode"));
+  return s;
 }
 
 }  // namespace
@@ -878,11 +1102,48 @@ int game_interactive_run(Jvm& jvm, const char* game_root,
       }
     }
     game_boot_shadow_options(game_root);
+    // Fork (m5 test rig): the `[career]` log and the anchors (see CareerRig).
+    CareerRig rig;
+    {
+      const char* cl = std::getenv("SLRR_PE_CAREER_LOG");
+      rig.log = cl && cl[0] == '1';
+      bool at = false;
+      for (const char* v : {"SLRR_PE_BOOT_KEYS", "SLRR_PE_BOOT_MOUSE", "SLRR_PE_BOOT_END"}) {
+        const char* s = std::getenv(v);
+        if (s && std::strchr(s, '@')) at = true;
+      }
+      rig.watch = rig.log || at;
+      if (rig.watch) vmthread_set_enter_watch(true);
+    }
+    // Fork (m5 test rig): SLRR_PE_BOOT_END=<time> (an entry time, usually
+    // `@<State>[#n]+secs`) ends the loop then; SLRR_PE_BOOT_SECONDS stays
+    // the hard limit.
+    int32_t end_anchor = -1;
+    bool end_set = false;
+    double end_t = 0.0;
+    if (const char* be = std::getenv("SLRR_PE_BOOT_END"); be && be[0]) {
+      BootAnchor a;
+      const char* q = boot_entry_time(be, nullptr, &a, &end_t);
+      if (!q || *q) {
+        std::printf("[pe-boot] end not read: '%s': SLRR_PE_BOOT_SECONDS ends the loop\n", be);
+      } else {
+        end_set = true;
+        if (!a.state.empty()) {
+          end_anchor = static_cast<int32_t>(rig.anchors.size());
+          rig.anchors.push_back({"end", a, false, 0.0});
+        }
+      }
+    }
     if (!jvm.find_class("java.game.Init")) jvm.load_class("java.game.Init");
     InvObject* init_obj = tree_host_new("java.game.Init");
     jvm.invoke("java.game.Init", "<init>", "(I)V",
                {JvmValue::make_obj(init_obj), JvmValue::make_int(0)}, false);
     const auto boot_t0 = std::chrono::steady_clock::now();
+    if (rig.log) {  // Fork (m5 test rig): rig_enter_call
+      g_rig_cb = &rig;
+      g_rig_cb_t0 = boot_t0;
+      vmthread_set_enter_call_hook(&rig_enter_call);
+    }
     auto report = [&](const char* when, int32_t nframes) {
       const double el_ms = std::chrono::duration<double, std::milli>(
                                std::chrono::steady_clock::now() - boot_t0).count();
@@ -1018,28 +1279,77 @@ int game_interactive_run(Jvm& jvm, const char* game_root,
       pe_t_render += std::chrono::duration<double, std::milli>(t_b - t_a).count();
       pe_t_vm += std::chrono::duration<double, std::milli>(t_c - t_b).count();
       ++pe_frames;
+      // Fork (m5 test rig): the state as the loop end reads it, the returns
+      // of its `enter` the VM noted, the anchors they reach.
+      if (rig.watch) {
+        const double el_r = std::chrono::duration<double>(std::chrono::steady_clock::now() - boot_t0).count();
+        InvObject* so = rig_obj(rig_static("actualState"));
+        if (so != rig.state) {
+          rig.state = so;
+          if (rig.log)
+            std::printf("[career] t=%.2f state %s %s\n", el_r,
+                        rig_simple(so ? tree_host_class(so) : nullptr), rig_fields().c_str());
+        }
+        if (rig.log) {
+          std::string lot = rig_lot_text();
+          if (lot != rig.lot) {
+            std::printf("[career] t=%.2f lot %s\n", el_r, lot.c_str());
+            rig.lot.swap(lot);
+          }
+        }
+        rig.returns.clear();
+        if (vmthread_take_enter_returns(&rig.returns) > 0) {
+          for (const std::string& cn : rig.returns) {
+            const char* sn = rig_simple(cn.c_str());
+            std::vector<double>& v = rig.entered[sn];
+            v.push_back(el_r);
+            if (rig.log)
+              std::printf("[career] t=%.2f entered %s #%zu %s\n", el_r, sn, v.size(),
+                          rig_fields().c_str());
+          }
+        }
+        for (RigAnchor& r : rig.anchors) {
+          if (r.due) continue;
+          const auto it = rig.entered.find(r.a.state);
+          if (it == rig.entered.end() || static_cast<int32_t>(it->second.size()) < r.a.n) continue;
+          r.due = true;
+          r.t = it->second[static_cast<size_t>(r.a.n - 1)] + r.a.secs;
+          std::printf("[pe-boot] anchor %s %s -> t=%.2f\n", r.what.c_str(),
+                      boot_anchor_text(r.a).c_str(), r.t);
+        }
+      }
       // Fork: SLRR_PE_BOOT_KEYS="t:dik[:secs][,t:dik[:secs]...]" presses
       // DirectInput key `dik` at `t` seconds after loop start and holds it
       // for `secs` (150 ms without the third field) (unattended runs).
       {
-        struct KeyAt { double t; int32_t dik; double hold; int state; double down_at; };  // state 0 pending, 1 down, 2 done
-        static std::vector<KeyAt> keys = [] {
+        // Fork (m5 test rig): an entry time may be anchored
+        // (boot_entry_time); an entry never fires before the one before
+        // it (a script of absolute times in time order: as before).
+        struct KeyAt { double t; int32_t dik; double hold; int state; double down_at; BootAnchor a; int32_t anchor; };  // state 0 pending, 1 down, 2 done
+        static std::vector<KeyAt> keys = [&] {
           std::vector<KeyAt> v;
           const char* e = std::getenv("SLRR_PE_BOOT_KEYS");
           while (e && *e) {
             char* end = nullptr;
-            const double t = std::strtod(e, &end);
-            if (end == e || *end != ':') break;
-            const long dik = std::strtol(end + 1, &end, 0);
+            BootAnchor a;
+            double t = 0.0;
+            const char* te = boot_entry_time(e, v.empty() ? nullptr : &v.back().a, &a, &t);
+            if (!te || *te != ':') break;
+            const long dik = std::strtol(te + 1, &end, 0);
             double hold = 0.15;
             if (*end == ':') {
               const char* h0 = end + 1;
               const double secs = std::strtod(h0, &end);
               if (end != h0 && secs > 0.0) hold = secs;
             }
-            v.push_back({t, static_cast<int32_t>(dik), hold, 0, 0.0});
+            v.push_back({t, static_cast<int32_t>(dik), hold, 0, 0.0, a, -1});
             if (*end != ',') break;
             e = end + 1;
+          }
+          for (std::size_t i = 0; i < v.size(); ++i) {
+            if (v[i].a.state.empty()) continue;
+            v[i].anchor = static_cast<int32_t>(rig.anchors.size());
+            rig.anchors.push_back({"key#" + std::to_string(i + 1), v[i].a, false, 0.0});
           }
           return v;
         }();
@@ -1055,11 +1365,17 @@ int game_interactive_run(Jvm& jvm, const char* game_root,
             for (double& m : sec_ms) m = 0.0;
           }
         }
+        bool key_before = true;  // the entry before this one has fired
         for (KeyAt& k : keys) {
           // Press when the clock crosses t; release on the first frame at least
           // the hold time (150 ms by default) later (a slow frame must not
           // skip the press).
-          if (k.state == 0 && el >= k.t) {
+          const bool due = k.anchor < 0 || rig.anchors[static_cast<size_t>(k.anchor)].due;
+          const double kt = k.anchor < 0 ? k.t : rig.anchors[static_cast<size_t>(k.anchor)].t;
+          const bool before = key_before;
+          key_before = k.state != 0;
+          if (k.state == 0 && before && due && el >= kt) {
+            key_before = true;
             k.state = 1; k.down_at = el;
             input_inject_key(k.dik, true);
             std::printf("[pe-boot] key 0x%02x down at %.2f s\n", k.dik, el);
@@ -1090,15 +1406,18 @@ int game_interactive_run(Jvm& jvm, const char* game_root,
             int state = 0;  // 0 pending, 1 gliding, 2 done
             double t0 = 0.0;
             int32_t x0 = 0, y0 = 0, sum_dx = 0, sum_dy = 0;
+            BootAnchor a;       // Fork (m5 rig): an anchored entry time
+            int32_t anchor = -1;
           };
-          static std::vector<MouseAt> mouse = [] {
+          static std::vector<MouseAt> mouse = [&] {
             std::vector<MouseAt> v;
             const char* e = std::getenv("SLRR_PE_BOOT_MOUSE");
             while (e && *e) {
               MouseAt m;
               char* end = nullptr;
-              m.t = std::strtod(e, &end);
-              bool ok = end != e && *end == ':';
+              const char* te = boot_entry_time(e, v.empty() ? nullptr : &v.back().a, &m.a, &m.t);
+              end = const_cast<char*>(te ? te : e);
+              bool ok = te != nullptr && *end == ':';
               if (ok) {
                 const char* p = end + 1;
                 const double fx = std::strtod(p, &end);
@@ -1140,6 +1459,11 @@ int game_interactive_run(Jvm& jvm, const char* game_root,
               if (*end != ';') break;
               e = end + 1;
             }
+            for (std::size_t i = 0; i < v.size(); ++i) {
+              if (v[i].a.state.empty()) continue;
+              v[i].anchor = static_cast<int32_t>(rig.anchors.size());
+              rig.anchors.push_back({"mouse#" + std::to_string(i + 1), v[i].a, false, 0.0});
+            }
             return v;
           }();
           auto mouse_line = [&](const InputInjectMouseState& s, int32_t dx, int32_t dy, int32_t wheel) {
@@ -1163,7 +1487,12 @@ int game_interactive_run(Jvm& jvm, const char* game_root,
               wait_poll = false;
             }
             if (m.state == 0) {
-              if (el < m.t) break;
+              if (m.anchor >= 0) {
+                const RigAnchor& r = rig.anchors[static_cast<size_t>(m.anchor)];
+                if (!r.due || el < r.t) break;
+              } else if (el < m.t) {
+                break;
+              }
               InputInjectMouseState s;
               input_inject_mouse_peek(&s);
               if (m.glide > 0.0 && s.placed) {
@@ -1212,6 +1541,15 @@ int game_interactive_run(Jvm& jvm, const char* game_root,
       if (boot_secs > 0.0 &&
           std::chrono::duration<double>(std::chrono::steady_clock::now() - boot_t0).count() >= boot_secs)
         break;
+      if (end_set) {
+        const bool due = end_anchor < 0 || rig.anchors[static_cast<size_t>(end_anchor)].due;
+        const double et = end_anchor < 0 ? end_t : rig.anchors[static_cast<size_t>(end_anchor)].t;
+        const double el_e = std::chrono::duration<double>(std::chrono::steady_clock::now() - boot_t0).count();
+        if (due && el_e >= et) {
+          std::printf("[pe-boot] end at %.2f s (SLRR_PE_BOOT_END)\n", el_e);
+          break;
+        }
+      }
     }
     // Fork: SLRR_PE_BOOT_SHOT=<file.bmp> dumps the last presented frame.
     if (const char* shot = std::getenv("SLRR_PE_BOOT_SHOT"); shot && shot[0]) {
@@ -1220,6 +1558,24 @@ int game_interactive_run(Jvm& jvm, const char* game_root,
                   render_d3d9_print_screen(shot) ? 1 : 0);
     }
     report("loop end", pe_frames);
+    // Fork (m5 test rig).
+    if (rig.watch) {
+      for (const RigAnchor& r : rig.anchors)
+        if (!r.due)
+          std::printf("[pe-boot] anchor %s %s never reached\n", r.what.c_str(),
+                      boot_anchor_text(r.a).c_str());
+      vmthread_set_enter_watch(false);
+      vmthread_set_enter_call_hook(nullptr);
+      g_rig_cb = nullptr;
+    }
+    if (rig.log) {
+      InvObject* so = rig_obj(rig_static("actualState"));
+      const char* sc = so ? tree_host_class(so) : nullptr;
+      std::printf("[career] end t=%.2f state=%s %s\n",
+                  std::chrono::duration<double>(std::chrono::steady_clock::now() - boot_t0).count(),
+                  sc && sc[0] ? sc : "null", rig_fields().c_str());
+    }
+    jvm_noinit_report();  // Fork diagnostic: SLRR_PE_NOINIT_REPORT=1 (m5 step 2, Q5)
     std::printf("[pe-boot] loop time: render+pumps %.0f ms, vm %.0f ms, vm steps %llu\n",
                 pe_t_render, pe_t_vm, static_cast<unsigned long long>(vmthread_step_count()));
     input_debug_dump(stdout);  // Fork: `[input] mouse axes` (SLRR_PE_NATIVE_PROF)
@@ -1770,13 +2126,13 @@ int game_interactive_run(Jvm& jvm, const char* game_root,
     } else if (!garage_phase) {
       if (auto_new && !fired_new && frames == 8) {
 #ifdef _WIN32
-        keybd_event(VK_RETURN, 0, 0, 0);
+        smoke_key(VK_RETURN, false);
 #endif
         input_live_poll();
       }
       if (auto_new && !fired_new && frames == 9) {
 #ifdef _WIN32
-        keybd_event(VK_RETURN, 0, KEYEVENTF_KEYUP, 0);
+        smoke_key(VK_RETURN, true);
 #endif
         input_live_poll();
         if (ctrl) select = java_io_Controller_user_GetAxisVal(ctrl, kAxisSelect);

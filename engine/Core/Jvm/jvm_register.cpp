@@ -13,6 +13,7 @@
 
 #include <algorithm>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <fstream>
 #include <memory>
@@ -234,6 +235,122 @@ void soft_unbox_bind_registered_sig(CallFrame* frame, const NativeEntry* ne) {
   }
 }
 
+// The script-boot gate (Runtime/Resources/NativeTypes.cpp).
+bool native_script_boot();
+
+namespace {
+
+// Fork (m5 step 1 item 6): the exe matches the interned descriptor it
+// registered with each row (RegisterNative 0x55C690). The host rows are
+// Java-form text whose object types java_type_to_jni_token erases to
+// java.lang.Object, so `write(ResourceRef)` and `write(String)` read alike
+// and a descriptor naming either matched neither row (the first row of the
+// hash chain answered). On the script boot the row whose parameters NAME
+// the descriptor's types is taken before that fallback: int-like / float-
+// like against I / F, an object type's simple name against the last
+// component of the descriptor's class, each `[]` against a `[`.
+struct NamedParam {
+  int dims = 0;
+  std::string base;  // "I", "F" or a simple class name
+};
+
+std::string trim_ws(const std::string& s) {
+  size_t a = 0;
+  size_t b = s.size();
+  while (a < b && (s[a] == ' ' || s[a] == '\t')) ++a;
+  while (b > a && (s[b - 1] == ' ' || s[b - 1] == '\t')) --b;
+  return s.substr(a, b - a);
+}
+
+bool row_named_params(const char* java_sig, std::vector<NamedParam>* out) {
+  const char* open = java_sig ? std::strchr(java_sig, '(') : nullptr;
+  const char* close = open ? std::strchr(open, ')') : nullptr;
+  if (!open || !close) return false;
+  const std::string body = trim_ws(std::string(open + 1, close));
+  if (body.empty()) return true;
+  for (size_t i = 0;;) {
+    const size_t comma = body.find(',', i);
+    const std::string decl = trim_ws(body.substr(
+        i, comma == std::string::npos ? std::string::npos : comma - i));
+    if (decl.empty()) return false;
+    NamedParam p;
+    for (size_t k = decl.find("[]"); k != std::string::npos; k = decl.find("[]", k + 2))
+      ++p.dims;
+    std::string ty = decl.substr(0, decl.find_first_of(" \t["));
+    if (ty == "int" || ty == "boolean" || ty == "bool" || ty == "byte" ||
+        ty == "char" || ty == "short" || ty == "long")
+      p.base = "I";
+    else if (ty == "float" || ty == "double")
+      p.base = "F";
+    else
+      p.base = ty.substr(ty.rfind('.') == std::string::npos ? 0 : ty.rfind('.') + 1);
+    out->push_back(std::move(p));
+    if (comma == std::string::npos) break;
+    i = comma + 1;
+  }
+  return true;
+}
+
+bool desc_named_params(const char* desc, std::vector<NamedParam>* out) {
+  if (!desc || desc[0] != '(') return false;
+  const char* p = desc + 1;
+  while (*p && *p != ')') {
+    NamedParam np;
+    while (*p == '[') {
+      ++np.dims;
+      ++p;
+    }
+    if (*p == 'L') {
+      const char* e = std::strchr(p, ';');
+      if (!e) return false;
+      const std::string cls(p + 1, e);
+      const size_t dot = cls.rfind('.');
+      np.base = (dot == std::string::npos) ? cls : cls.substr(dot + 1);
+      p = e + 1;
+    } else if (*p == 'I' || *p == 'F') {
+      np.base.assign(1, *p);
+      ++p;
+    } else {
+      return false;
+    }
+    out->push_back(std::move(np));
+  }
+  return *p == ')';
+}
+
+bool row_names_desc(const char* java_sig, const char* desc) {
+  // Only a resolved descriptor in the exe's form names classes; the host's
+  // "(Ljava/lang/Object;)V" placeholder does not.
+  if (!java_sig || java_sig[0] == '(' || std::strchr(desc, '/')) return false;
+  std::vector<NamedParam> r;
+  std::vector<NamedParam> d;
+  if (!row_named_params(java_sig, &r) || !desc_named_params(desc, &d)) return false;
+  if (r.size() != d.size()) return false;
+  for (size_t i = 0; i < r.size(); ++i)
+    if (r[i].dims != d[i].dims || r[i].base != d[i].base) return false;
+  return true;
+}
+
+// Fork diagnostic (SLRR_PE_RESOLVE_DIFF=1): a row chosen by name that the
+// first-row fallback would not have chosen, each distinct line once.
+void native_named_diff(const char* fqn, const char* name, const char* desc,
+                       const NativeEntry* old_row, const NativeEntry* new_row) {
+  static const bool on = [] {
+    const char* e = std::getenv("SLRR_PE_RESOLVE_DIFF");
+    return e && e[0] == '1';
+  }();
+  if (!on) return;
+  static std::vector<std::string> seen;
+  std::string line = std::string("[resolve-diff] native ") + fqn + "." + name +
+                     desc + ": old " + old_row->java_signature + " new " +
+                     new_row->java_signature;
+  if (std::find(seen.begin(), seen.end(), line) != seen.end()) return;
+  std::fprintf(stderr, "%s\n", line.c_str());
+  seen.push_back(std::move(line));
+}
+
+}  // namespace
+
 const NativeEntry* resolve_native(const char* fqn, const char* name,
                                   const char* jni_sig) {
   if (!fqn || !name) return nullptr;
@@ -242,11 +359,14 @@ const NativeEntry* resolve_native(const char* fqn, const char* name,
   SoftNativeHashNode* node = soft_native_hash_find(h);
   const NativeEntry* first = nullptr;
   const NativeEntry* sig_hit = nullptr;
+  const NativeEntry* rows[8] = {};  // the class's rows of this name (Fork above)
+  size_t nrows = 0;
   while (node) {
     const NativeEntry& e = kNativeTable[node->table_index];
     if (std::strcmp(e.class_fqn, fqn) == 0 &&
         std::strcmp(e.method_name, name) == 0) {
       if (!first) first = &e;
+      if (nrows < 8) rows[nrows++] = &e;
       if (pe_jni_sig_equal(e.java_signature, jni_sig)) {
         sig_hit = &e;
         break;
@@ -254,7 +374,15 @@ const NativeEntry* resolve_native(const char* fqn, const char* name,
     }
     node = soft_native_hash_next();
   }
-  return sig_hit ? sig_hit : first;
+  if (sig_hit) return sig_hit;
+  if (nrows > 1 && jni_sig && jni_sig[0] == '(' && native_script_boot()) {
+    for (size_t i = 0; i < nrows; ++i) {
+      if (!row_names_desc(rows[i]->java_signature, jni_sig)) continue;
+      if (rows[i] != first) native_named_diff(fqn, name, jni_sig, first, rows[i]);
+      return rows[i];
+    }
+  }
+  return first;
 }
 
 }  // namespace inv

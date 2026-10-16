@@ -13,6 +13,7 @@
 #include <optional>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 namespace inv {
@@ -20,6 +21,12 @@ namespace inv {
 std::unordered_map<InvObject*, TreeFieldMap> g_tree_fields;
 std::unordered_map<InvObject*, std::vector<InvObject*>> g_tree_vectors;
 std::unordered_map<InvObject*, std::string> g_tree_host_class;
+// Fork (m5 step 2): the objects whose instance field initialisers ran at
+// their allocation (PE Instance::initialize FUN_0054cab0, called by the
+// allocation FUN_00549ee0 / FUN_00549e50: once per object, before and apart
+// from any <init>). Marked on the script boot only; the <init> paths skip a
+// marked object. Host objects are never freed, so an address never returns.
+std::unordered_set<InvObject*> g_tree_inits_done;
 std::unordered_map<std::string, TreeStaticBag> g_tree_statics;
 
 JvmValue* tree_field_slot(InvObject* obj, const std::string& name, bool create) {
@@ -436,6 +443,14 @@ const char* tree_host_class(InvObject* obj) {
   auto it = g_tree_host_class.find(obj);
   if (it == g_tree_host_class.end()) return "";
   return it->second.c_str();
+}
+
+void tree_host_mark_inited(InvObject* obj) {
+  if (obj) g_tree_inits_done.insert(obj);
+}
+
+bool tree_host_inited(InvObject* obj) {
+  return obj && g_tree_inits_done.find(obj) != g_tree_inits_done.end();
 }
 
 // GameRef.queueEvent(ResourceRef,I,String)V @ 0x0047DA30

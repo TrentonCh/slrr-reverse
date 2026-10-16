@@ -10,6 +10,10 @@ namespace inv {
 JvmValue vm_array_elem_get(InvObject* arr, int32_t idx);
 bool vm_array_elem_set(InvObject* arr, int32_t idx, const JvmValue& v);
 
+// The script-boot gate (NativeTypes.cpp): the exe's call resolution
+// (pe_*_exe below) is the rule there; the legacy harness keeps 30c578e's.
+bool native_script_boot();
+
 // Fork diagnostic switch (SLRR_PE_STREAM_TRACE=1).
 static bool vm_trace_on() {
   static const bool on = [] {
@@ -342,6 +346,29 @@ int vmthread_push_call_frame(VmThread* thr) {
   return count;
 }
 
+// Fork (m5 test rig, SLRR_PE_CAREER_LOG=1; see vmthread_note_return): the
+// boot loop's callback for the CALL of the current state's own `enter`
+// (GameLogic.changeActiveSection assigns actualState, then calls enter):
+// the start of the scene build; and for the call of
+// GameLogic.autoSaveQuiet (the career's autosave). Read-only; off unless
+// the loop sets it.
+static void (*g_vm_enter_call_cb)(const char* cls, const char* method) = nullptr;
+
+void vmthread_set_enter_call_hook(void (*cb)(const char* cls, const char* method)) {
+  g_vm_enter_call_cb = cb;
+}
+
+static void vmthread_note_enter_call(const char* cls) {
+  const auto bit = g_tree_statics.find("java.game.GameLogic");
+  if (!cls || bit == g_tree_statics.end()) return;
+  const auto it = bit->second.by_name.find("actualState");
+  if (it == bit->second.by_name.end()) return;
+  const JvmValue& st = bit->second.slots[it->second];
+  if (st.tag != JvmTag::Obj || !st.v.o) return;
+  const char* cn = tree_host_class(st.v.o);
+  if (cn && std::strcmp(cn, cls) == 0) g_vm_enter_call_cb(cn, "enter");
+}
+
 // PE VMThread_invokeMethod @ 0x41FBC0 — host slice (no bytecode interp).
 // ACC_NATIVE (method flags & 0x40) @ 0x41FC2D:
 //   pe_native_hash(class,method) → soft NativeHash_find/next (128×0xC);
@@ -463,6 +490,13 @@ int vmthread_invoke_method(VmThread* thr, InvObject* self, const char* class_fqn
   }
 
   // PE bytecode queue returns 0; CallNamedMethod_va @ 0x42570F → VMThread_run.
+  if (g_vm_enter_call_cb) {  // Fork: m5 rig (above)
+    if (std::strcmp(method, "enter") == 0)
+      vmthread_note_enter_call((owner_fqn && owner_fqn[0]) ? owner_fqn : class_fqn);
+    else if (std::strcmp(method, "autoSaveQuiet") == 0 &&
+             std::strcmp(class_fqn, "java.game.GameLogic") == 0)
+      g_vm_enter_call_cb(class_fqn, method);
+  }
   thr->pending.live = true;
   thr->pending.class_fqn = class_fqn;
   thr->pending.method = method;
@@ -506,6 +540,9 @@ std::string soft_jni_from_pack_vec(const std::vector<JvmValue>& pack) {
 // NativeSigDesc_compatScore @ 0x5607D0, type score @ 0x55BD80).
 // ---------------------------------------------------------------------------
 // NativeSigDesc_ctorFromOperands @ 0x560930: one type string per operand.
+// This, pe_split_args, pe_class_distance and pe_type_score are the 30c578e
+// host forms: the legacy harness keeps them and SLRR_PE_RESOLVE_DIFF=1 runs
+// them beside the exe's rule (pe_*_exe), which the script boot uses.
 static std::string pe_value_type(const JvmValue& v) {
   switch (v.tag) {
     case JvmTag::Int: return "I";
@@ -637,14 +674,149 @@ static int pe_type_score(Jvm* j, const std::string& mt, const std::string& ct) {
   return -1;
 }
 
+// ---------------------------------------------------------------------------
+// The exe's rule (m5 step 1; exe_cars.md 1.1; typescore_940.c), used on the
+// script boot.
+// ---------------------------------------------------------------------------
+static bool pe_exe_resolve() { return native_script_boot(); }
+
+// Fork diagnostic (SLRR_PE_RESOLVE_DIFF=1, script boot only): every by-name
+// call also runs the 30c578e typing, splitter and scorer; each distinct
+// difference is logged once.
+static bool pe_resolve_diff_on() {
+  static const bool on = [] {
+    const char* e = std::getenv("SLRR_PE_RESOLVE_DIFF");
+    return e && e[0] == '1';
+  }();
+  return on;
+}
+
+static void pe_resolve_diff_line(const std::string& line) {
+  static std::unordered_map<std::string, int> seen;
+  if (seen.emplace(line, 1).second) std::fprintf(stderr, "%s\n", line.c_str());
+}
+
+// FUN_005603e0 (Thread_callMethod's descriptor from the operands): an object
+// operand with an instance is typed by its RUNTIME class's descriptor
+// (class+8, built by FUN_00548ea0: "L<name>;", an array class's "[..." as
+// is: "[I", "[Ljava.game.VehicleDescriptor;"); a Vector bag is
+// "Ljava.util.Vector;", never a bare "["; an int "I", a float "F";
+// otherwise the Value's own type string, which the host knows only as "L;"
+// (a null keeps the declared type the caller recorded, pack_types; Q1).
+static std::string pe_value_type_exe(const JvmValue& v) {
+  switch (v.tag) {
+    case JvmTag::Int: return "I";
+    case JvmTag::Float: return "F";
+    case JvmTag::Obj: {
+      if (!v.v.o) return "L;";
+      const char* hc = tree_host_class(v.v.o);
+      if (hc && hc[0] == '[') return hc;
+      if (hc && hc[0]) return std::string("L") + hc + ";";
+      if (tree_vector_is(v.v.o)) return "Ljava.util.Vector;";
+      if (string_cstr(v.v.o)) return "Ljava.lang.String;";
+      return "L;";
+    }
+    default: return "L;";
+  }
+}
+
+// A descriptor's parameter list: a run of '[' takes exactly one element (an
+// "L...;" or one letter) and never the closing ')'.
+static std::vector<std::string> pe_split_args_exe(const std::string& sig) {
+  std::vector<std::string> out;
+  size_t i = sig.find('(');
+  if (i == std::string::npos) return out;
+  ++i;
+  while (i < sig.size() && sig[i] != ')') {
+    const size_t start = i;
+    while (i < sig.size() && sig[i] == '[') ++i;
+    if (i < sig.size() && sig[i] == 'L') {
+      ++i;
+      while (i < sig.size() && sig[i] != ';' && sig[i] != ')') ++i;
+      if (i < sig.size() && sig[i] == ';') ++i;
+    } else if (i < sig.size() && sig[i] != ')') {
+      ++i;
+    }
+    out.push_back(sig.substr(start, i - start));
+  }
+  return out;
+}
+
+static const JvmClass* pe_class_of(Jvm* j, const std::string& fqn) {
+  if (!j->find_class(fqn.c_str())) j->load_class(fqn.c_str());
+  return j->find_class(fqn.c_str());
+}
+
+// FUN_0054aab0 for two classes: the superclass links from `from` up to `to`
+// (the real depth, also up to java.lang.Object), -1 when `to` is not on the
+// chain. An array class's one superclass is java.lang.Object
+// (JVM::getArrayClass FUN_0055a690).
+static int pe_class_depth_exe(Jvm* j, const std::string& from, const std::string& to) {
+  if (from == to) return 0;
+  if (!from.empty() && from[0] == '[') return (to == "java.lang.Object") ? 1 : -1;
+  const JvmClass* c = pe_class_of(j, from);
+  for (int d = 0; d < 64; ++d) {
+    // Fork: a class the host cannot load still ends its chain in Object.
+    if (!c) return (to == "java.lang.Object") ? d + 1 : -1;
+    if (c->name == to) return d;
+    if (c->super_name.empty()) return -1;
+    c = pe_class_of(j, c->super_name);
+  }
+  return -1;
+}
+
+// FUN_0055bd80(operand, parameter), switching on the PARAMETER's first
+// letter (q24 settles which is which): identical 0; F <- I 101; I <- F 100;
+// L / [ <- I or F: 100 when the parameter class is java.lang.String or below
+// it, else -1 (0x55be2f: ECX = the parameter's class, the argument String;
+// FUN_0054ac60 -> FUN_0054aab0 walks the superclass links from ECX up to
+// the argument, so an Object or Native parameter scores -1); L / [ <- "L;"
+// 100; L / [ <- a class: FUN_0054abf0 / FUN_0054aab0 from the operand's
+// class up to the parameter's, same class 0, d levels below 100 + d,
+// unrelated -1.
+static int pe_type_score_exe(Jvm* j, const std::string& pt, const std::string& ot) {
+  if (pt == ot) return 0;
+  const char p = pt.empty() ? 0 : pt[0];
+  const char o = ot.empty() ? 0 : ot[0];
+  if (p == 'F') return (o == 'I') ? 101 : -1;
+  if (p == 'I') return (o == 'F') ? 100 : -1;
+  if (p != 'L' && p != '[') return -1;
+  const std::string pc = (p == 'L') ? pe_strip_L(pt) : pt;
+  if (o == 'I' || o == 'F') {
+    if (p == 'L' && pe_class_depth_exe(j, pc, "java.lang.String") >= 0) return 100;
+    // Fork (kept from 30c578e): the host carries a resource id literal as an
+    // int where the exe types it as a ResourceRef value (new Style(w, h,
+    // Frontend.mediumFont, ...)): an int into a ResourceRef-derived class.
+    if (o == 'I' && p == 'L' &&
+        pe_class_depth_exe(j, pc, "java.util.resource.ResourceRef") >= 0)
+      return 100;
+    return -1;
+  }
+  if (o != 'L' && o != '[') return -1;
+  if (ot.size() >= 2 && ot[1] == ';') return 100;  // "L;": untyped / null
+  const int d = pe_class_depth_exe(j, (o == 'L') ? pe_strip_L(ot) : ot, pc);
+  if (d >= 0) return (d == 0) ? 0 : 100 + d;
+  // Fork (Q3, kept from 30c578e): a class against an interface is
+  // FUN_0054a9d0 (implements) minus 1 in the exe; the loader keeps no
+  // interface lists, so a parameter class without a method list or a
+  // superclass takes a weak 500 (changeActiveSection(GameState)).
+  if (p == 'L') {
+    const JvmClass* c = pe_class_of(j, pc);
+    if (!c || c->methods.empty() || c->super_name.empty()) return 500;
+  }
+  return -1;
+}
+
 // Class_findMethodSlot @ 0x54A150: walk the super chain, scan each method
 // table from the end, score same-name candidates; 0 = exact (stop), else
 // the lowest score wins (a tie logs "more matching methods found").
+// `exe` picks the splitter and scorer: the exe's or 30c578e's (above).
 static const JvmMethod* pe_find_method(Jvm* j, const char* class_fqn,
                                        const char* name,
                                        const std::string& callsig,
-                                       std::string* owner_out) {
-  const std::vector<std::string> cargs = pe_split_args(callsig);
+                                       std::string* owner_out, bool exe) {
+  const std::vector<std::string> cargs =
+      exe ? pe_split_args_exe(callsig) : pe_split_args(callsig);
   const JvmMethod* best = nullptr;
   int best_score = 1000000;
   std::string best_owner;
@@ -655,11 +827,13 @@ static const JvmMethod* pe_find_method(Jvm* j, const char* class_fqn,
     for (size_t k = cls->methods.size(); k-- > 0;) {
       const JvmMethod& cand = cls->methods[k];
       if (cand.name != name) continue;
-      const std::vector<std::string> margs = pe_split_args(cand.signature);
+      const std::vector<std::string> margs =
+          exe ? pe_split_args_exe(cand.signature) : pe_split_args(cand.signature);
       if (margs.size() != cargs.size()) continue;
       int score = 0;
       for (size_t a = 0; a < margs.size(); ++a) {
-        const int sc = pe_type_score(j, margs[a], cargs[a]);
+        const int sc = exe ? pe_type_score_exe(j, margs[a], cargs[a])
+                           : pe_type_score(j, margs[a], cargs[a]);
         if (sc < 0) { score = -1; break; }
         score += sc;
       }
@@ -778,40 +952,79 @@ int vmthread_thread_call_method(VmThread* thr, InvObject* self,
   const std::string soft_jni = soft_jni_from_pack_vec(thr->pack_vec);
   // Fork: PE resolution. A 0x101A methodref supplies the descriptor from
   // the constant pool (Thread_evalName @ 0x562540); a utf8 call builds it
-  // from the operand types (NativeSigDesc_ctorFromOperands @ 0x560930).
+  // from the operand types (FUN_005603e0: pe_value_type_exe on the script
+  // boot, 30c578e's pe_value_type elsewhere; the diff builds both).
+  const bool exe = pe_exe_resolve();
+  const bool diff = exe && pe_resolve_diff_on();
+  const bool hinted = !thr->call_sig_hint.empty();
   std::string callsig;
-  if (!thr->call_sig_hint.empty()) {
+  std::string callsig_old;  // 30c578e's operand types (diff only)
+  if (hinted) {
     callsig = thr->call_sig_hint;
+    callsig_old = callsig;
   } else {
     callsig = "(";
+    callsig_old = "(";
     for (std::size_t a = 0; a < thr->pack_vec.size(); ++a) {
       const JvmValue& v = thr->pack_vec[a];
       if (v.tag == JvmTag::Obj && !v.v.o && a < thr->pack_types.size() &&
-          !thr->pack_types[a].empty())
+          !thr->pack_types[a].empty()) {
         callsig += thr->pack_types[a];  // typed null (PE Value typeDesc)
-      else
-        callsig += pe_value_type(v);
+        if (diff) callsig_old += thr->pack_types[a];
+      } else {
+        callsig += exe ? pe_value_type_exe(v) : pe_value_type(v);
+        if (diff) callsig_old += pe_value_type(v);
+      }
     }
     callsig += ")V";
+    callsig_old += ")V";
   }
   thr->call_sig_hint.clear();
+  // PE: ScriptError "not found". Soft fallback keeps the name-only match
+  // (traced) until every host signature is PE-shaped. Never run a script
+  // body with the wrong arity (GameRef.<init>() picked <init>(GameRef) and
+  // read a missing local); the PE reports "not found" and makes no call.
+  auto fallback = [&](const std::string& sig, bool rule_exe,
+                      std::string* owner) -> const JvmMethod* {
+    const JvmMethod* f =
+        soft_lookup_method_name(j, resolve_fqn, method, soft_jni.c_str(), owner);
+    if (f && !f->is_native &&
+        (rule_exe ? pe_split_args_exe(f->signature).size() != pe_split_args_exe(sig).size()
+                  : pe_split_args(f->signature).size() != pe_split_args(sig).size()))
+      f = nullptr;
+    return f;
+  };
   std::string owner_fqn;  // class that declares the resolved method
-  const JvmMethod* m = pe_find_method(j, resolve_fqn, method, callsig, &owner_fqn);
+  const JvmMethod* found =
+      pe_find_method(j, resolve_fqn, method, callsig, &owner_fqn, exe);
+  const JvmMethod* m = found;
   if (!m) {
-    // PE: ScriptError "not found". Soft fallback keeps the name-only match
-    // (traced) until every host signature is PE-shaped.
-    m = soft_lookup_method_name(j, resolve_fqn, method, soft_jni.c_str(),
-                                &owner_fqn);
-    // Never run a script body with the wrong arity (GameRef.<init>() picked
-    // <init>(GameRef) and read a missing local); the PE reports "not found"
-    // and makes no call.
-    if (m && !m->is_native &&
-        pe_split_args(m->signature).size() != pe_split_args(callsig).size())
-      m = nullptr;
+    m = fallback(callsig, exe, &owner_fqn);
     if (vm_trace_on())
       std::fprintf(stderr, "[pe-stream]   lookup fallback %s.%s%s -> %s\n",
                    resolve_fqn, method, callsig.c_str(),
                    m ? m->signature.c_str() : "(none)");
+  }
+  if (diff) {
+    std::string old_owner;
+    const JvmMethod* ofound =
+        pe_find_method(j, resolve_fqn, method, callsig_old, &old_owner, false);
+    const JvmMethod* om = ofound ? ofound : fallback(callsig_old, false, &old_owner);
+    if (ofound != found || om != m) {
+      auto txt = [&](const JvmMethod* f, const JvmMethod* fin,
+                     const std::string& own) {
+        std::string s = fin ? fin->signature : std::string("none");
+        if (fin && !own.empty() && own != resolve_fqn) s += " in " + own;
+        if (fin && !f) s += " (fallback)";
+        return s;
+      };
+      std::string line = std::string("[resolve-diff] ") + resolve_fqn + "." +
+                         method + callsig + ": old " + txt(ofound, om, old_owner) +
+                         " new " + txt(found, m, owner_fqn);
+      if (callsig_old != callsig) line += " [old operands " + callsig_old + "]";
+      if (hinted) line += " [pool descriptor]";
+      pe_resolve_diff_line(line);
+    }
   }
   // PE miss → ScriptError "not found"; Soft: still attempt soft_jni invoke
   // (resolve_native / TREE may bind). Exact PE: return name on miss.
@@ -827,7 +1040,16 @@ int vmthread_thread_call_method(VmThread* thr, InvObject* self,
                    resolve_fqn, method, callsig.c_str());
     // PE Thread_callMethod: ScriptError, return -1 (no call). Only natives
     // may still bind by name through invoke_method below.
-    if (!resolve_native(resolve_fqn, method, soft_jni.c_str())) return -1;
+    if (!resolve_native(resolve_fqn, method, soft_jni.c_str())) {
+      // m5 step 1 item 5 (host-side; the exe pops the operands): a failed
+      // call's operands must not stay for the next call, which the guard at
+      // the top would hand them (`GameLogic.changeActiveSection(I[)V`).
+      if (exe) {
+        thr->pack_vec.clear();
+        thr->pack_types.clear();
+      }
+      return -1;
+    }
   }
   const char* sig = m ? m->signature.c_str() : soft_jni.c_str();
   // Fork: an inherited NATIVE (Zed_VT.newNative -> GameRef.newNative) is
@@ -1273,11 +1495,16 @@ StreamCall vmthread_stream_call(VmThread* thr, InvObject* self,
         if (vm_trace_on() && std::strcmp(method, "<init>") == 0)
           std::fprintf(stderr, "[pe-stream]   ctor %s new_object_init=%d recv=%p\n",
                        cfqn.c_str(), thr->new_object_init ? 1 : 0, static_cast<void*>(recv));
-        if (thr->new_object_init && recv && std::strcmp(method, "<init>") == 0) {
+        // PE: the initialisers ran at the allocation (op 0x1E, VM2); an
+        // object marked there is skipped (script boot). An object made by
+        // another path keeps this run at the frame switch.
+        if (thr->new_object_init && recv && std::strcmp(method, "<init>") == 0 &&
+            !(native_script_boot() && tree_host_inited(recv))) {
           // Fork: field initialisers belong to the object's own class (an
           // inherited ctor must not skip the leaf's <fieldinit:*> trees).
           const char* hc = tree_host_class(recv);
           jvm_apply_field_inits_chain(j, (hc && hc[0]) ? hc : cfqn.c_str(), recv);
+          jvm_noinit_note_late(recv);
         }
         thr->new_object_init = false;
         VmCallFrame* fr = vmthread_build_tree_frame(thr, owner, cm, recv, cargs);
@@ -1498,9 +1725,44 @@ void vmthread_op41_pool_alloc(VmThread* thr) {
   thr->pe.unk_24 += 8;  // PE @ 0x421636 → VMThread_opDefault_advance
 }
 
+// Fork (m5 test rig: SLRR_PE_CAREER_LOG=1 and the `@State` entry times of
+// the boot loop, game_boot_part1.inc; the exe has no such hook). A frame of
+// the method `enter` whose class is the class of GameLogic.actualState
+// returns through op42 / op43: its class name is noted, and the boot loop
+// takes the names after its VM pump. Read-only: the GameLogic statics as
+// they stand (no class initializer run). Off unless the boot loop turns it
+// on. The VM threads are green threads of the loop's thread: no lock.
+static bool g_vm_enter_watch = false;
+static std::vector<std::string> g_vm_enter_returns;
+
+void vmthread_set_enter_watch(bool on) { g_vm_enter_watch = on; }
+
+std::size_t vmthread_take_enter_returns(std::vector<std::string>* out) {
+  const std::size_t n = g_vm_enter_returns.size();
+  if (out)
+    out->insert(out->end(), g_vm_enter_returns.begin(), g_vm_enter_returns.end());
+  g_vm_enter_returns.clear();
+  return n;
+}
+
+static void vmthread_note_return(const VmCallFrame* f) {
+  if (!g_vm_enter_watch || !f || !f->host_cls || !f->host_method ||
+      f->host_method->name != "enter")
+    return;
+  const auto bit = g_tree_statics.find("java.game.GameLogic");
+  if (bit == g_tree_statics.end()) return;
+  const auto it = bit->second.by_name.find("actualState");
+  if (it == bit->second.by_name.end()) return;
+  const JvmValue& st = bit->second.slots[it->second];
+  if (st.tag != JvmTag::Obj || !st.v.o) return;
+  const char* cn = tree_host_class(st.v.o);
+  if (cn && f->host_cls->name == cn) g_vm_enter_returns.emplace_back(cn);
+}
+
 // PE op42 ret-void @ 0x421697: CallFrame dtor; popFrameRestorePc; empty→DONE.
 void vmthread_op42_ret_void(VmThread* thr) {
   if (!thr) return;
+  vmthread_note_return(thr->curr_frame);  // Fork: m5 rig (above)
   vmthread_pop_frame_restore_pc(thr);
   if (thr->pe.unk_24 == 0) vmthread_op16_done(thr);
 }
@@ -1510,6 +1772,7 @@ void vmthread_op43_ret_val(VmThread* thr) {
   if (!thr) return;
   JvmValue ret;
   if (!vmthread_pop_operand(thr, &ret)) ret = JvmValue{};
+  vmthread_note_return(thr->curr_frame);  // Fork: m5 rig (op42)
   vmthread_pop_frame_restore_pc(thr);
   vmthread_value_stack_push(thr, ret);
   if (thr->pe.unk_24 == 0) vmthread_op16_done(thr);

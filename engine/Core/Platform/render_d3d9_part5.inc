@@ -12,6 +12,9 @@
 //                                / FUN_00444180 (two world matrices and one
 //                                blend weight)
 //   ..._mesh_counts, ..._mesh_erase_bone   host helpers
+//
+// M5 step 4: the fog of a camera pass (camera_pass_fog and the camera's fog
+// setters, see "Fog" below).
 
 namespace inv {
 
@@ -67,6 +70,143 @@ bool render_d3d9_camera_sees_below(void* root, void* parent) {
     cur = chain_parent_of(cur);
   }
   return false;
+}
+
+// ---------------------------------------------------------------------------
+// Fog (PE 940, M5 X 3.3)
+// ---------------------------------------------------------------------------
+// GroundRef.setFog 0x4DE640 stores {on, near x 10, far x 10, colour} on the
+// map's ground (getinfo 0x4A); the camera's `render` command FUN_0048bce0
+// copies the block of its world-tree root into its params (+0x24 on, +0x1C
+// near, +0x20 far, +0x28 colour; NativeTypes_part2.inc). Every frame:
+//   FUN_00461dd0: h = aov x pi / 360 (DAT_005993cc), k = sqrt(sqrt(cos h /
+//   sin h)); cam+0x1C4 = on, +0x1C8 = near x k, +0x1CC = far x k, +0x1D0 =
+//   colour (asm 0x461f32..0x461fda; the far plane takes the same k);
+//   FUN_00461b20 -> C3DLow vt+0x120 = FUN_00427260: on: FOGSTART (0x24),
+//   FOGEND (0x25), FOGCOLOR (0x22), FOGENABLE 1; off: FOGENABLE 0
+//   (DAT_005ee340 != 0 would replace near / far by DAT_005da03c / 0x5DA040:
+//   what sets it is U, the host never does);
+//   device setup FUN_00426d10 (asm 0x426f00..0x426f4a): FOGTABLEMODE (0x23)
+//   = 3 LINEAR when the raster caps have 0x100 (D3DPRASTERCAPS_FOGTABLE),
+//   else FOGVERTEXMODE (0x8C) = 3 LINEAR; RANGEFOGENABLE (0x30) = 1.
+// The exe's distances are metres x 10, the host's metres: the D3D values are
+// the exe's / 10. The rg_horizon group turns fog off for its sections and
+// back on (FUN_00422b80 / FUN_00424a10, draw_camera_instances).
+// Fork: FUN_00427260 also keeps the colour x 4 at C3DLow+0x35C (flag 4 of
+// +0x310) for a reader that was not traced; the material programs that set
+// FOGCOLOR for their own passes (0x440636 .. 0x445035, q06 s01) are not
+// ported (no fogged scene of M5 has a multi-pass ground class). After the
+// last pass the host turns fog off for its 2D layers.
+namespace {
+struct FogFrameStats {
+  uint32_t frame = 0;
+  int32_t passes_on = 0;
+  int32_t passes_off = 0;
+  float start = 0.f, end = 0.f, k = 0.f;
+  uint32_t colour = 0;
+  bool table = false;
+};
+FogFrameStats g_fog_frame;
+}  // namespace
+
+static float camera_fog_k(const CameraState& cam) {
+  // The angle as build_camera_projection reads it (the same guards).
+  float aov = cam.aov_deg;
+  if (!(aov > 0.5f)) aov = 0.5f;
+  if (aov > 179.f) aov = 179.f;
+  const float half = aov * 0.008726389f;  // DAT_005993cc
+  return std::sqrt(std::sqrt(std::cos(half) / std::sin(half)));
+}
+
+void render_d3d9_camera_set_fog(void* key, bool on, float near_x10,
+                                float far_x10, uint32_t colour) {
+  auto it = g_cameras.find(key);
+  if (it == g_cameras.end()) return;
+  it->second.fog_on = on;
+  it->second.fog_near = near_x10;
+  it->second.fog_far = far_x10;
+  it->second.fog_colour = colour;
+}
+
+bool render_d3d9_camera_get_fog(void* key, bool* on, float* near_x10,
+                                float* far_x10, uint32_t* colour, float* k) {
+  auto it = g_cameras.find(key);
+  if (it == g_cameras.end()) return false;
+  const CameraState& cam = it->second;
+  if (on) *on = cam.fog_on;
+  if (near_x10) *near_x10 = cam.fog_near;
+  if (far_x10) *far_x10 = cam.fog_far;
+  if (colour) *colour = cam.fog_colour;
+  if (k) *k = camera_fog_k(cam);
+  return true;
+}
+
+void* render_d3d9_camera_root(void* start) {
+  return start ? camera_root_of(start) : nullptr;
+}
+
+// The pass's fog, in place of the fixed FOGENABLE FALSE of the legacy pass.
+static void camera_pass_fog(const CameraState& cam) {
+#ifdef _WIN32
+  if (g_fog_frame.frame != g_cam_pass_frame) {
+    g_fog_frame = FogFrameStats{};
+    g_fog_frame.frame = g_cam_pass_frame;
+  }
+  g_pass_fog = render_boot940() && cam.fog_on && g_dev;
+  if (!g_pass_fog) {
+    if (g_dev) g_dev->SetRenderState(D3DRS_FOGENABLE, FALSE);
+    ++g_fog_frame.passes_off;
+    return;
+  }
+  static IDirect3DDevice9* s_caps_dev = nullptr;
+  static bool s_table = true;
+  if (s_caps_dev != g_dev) {
+    D3DCAPS9 caps{};
+    s_table = SUCCEEDED(g_dev->GetDeviceCaps(&caps)) &&
+              (caps.RasterCaps & D3DPRASTERCAPS_FOGTABLE) != 0;
+    s_caps_dev = g_dev;
+  }
+  g_dev->SetRenderState(s_table ? D3DRS_FOGTABLEMODE : D3DRS_FOGVERTEXMODE,
+                        D3DFOG_LINEAR);
+  g_dev->SetRenderState(D3DRS_RANGEFOGENABLE, TRUE);
+  const float k = camera_fog_k(cam);
+  float start = cam.fog_near * 0.1f * k;
+  float end = cam.fog_far * 0.1f * k;
+  DWORD ds = 0, de = 0;
+  std::memcpy(&ds, &start, sizeof ds);
+  std::memcpy(&de, &end, sizeof de);
+  g_dev->SetRenderState(D3DRS_FOGSTART, ds);
+  g_dev->SetRenderState(D3DRS_FOGEND, de);
+  g_dev->SetRenderState(D3DRS_FOGCOLOR, static_cast<DWORD>(cam.fog_colour));
+  g_dev->SetRenderState(D3DRS_FOGENABLE, TRUE);
+  ++g_fog_frame.passes_on;
+  g_fog_frame.start = start;
+  g_fog_frame.end = end;
+  g_fog_frame.k = k;
+  g_fog_frame.colour = cam.fog_colour;
+  g_fog_frame.table = s_table;
+#else
+  (void)cam;
+#endif
+}
+
+void render_d3d9_fog_debug_dump(FILE* out) {
+  if (!out) return;
+  const bool now = g_fog_frame.frame == g_cam_pass_frame;
+  std::fprintf(out,
+               "[render-dbg] fog (last frame): passes_on=%d passes_off=%d "
+               "start=%.2f end=%.2f (x10: %.1f %.1f) colour=0x%08X k=%.4f "
+               "mode=%s; legacy flare sources=%d sprites=%d osd_rects=%zu\n",
+               now ? g_fog_frame.passes_on : 0,
+               now ? g_fog_frame.passes_off : 0, now ? g_fog_frame.start : 0.f,
+               now ? g_fog_frame.end : 0.f,
+               now ? g_fog_frame.start * 10.f : 0.f,
+               now ? g_fog_frame.end * 10.f : 0.f,
+               static_cast<unsigned>(now ? g_fog_frame.colour : 0u),
+               now ? g_fog_frame.k : 0.f,
+               g_fog_frame.table ? "table" : "vertex",
+               render_d3d9_flare_sources(), render_d3d9_flare_sprites_last(),
+               g_osd.size());
 }
 
 void render_d3d9_mesh_counts(void* key, int32_t* verts, int32_t* tris) {

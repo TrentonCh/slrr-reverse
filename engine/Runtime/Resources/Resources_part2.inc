@@ -1318,6 +1318,10 @@ void java_util_resource_ResourceRef_unload(InvObject* self) {
   // INSTANCE_GAME: the node's game object goes (the ground of a map, with
   // its render instance); the next payload request builds it again.
   instance_node_unload(self);
+  // The same for a node GameRef.create or create_native made (940
+  // FUN_004ec800 does not tell them apart): the trade-in stand goes with
+  // MapObject.finalize's unload (MapObject.java:66). Script boot only.
+  native_on_unload(self);
   render_d3d9_texture_destroy(self);
   render_d3d9_mesh_destroy(self);
   std::lock_guard<std::mutex> lock(g_mu);
@@ -1761,6 +1765,37 @@ void java_util_resource_ResourceRef_duplicate(InvObject* self, InvObject* src) {
   tree_field_set_int(self, "dup_cloned", cloned);
   tree_field_set_int(self, "dup_src_id", java_util_resource_ResourceRef_id(src));
   gameref_on_res_bound(self);
+  // PE 940 FUN_004e9470: a light type is copied into a NEW node
+  // (FUN_0051ee30) and this handle is bound to it, so RenderRef.setLight /
+  // setFlare on the copy leave the record alone (X 3.4). Script boot: a
+  // fresh runtime id with its own copy of the payload.
+  // Fork: a mesh, texture or render object copy keeps the source's id. The
+  // host keeps the payloads of these by handle already (the mesh clone
+  // above, the replaced lines of RenderRef.changeResource), while its
+  // lookups of a render object's lines go through the pack of the id; a
+  // fresh id for them is left for a later step (M5 step 4 notes).
+  if (native_script_boot()) {
+    int32_t src_id = 0, restype = 0;
+    {
+      std::lock_guard<std::mutex> lock(g_mu);
+      src_id = R(src).id;
+      restype = R(src).restype;
+    }
+    if (restype == 13 && src_id != 0) {
+      int32_t copy_id = 0;
+      {
+        std::lock_guard<std::mutex> lock(g_mu);
+        copy_id = resref_next_runtime_id();
+      }
+      if (light_type_duplicate(src_id, copy_id)) {
+        {
+          std::lock_guard<std::mutex> lock(g_mu);
+          R(self).id = copy_id;
+        }
+        tree_field_set_int(self, "dup_cloned", 1);
+      }
+    }
+  }
 }
 
 // ---- Replaced lines of a render instance (Part.setTexture / setMesh) ----
@@ -1932,8 +1967,13 @@ void* renderref_line_texture_key(int32_t texture_id) {
 int32_t renderref_materialise_pending(InvObject* instance, int32_t type_id) {
   if (!instance || !type_id) return -1;
   const RpakEntry* e = rpak_find_entry(type_id);
-  const int restype = e ? e->restype : -1;
-  const std::string name = e ? e->name : std::string();
+  // A light type copy (ResourceRef.duplicate) is a runtime node, not a
+  // record: typeof 13, named after the record it was copied from.
+  const int32_t light_record = e ? 0 : light_type_source(type_id);
+  const RpakEntry* named =
+      e ? e : (light_record ? rpak_find_entry(light_record) : nullptr);
+  const int restype = e ? e->restype : (light_record ? 13 : -1);
+  const std::string name = named ? named->name : std::string();
   int32_t made = -1;
   uint32_t flags = 0;
   bool object_class = true;

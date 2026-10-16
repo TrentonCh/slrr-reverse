@@ -389,6 +389,26 @@ void java_util_resource_RenderRef_setFlare(InvObject* self, InvObject* glowtextu
   }
   render_ref_apply_flare_soft(self, glowtexture, glowColor, glowMinSize,
                               glowMaxSize, flareCount, rayCount);
+  if (native_script_boot()) {
+    // PE 940 FUN_004e2950 -> FUN_004ebe00: the five fields and the glow
+    // texture go into the payload of the light type this handle is bound to
+    // (the dealer's copy of maps.skydome:0x124, ResourceRef.duplicate).
+    // The legacy flare sprite pass (render_d3d9_set_flare) is not fed on
+    // the script boot. Fork (Q10): the lens flare itself is not drawn.
+    int32_t id = 0, restype = 0;
+    {
+      std::lock_guard<std::mutex> lock(g_mu);
+      id = R(self).id;
+      restype = R(self).restype;
+    }
+    if (restype == 13)
+      light_type_set_flare(id, tex_id, glowColor, glowMinSize, glowMaxSize,
+                           flareCount, rayCount);
+    (void)wx;
+    (void)wy;
+    (void)wz;
+    return;
+  }
   render_d3d9_set_flare(self, glowtexture, glowColor, glowMinSize, glowMaxSize,
                         flareCount, rayCount);
   render_d3d9_set_flare_world(self, wx, wy, wz);

@@ -1203,6 +1203,9 @@
 
 }  // namespace
 
+// The script-boot gate (NativeTypes.cpp); m5 step 2 below.
+bool native_script_boot();
+
 JvmValue Jvm::invoke(const char* class_fqn, const char* name, const char* signature,
                      const std::vector<JvmValue>& args, bool is_static) {
   thread_local int tls_depth = 0;
@@ -1823,8 +1826,14 @@ JvmValue Jvm::invoke(const char* class_fqn, const char* name, const char* signat
 
   if (has_tree) {
     JvmTreeHost host(this);
+    // PE Instance::initialize ran the chain at the allocation (VM2 op 0x1E,
+    // GameRef.create's THRD-CREATE): a marked object is skipped, so the
+    // initialisers run exactly once. Script boot only; nothing is marked on
+    // the legacy path.
+    static const bool skip_marked = native_script_boot();
     auto apply_field_inits = [&](const JvmClass& c, InvObject* self) {
       if (!self || c.field_inits.empty()) return;
+      if (skip_marked && tree_host_inited(self)) return;
       for (const JvmFieldInit& fi : c.field_inits) {
         if (fi.tree_index < 0 ||
             static_cast<size_t>(fi.tree_index) >= c.trees.size())
@@ -1894,6 +1903,8 @@ JvmValue Jvm::invoke(const char* class_fqn, const char* name, const char* signat
       }
       for (auto it = chain.rbegin(); it != chain.rend(); ++it)
         apply_field_inits(**it, args[0].v.o);
+      if (!(skip_marked && tree_host_inited(args[0].v.o)))
+        jvm_noinit_note_late(args[0].v.o);  // Fork diagnostic (VM2)
     }
     // Census: how much of the real boot workload the PE stream walker
     // (VMThread_run @ 0x420FF0) could already execute 1:1. Read-only.

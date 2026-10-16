@@ -347,9 +347,24 @@ void java_lang_System_setMeasure(float m) {
   g_ten_div_measure = (m != 0.f) ? (10.f / m) : 0.f;
 }
 
+// m5 step 2 item 5: the script-boot gate (NativeTypes.cpp) and PE
+// Instance::initialize (Core/Jvm/jvm_vmthread_part2.inc).
+bool native_script_boot();
+void jvm_apply_field_inits_chain(Jvm* j, const char* class_fqn, InvObject* self);
+
 InvObject* system_config_host() {
   if (!g_config_host) {
     g_config_host = tree_host_new("java.util.Config");
+    // PE: the exe's Config is `new Config(id)` (LoadGameInit "Config"),
+    // allocated through Instance::initialize (FUN_0054cab0): its instance
+    // initialiser (FILD = 1) runs before anything else. Script boot only;
+    // the first call is the boot's (no host lock held).
+    if (native_script_boot()) {
+      if (Jvm* j = jvm_active()) {
+        tree_host_mark_inited(g_config_host);
+        jvm_apply_field_inits_chain(j, "java.util.Config", g_config_host);
+      }
+    }
     // Stock Config defaults used by OptionsDialog.show (read path).
     tree_field_set_int(g_config_host, "flares", 1);
     tree_field_set_int(g_config_host, "headlight_rays", 1);
