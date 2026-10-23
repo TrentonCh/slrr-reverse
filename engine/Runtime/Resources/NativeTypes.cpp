@@ -1467,4 +1467,8 @@ std::shared_ptr<NativeObject> ground_create(const NativeCreate& c) {
 // The `object` type (table row 2): props with bodies and render instances.
 #include "NativeTypes_part10.inc"
 
+// What the cursor's pick finds of the part and car objects: their click
+// bodies (M6 step 1), and GII_SIZE.
+#include "NativeTypes_part11.inc"
+
 }  // namespace inv

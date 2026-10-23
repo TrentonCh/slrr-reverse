@@ -737,8 +737,15 @@ CamV3 CarObject::ground_point() {
 }
 
 // vt+0x3C FUN_004a15c0. Ported: 2 the ground point, 7 the kind of object
-// (5, GIR_CAT_VEHICLE), and the part's 0x17, 0x27 (free slots) and 0x2B
-// (the car handle: a car answers with itself).
+// (5, GIR_CAT_VEHICLE); the rest from the part's table, which has the
+// same rows as the car's for 6 (the type), 0xB (GII_SIZE, the chassis
+// compound), 0xF, 0x27 (free slots), 0x28, 0x29 (41: FUN_004ca300), 0x2B
+// (the car handle: a car answers with itself), 0x31, 0x37 (55: type+0x115C,
+// 2 unless the cfg says otherwise) and 0x3F (m6 step 3). Fork: 0x2F of a
+// car also fills a wheel-typed slot's frame (exe_car 6.1), not ported;
+// the car has no 0x17, 0x47, 0x49 row in the exe, so GameRef.getInfo does
+// not ask the car object for those (native_part_getinfo,
+// NativeTypes_part5.inc).
 bool CarObject::getinfo(int32_t query, NativeInfo* out) {
   switch (query) {
     case 2: {
@@ -861,6 +868,14 @@ bool CarObject::event(int32_t type, const char* text) {
   engine_sscanf(text, "%1024s", word);
   const int n = static_cast<int>(wheels_.size());
   auto is = [&](const char* w) { return word_is(word, w); };
+  // Fork (m6 step 3 rig, SLRR_PE_NATIVE_TYPE_LOG): the commands that wake,
+  // reset or suspend the car, one line each (the Mechanic sends `reset`
+  // instead of `wakeup` while the car is on the lift, Mechanic.java:244).
+  if (native_getinfo_log() && (is("reset") || is("wakeup") || is("suspend")))
+    std::fprintf(stderr, "[native-type] car command '%s' (node 0x%08X) "
+                 "t=%.2f\n", word,
+                 static_cast<unsigned>(part_node_id(key_)),
+                 native_loop_time());
 
   if (is("stop")) {
     // flags |= 4, the wheels' spin state zeroed, the wheel bodies now, the
@@ -937,6 +952,9 @@ bool CarObject::event(int32_t type, const char* text) {
     return true;
   }
   if (is("filter")) return part_cmd_filter(this, text);
+  // (m6 step 4) FUN_004a2e60 `repair` and `cancel` (part_cmd_repair).
+  if (is("repair")) return part_cmd_repair(this, text, true);
+  if (is("cancel")) return part_cmd_cancel(this, true);
   if (is("texture")) {
     // "%*s %d %d": texture id, recurse. A handle on the texture record
     // (FUN_00488930), FUN_004c75a0 on the car when car+0x84 != 0, and with
@@ -1008,8 +1026,7 @@ bool CarObject::event(int32_t type, const char* text) {
     // Left to the host's generic command chain as before (the driving
     // milestone): render, hide, activate, deactivate, next, prev, osd,
     // corpse, setvel, sethorn, setpitch, addroll, decal, paint, bigdecal,
-    // repair, cancel, pickup; and any word the exe's handler does not
-    // know.
+    // pickup; and any word the exe's handler does not know.
     return false;
   }
   ++stored_.taken;

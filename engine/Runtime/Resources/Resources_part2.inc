@@ -1527,6 +1527,78 @@ int32_t java_util_resource_ResourceRef_id(InvObject* self) {
   std::lock_guard<std::mutex> lock(g_mu);
   return R(self).id;
 }
+// (m6 step 4) The parent of the node a handle names when the handle has none
+// of its own: a fresh `new ResourceRef(id)` bound to the id of a physics
+// instance (a gadget's box: PhysicsRef.createBox) names no pack record and no
+// node GameRef.create made, so bind_res_id gives it no parent; the exe reads
+// the parent of the id's node (940 getParent FUN_004e37c0 -> FUN_004ea740,
+// getParentID FUN_004e36b0 -> FUN_004ea780; gh/b16), the type-2 node of the
+// instance under the node of its `parent` argument (FUN_004e8a50).
+// Here: the parent the PhysicsRef that made the instance recorded, while that
+// instance lives (ResourceRef.destroy marks it gone). Script boot only;
+// caller holds g_mu. `*loose` gets the id when the handle is such a loose
+// one (for the click ids of the part and car objects, see below).
+static int32_t resref_physics_parent_id(InvObject* self, const ResState& st,
+                                        int32_t* loose) {
+  *loose = 0;
+  if (!native_script_boot() || st.id == 0 || st.restype != 0 ||
+      !st.entry_path.empty() || st.type != 0)
+    return 0;
+  *loose = st.id;
+  for (const auto& kv : g_res) {
+    const ResState& r = kv.second;
+    if (kv.first == self || r.type != 2 || r.id != st.id) continue;
+    if (r.destroyed_id == r.id) continue;
+    return r.parent_id;
+  }
+  return 0;
+}
+// (m6 step 4) The other loose ids: the one that stands for the "click" node of
+// a part or car object (m6 step 1, Fork: no such node is made), whose parent
+// in the exe is the node of that part or car (X 1.3). Called without a lock
+// (the table is main thread only, like the natives of the script boot).
+static int32_t resref_click_parent_id(int32_t loose) {
+  if (!loose) return 0;
+  InvObject* owner = click_phy_owner(loose);
+  return owner ? resref_peek_id(owner) : 0;
+}
+// (m6 step 4) PE 940 ResourceRef.getParent FUN_004e37c0: the handle on the
+// parent node (FUN_004ea740) is boxed by FUN_004e7320, whose class follows
+// the node's restype (inner+0x7C): 1 or 8 a java.util.resource.GameRef, 3 or
+// 0xE a RenderRef, any other a ResourceRef. Group.findGadgetEx calls the
+// GameRef method getScriptInstance() on it. The restype is what bind_res_id
+// gives the handle: 1 for a node GameRef.create made, the pack record's
+// otherwise. Script boot only; the legacy path keeps a ResourceRef.
+// (m6 fixer) The same box for getFirstChild FUN_004e3510 (FUN_004e9b30),
+// getNextChild FUN_004e35e0 (FUN_004ea610) and getWTRoot FUN_004e3c00
+// (FUN_004ea900) (m6/gh/b17_children_940.txt): Catalog.java:386 and
+// Garage.java:1990 call GameRef.isScripted()I on a child.
+static InvObject* resref_box_node(int32_t id) {
+  if (id == 0) return nullptr;
+  if (!native_script_boot()) return make_bound_ref(id);
+  int32_t restype = 0;
+  {
+    std::lock_guard<std::mutex> lock(g_mu);
+    if (script_node_find(id))
+      restype = 1;
+    else if (const RpakEntry* e = rpak_find_entry(id))
+      restype = e->restype;
+  }
+  InvObject* o = nullptr;
+  if (restype == 1 || restype == 8)
+    o = gameref_new();
+  else if (restype == 3 || restype == 0xE)
+    o = tree_host_new("java.util.resource.RenderRef");
+  else
+    return make_bound_ref(id);
+  if (!o) return nullptr;
+  {
+    std::lock_guard<std::mutex> lock(g_mu);
+    bind_res_id(R(o), id);
+  }
+  gameref_on_res_bound(o);
+  return o;
+}
 int32_t java_util_resource_ResourceRef_getParentID(InvObject* self) {
   // PE @ 0x0047D3E0 size 0xcd (int_convert 205). UnboxArg ()I: this.
   // Native.ptr dword_62E008; 0 → "!Mighty ERROR at " + Natives.cpp +
@@ -1536,14 +1608,21 @@ int32_t java_util_resource_ResourceRef_getParentID(InvObject* self) {
   // *(*(inner+0x14)+0x50) parent id DWORD. Host: R.parent_id in id()
   // space. !self = handle 0 (silent).
   if (!self) return 0;
-  std::lock_guard<std::mutex> lock(g_mu);
-  const ResState& st = R(self);
-  // A handle on a node GameRef.create made: the parent the node has now
-  // (a part's `install` moves it; Part.addPart tests exactly this).
-  if (st.restype == 1) {
-    if (const ScriptNode* n = script_node_find(st.id)) return n->parent_id;
+  int32_t loose = 0;
+  {
+    std::lock_guard<std::mutex> lock(g_mu);
+    const ResState& st = R(self);
+    // A handle on a node GameRef.create made: the parent the node has now
+    // (a part's `install` moves it; Part.addPart tests exactly this).
+    if (st.restype == 1) {
+      if (const ScriptNode* n = script_node_find(st.id)) return n->parent_id;
+    }
+    if (st.parent_id) return st.parent_id;
+    // (m6 step 4) a loose handle on the id of a physics instance.
+    if (const int32_t pid = resref_physics_parent_id(self, st, &loose))
+      return pid;
   }
-  return st.parent_id;
+  return resref_click_parent_id(loose);
 }
 InvObject* java_util_resource_ResourceRef_getParent(InvObject* self) {
   // PE @ 0x0047D4B0 size 0xba (186): twin of getFirstChild @ 0x0047D630 /
@@ -1555,15 +1634,24 @@ InvObject* java_util_resource_ResourceRef_getParent(InvObject* self) {
   // → null. Contrast getParentID @ 0x0047D3E0: same node via sub_48AB80,
   // returns DWORD id only. Host: parent_id in id() space → make_bound_ref.
   int32_t pid = 0;
+  int32_t loose = 0;
   {
     std::lock_guard<std::mutex> lock(g_mu);
     const ResState& st = R(self);
     pid = st.parent_id;
     if (st.restype == 1) {
       if (const ScriptNode* n = script_node_find(st.id)) pid = n->parent_id;
+    } else if (pid == 0) {
+      // (m6 step 4) a loose handle on the id of a physics instance:
+      // Group.findGadgetEx (`new ResourceRef(id).getParent()
+      // .getScriptInstance()`, Group.class L99) finds the gadget's Group.
+      pid = resref_physics_parent_id(self, st, &loose);
     }
   }
-  return make_bound_ref(pid);
+  // (m6 step 4) ... or on the click id of a part or car: its node (a part
+  // dropped on a bin panel: findGadgetEx answers null, Button.drop(GameRef)).
+  if (pid == 0) pid = resref_click_parent_id(loose);
+  return resref_box_node(pid);
 }
 InvObject* java_util_resource_ResourceRef_getFirstChild(InvObject* self) {
   // PE @ 0x0047D630 size 0xba (186): twin of getNextChild @ 0x0047D6F0
@@ -1575,12 +1663,13 @@ InvObject* java_util_resource_ResourceRef_getFirstChild(InvObject* self) {
   // else return [scratch+8] (often 0). Link scratch into node list @ +0x48;
   // [scratch+8]=[node+0x50] Native.ptr; non-0 → box NEW ResourceRef.
   // Host: first child in id() space via rpak_first_child_id.
+  // (m6 fixer) PE 940 FUN_004e3510: boxed by restype (resref_box_node).
   int32_t id = 0;
   {
     std::lock_guard<std::mutex> lock(g_mu);
     id = R(self).id;
   }
-  if (InvObject* o = make_bound_ref(rpak_first_child_id(id))) return o;
+  if (InvObject* o = resref_box_node(rpak_first_child_id(id))) return o;
   // Fork: runtime instance children (PE walks the live node tree: a
   // MouseCursor's RID_CURSOR GameRef / Camera, a Group's instances). The
   // host records parents on create; return the earliest-created child.
@@ -1633,7 +1722,8 @@ InvObject* java_util_resource_ResourceRef_getNextChild(InvObject* self) {
       return best;
     }
   }
-  return make_bound_ref(next_id);
+  // (m6 fixer) PE 940 FUN_004e35e0: boxed by restype (resref_box_node).
+  return resref_box_node(next_id);
 }
 InvObject* java_util_resource_ResourceRef_getWTRoot(InvObject* self) {
   // PE @ 0x0047D570 size 0xba (186): twin of getParent @ 0x0047D4B0 /
@@ -1667,7 +1757,8 @@ InvObject* java_util_resource_ResourceRef_getWTRoot(InvObject* self) {
     }
     if (pid == 0) pid = rpak_parent_id(id);
   }
-  return make_bound_ref(id);
+  // (m6 fixer) PE 940 FUN_004e3c00: boxed by restype (resref_box_node).
+  return resref_box_node(id);
 }
 void java_util_resource_ResourceRef_makeTexture(InvObject* self, InvObject* parent,
                                                InvObject* filename) {

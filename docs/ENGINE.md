@@ -336,6 +336,14 @@ menu or garage path needs them.
 
 ### 4.6 Natives: how a call crosses into C++
 
+**Update, 2026-10-23 (the mechanic; `../slrr-ghidra/notes/m6/`).** `ResourceRef.getParent`,
+`getFirstChild`, `getNextChild` and `getWTRoot` box the node they find by its restype, as
+the exe does (FUN_004e7320): a GameRef for 1 or 8, a RenderRef for 3 or 0xE, a ResourceRef
+otherwise. `GameRef.getInfo` asks the native part or car object first (0x47DDF0 calls the
+type's vt+0x3C); the old host switch answers only what the object table does not hold.
+`Part.install_OK` only searches for a slot and returns `int[2]` {my slot, target slot}; the
+host's old version installed during the probe.
+
 **Update, 2026-10-16 (buying and keeping cars; maps and spec in `../slrr-ghidra/notes/m5/`).**
 Three rules of the exe, now followed on the script boot, that this section and 4.4 had
 wrong or did not cover:
@@ -966,6 +974,7 @@ usable; host-only = no exe counterpart. PE / Soft / OOS are upstream's code mark
 | Controller / ControlSet / hotkeys / lastKey | soft | host axis-map table (152 per Controller) and host smoothing filter, the PE blob is mirrored but inert; 512-slot hotkey semantics, ascii packing and cheat ring follow the PE | `IO_part1.inc:563-611, 720-795`, `IO_part2.inc:326-600` |
 | MouseCursor | done (script boot) | `cursor` and `player` native types, ray pick per camera over the bound viewports, the eighteen EVENT_CURSOR forms, four natives, Windows shapes from the game's exe, camera control from the controller axes; not yet: the 3D pick of parts and the map triangles. The legacy stand-in stays for the old build | `NativeTypes_part9.inc`, `GameType.cpp` (`gametype_send_event`), `render_d3d9_part5.inc` (pick rays), `input_win32.cpp` |
 | Dealers, trade-in, car lot | done (script boot) | new and used dealers, buying, NOT ENOUGH MONEY, selling, trade-in with the turning stand, the car lot (park, fetch, browse), saves that read like stock ones; not yet: a completed trade-in shown in a run, the trade-in hall's blue-grey shading, the dealer's check view | `jvm_vmthread_part1/2.inc`, `jvm_register.cpp`, `GameRef_core.cpp`, `NativeTypes_part10.inc`, `AnimationParticle.cpp` (fog), `render_d3d9_part4.inc` (ground programs) |
+| Mechanic | partial (script boot) | pick of part and car click bodies (the typeof-9 `shape` mesh, float32 triangle test), take off and put back, install_OK as a pure slot search returning int[2], GameRef.getInfo from the part and car objects (removable rule FUN_004ca300, GII_SIZE), drag into the bin, swap, sell, repair; not yet: filters, tuning, flaps, MOVE PARTS, the dyno | `NativeTypes_part4/5/9/11.inc`, `GameRef_core.cpp`, `Part.cpp`, `Resources_part2.inc` |
 | Force feedback | missing | slots exist, no effect created, no joystick | `input_win32.cpp:859-861, 1104-1111` |
 | Steam | soft | since 75569af: the five natives have stand-ins on the script boot (`initAPI` returns 1). Before 75569af: 0 of 5 natives; `GameLogic` exits when `Steam.postInit()` is 0, yet the boot reaches Garage: why is `[unknown]` | natives_stubs.cpp; GameLogic.java:335 |
 | Vehicle build (`forceUpdate`) | partial | since 2f5111a: the `car` native type with analytic stance, parts on slots, wheel records written by the scripts, `forceUpdate` running `updatevariables`; no rigid body, the dyno figures are a stand-in. bookkeeping as side maps; no body | `Chassis_part2.inc:636-958` |

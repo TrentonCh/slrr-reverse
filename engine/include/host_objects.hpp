@@ -187,6 +187,39 @@ struct PhysicsPickBody {
   float ypr[3] = {0.f, 0.f, 0.f};
 };
 void physics_pick_bodies(std::vector<PhysicsPickBody>* out);
+// M6 step 1: the click bodies of the part and car objects
+// (NativeTypes_part11.inc). With the shipped data a part, and the car
+// itself, is picked only through its click body (PE 940 FUN_004c1f90: the
+// mesh the type's `click` record names, at the click line's offset in the
+// part's cfg frame; exe_mech X 1.1-1.4): one per object whose type has a
+// click shape and whose click body is not hidden (the exe's body flag
+// 0x4000); main thread only. `phy` is the host id that stands for the
+// body's "click" node (the `phy` of the cursor's events), `owner` the
+// object's node, `seq` the creation order of that node and `owner_id` its
+// id (both filled by click_pick_resolve), `pos` / `rot` the body's world
+// frame (world = rot * local + pos, rows), `radius` its shape's
+// shape+0xC, `shape` the type's click shape (opaque here).
+struct ClickPickBody {
+  InvObject* owner = nullptr;
+  int32_t owner_id = 0;  // the node id of `owner`
+  int32_t phy = 0;
+  uint64_t seq = 0;
+  float pos[3] = {0.f, 0.f, 0.f};
+  float rot[3][3] = {{1.f, 0.f, 0.f}, {0.f, 1.f, 0.f}, {0.f, 0.f, 1.f}};
+  float radius = 0.f;
+  const void* shape = nullptr;
+};
+void click_pick_bodies(std::vector<ClickPickBody>* out);
+void click_pick_resolve(std::vector<ClickPickBody>* bodies);
+// FUN_004fc140 kinds 6 / 7 on one click body: the segment from `far_pt`
+// to `near_pt` (world, metres) in the body's frame against every triangle
+// (FUN_004fd6d0); the smallest t (0 = the near point) with 0 < t < best,
+// or 0 for no hit. `tri` gets the hit triangle's index.
+float click_pick_test(const ClickPickBody& body, const float far_pt[3],
+                      const float near_pt[3], float best, int32_t* tri);
+// The node of the object a click body's phy id belongs to (null for any
+// other id): what ResourceRef.getParent of the exe's "click" node answers.
+InvObject* click_phy_owner(int32_t phy);
 // Phase 2.19 — flat ground + arcade drive from Controller axes.
 void physics_set_ground_y(float y);
 float physics_ground_y();
@@ -440,6 +473,38 @@ bool native_part_mesh(InvObject* self, int32_t* id);
 bool native_part_set_mesh(InvObject* self, int32_t id);
 bool native_part_texture(InvObject* self, int32_t* id);
 bool native_part_set_texture(InvObject* self, int32_t id);
+// (m6 step 2) Part.install_OK 0x4CD3A0 on the script boot
+// (NativeTypes_part5.inc): the probe of the part or car object. False when
+// the receiver has none (the legacy stand-in answers). Binds the part's root
+// handle to `dest` and searches as the `install` command does (`hint` =
+// pos x y z or null); `*my_slot` 0 = null, else the int[2] {my_slot,
+// target_slot}; with `*bind_out` the caller binds the out GameRef to
+// `*target` (null = unbound). Installs nothing.
+bool native_part_install_ok(InvObject* self, InvObject* dest, int32_t slot2,
+                            const float* hint, int32_t* my_slot,
+                            int32_t* target_slot, InvObject** target,
+                            bool* bind_out);
+// Fork (m6 step 2 rig): one call of the legacy install_OK's part_install
+// on the script boot (counted; printed at loop end).
+void native_part_install_ok_legacy();
+// (m6 step 3) GameRef.getInfo 0x47DDF0 on the script boot for a node with a
+// part or car object (NativeTypes_part5.inc): the object's answer (the
+// type's vt+0x3C, FUN_004c3da0 / FUN_004a15c0). `arg` the int of
+// getInfo(II)I, `arg_str` the String of getInfo(ILString;)I (null for the
+// int form). Returns 0 when GameRef.getInfo's switch answers (no such
+// object, or a query left to the switch), 1 a part answered, 2 a car;
+// the answer in *answer.
+int native_part_getinfo(InvObject* self, int32_t query, int32_t arg,
+                        const char* arg_str, int32_t* answer);
+// Fork (m6 step 3 rig): true with SLRR_PE_NATIVE_TYPE_LOG=1, the switch of
+// the step's diagnostic lines (NativeTypes_part5.inc).
+bool native_getinfo_log();
+// Fork (m6 step 3 rig, SLRR_PE_NATIVE_TYPE_LOG): one answer of a part or
+// car object (kind 1 / 2) and the switch's for the same call: counted for
+// the loop-end census, the first four per query and kind printed.
+void native_part_getinfo_note(InvObject* self, int32_t query, int kind,
+                              int32_t answer, int32_t host,
+                              const char* arg_str);
 // `[render-dbg]` lines of the paint: the calls of the run and one line per
 // replaced line of a part's or car's render type (NativeTypes_part7.inc).
 void native_part_paint_dump(FILE* out);

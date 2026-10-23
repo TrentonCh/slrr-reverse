@@ -1264,7 +1264,13 @@ JvmValue vmthread_assign_op_result(const JvmValue& dst, const JvmValue& src,
             case JvmTag::Int: std::snprintf(b, sizeof b, "%d", v.v.i); return b;
             case JvmTag::Float: std::snprintf(b, sizeof b, "%g", v.v.f); return b;
             case JvmTag::Obj: {
-              if (!v.v.o) return "null";
+              // Fork (m6_spec Q19): on the script boot a null operand adds
+              // nothing. The 940 exe has no "null" text anywhere (its only
+              // spellings are "<null>" in System.print and in error lines),
+              // and stock_66 shows "[+]" built from the String local `flags`
+              // that was never assigned (Mechanic.java:354-365, a declared
+              // object local is a null object here). Legacy path: "null".
+              if (!v.v.o) return native_script_boot() ? "" : "null";
               const char* cs = string_cstr(v.v.o);
               return cs ? cs : "";
             }

@@ -642,3 +642,20 @@ still answered from an old stand-in that finds no mesh on a script-boot
 car. They now take the box of the car's chassis compound as the exe does
 (children's points grown by their margins, nocollision and steering
 bodies left out, padded by 0.1 per side).
+
+### 2026-10-16 to 2026-10-23 (session 9): the mechanic
+
+The user could buy parts but not take any off: the cursor's pick only
+knew the boxes scripts make, so no cursor event ever named a part. In the
+exe a part is picked through its click body, the mesh named by the
+typeof-9 `shape` record of its cfg's `click` line. With that body, a
+float32 triangle test and a phy-id table, the scripts' own mechanic code
+did the rest: the hover line, a left click removing the part with its
+sub-tree into the bin (the door with its mirror and window, as the stock
+capture shows), putting it back, dragging, selling and repairing. Four
+host stand-ins had to go: `install_OK` installed during its probe,
+`getInfo` guessed categories from class names (car parts read 0, so a
+right click did nothing), the removable rule never named the part that
+blocks, and child handles were all plain ResourceRefs, so the catalog's
+per-car pages listed nothing. Two fix passes were cut off by usage limits
+and the acceptance was finished by hand.

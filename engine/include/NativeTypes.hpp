@@ -115,8 +115,18 @@ struct NativeInfo {
   int32_t i = 0;
   // In: the argument of a query that takes one (the exe passes it in the
   // place of the out pointer): the axis number of the player's 0x19 and
-  // 0x43.
+  // 0x43; the colour index of a part's 0x3C (0 = none: only read).
   int32_t arg = 0;
+  // In (m6 step 3): the String GameRef.getInfo(ILString;)I passes where
+  // the exe's handler reads its text: a part's or car's 0x28 ("%d %d")
+  // and a part's 0x47 ("%d %d %d %d %f %f %f"). Null for getInfo(II)I.
+  const char* arg_str = nullptr;
+  // In (m6 step 3): the exe's block of a part's or car's 0x2F / 0x31 is
+  // given (a host caller; GameRef.getInfo(II)I has the script's int in
+  // its place, and no script asks these queries): `arg` is block[0] of
+  // 0x2F (a slot id) or block[2] of 0x31 (the id of the previous entry, 0
+  // for the first). Without a block both answer 0, as the exe does.
+  bool block = false;
   // Query 0x4A of a ground (FUN_004bb570): with `fog_set` the block is
   // stored (the exe frees the old one and keeps the pointer); without, the
   // ground's block is copied into `fog` and the query is answered only when

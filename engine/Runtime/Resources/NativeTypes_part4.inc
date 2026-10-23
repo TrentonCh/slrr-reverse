@@ -65,6 +65,22 @@ struct PartShapeMesh {
   std::vector<uint32_t> tri;   // three per triangle
 };
 
+// (m6 step 1) A click shape as a type keeps it (FUN_005205e0 -> FUN_004f5b90):
+// the mesh in metres as read (a click shape has no mass and is never
+// recentred: FUN_005205e0 calls neither FUN_00505760 nor FUN_00508d20), per
+// triangle the normal FUN_004f5b90 stores at tri+0x14, normalize((v1 - v0) x
+// (v2 - v1)) (left as it is when its length is 0), the radius shape+0xC =
+// sqrt(max |v|^2) + 0.05 (DAT_00594798) from the shape's origin, the record's
+// `skin` (shape+0x10) and `type` (shape+8, the shape kind, default 7).
+struct ClickShape {
+  std::vector<float> xyz;      // three per vertex
+  std::vector<uint32_t> tri;   // three per triangle
+  std::vector<float> nrm;      // three per triangle
+  float radius = 0.f;
+  float skin = 0.f;
+  int kind = 7;
+};
+
 bool part_read_file(const std::string& rel, std::vector<uint8_t>* out) {
   out->clear();
   if (rel.empty()) return false;
@@ -399,18 +415,21 @@ struct PartTypeDesc {
   bool has_click = false;          // type+0x1040
   CamV3 click_off;                 // type+0x1000
   CamM3 click_rot = cam_identity();
-  // (m5 step 5) The first word of the `click` line and the cfg's pack: the
-  // click body's shape, read when the box below is first asked for.
+  // (m5 step 5) The first word of the `click` line and the cfg's pack.
   std::string click_word;
   int32_t click_pack = 0;
+  // (m6 step 1) The click body's shape (the body type at type+0x1040,
+  // FUN_004bf230), read at the type's init and shared by every type whose
+  // `click` line names the same record or file. Null when it did not load
+  // (the exe logs "Invalid clickdef" and the type gets no click body).
+  std::shared_ptr<const ClickShape> click_shape;
   // (m5 step 5) The box FUN_005008c0 builds for the part's compound from
   // its own children, in the cfg frame: every body without body flag 0x20
   // (`nocollision`, the car's `steering` body) and the click body, each
   // point grown by its margin. has_box is false for a type without points.
-  // Fork: the exe reads the click shape at the type's init; the host reads
-  // it on the first query (part_type_box: car info is the only reader so
-  // far), which keeps the type init as fast as before. Natives only, on the
-  // VM thread.
+  // Fork: the exe builds the box when the compound is made (FUN_005032d0);
+  // the host builds it on the first query (part_type_box: car info and
+  // GII_SIZE). Natives only, on the VM thread.
   mutable bool box_built = false;
   mutable bool has_box = false;
   mutable CamV3 box_lo, box_hi;
@@ -607,45 +626,113 @@ void part_body_shape(const char* shape, float mass, PartEntry* e,
   e->margin = kLeafMargin;
 }
 
-// (m5 step 5) The click body's shape (FUN_004bf230): the first word of the
-// `click` line is a physics body record of the cfg's pack (typeof 9, its
-// text `shape <mesh file>`, FUN_004f7b50) or a mesh file (FUN_004f7d60(0,
-// 7, ..)). Either way the shape has no mass, so its vertices stay as read.
-void part_click_shape(const char* word, int32_t pack, std::vector<CamV3>* out) {
-  out->clear();
+// (m5 step 5, m6 step 1) The click body's shape (FUN_004bf230): the first
+// word of the `click` line goes through "%d"; a number (not 0) names a
+// physics body record of the cfg's pack (FUN_0051e860, FUN_0051fa40(id, 9,
+// 0)), whose text FUN_005205e0 reads line by line: `shape <mesh>`, `type
+// %d` (default 7), `skin %f` (shape+0x10), and friction, coll_coeff, mass
+// and inertia, which a body of mass 0 does not use; then FUN_004f7b50(0,
+// record). Anything else is a mesh file: FUN_004f7d60(0, 7, 1, 1, 1, path).
+// The mesh is FUN_004f5b90's: x 0.01, the normals, and the radius over the
+// vertices but the last (the loop of FUN_004f5b90), which FUN_005205e0
+// then computes again over all of them.
+// One load per record or file: the payload of a record is built once
+// (FUN_0051fa40). Natives only, on the VM thread.
+std::unordered_map<std::string, std::shared_ptr<const ClickShape>> g_click_shapes;
+
+std::shared_ptr<const ClickShape> part_click_shape(const char* word, int32_t pack) {
   std::string path;
+  std::string key;
+  auto shape = std::make_shared<ClickShape>();
+  bool record = false;
   int32_t local = 0;
   if (engine_sscanf(word, "%d", &local) != 0 && local != 0) {
     const int32_t id = static_cast<int32_t>(
         rpak_remap_local_id(pack, static_cast<uint32_t>(local)));
+    char k[24];
+    std::snprintf(k, sizeof(k), "record %08X", static_cast<unsigned>(id));
+    key = k;
+    {
+      std::lock_guard<std::mutex> lock(g_nt_mu);
+      auto it = g_click_shapes.find(key);
+      if (it != g_click_shapes.end()) return it->second;
+    }
+    record = true;
     std::vector<uint8_t> blob;
-    if (!id || !rpak_read_entry(id, &blob)) return;
-    // Fork: the record's text is scanned here for its `shape` line; the
-    // exe's loader of the typeof-9 payload was not read (Q31).
-    std::string text(reinterpret_cast<const char*>(blob.data()), blob.size());
-    size_t at = 0;
-    while (at < text.size()) {
-      size_t eol = text.find('\n', at);
-      if (eol == std::string::npos) eol = text.size();
-      const std::string ln = text.substr(at, eol - at);
-      at = eol + 1;
-      char w[64] = {0};
-      char p[1025] = {0};
-      if (engine_sscanf(ln.c_str(), "%63s %1024s", w, p) == 2 && word_is(w, "shape")) {
-        path = p;
-        break;
+    if (id && rpak_read_entry(id, &blob)) {
+      std::string text(reinterpret_cast<const char*>(blob.data()), blob.size());
+      size_t at = 0;
+      while (at < text.size()) {
+        size_t eol = text.find('\n', at);
+        if (eol == std::string::npos) eol = text.size();
+        const std::string ln = text.substr(at, eol - at);
+        at = eol + 1;
+        char w[64] = {0};
+        if (engine_sscanf(ln.c_str(), "%63s", w) != 1) continue;
+        if (word_is(w, "shape")) {
+          char p[1025] = {0};
+          engine_sscanf(ln.c_str(), "%*s %1024s", p);
+          path = p;
+        } else if (word_is(w, "type")) {
+          engine_sscanf(ln.c_str(), "%*s %d", &shape->kind);
+        } else if (word_is(w, "skin")) {
+          engine_sscanf(ln.c_str(), "%*s %f", &shape->skin);
+        }
       }
     }
   } else {
     path = word;
+    key = "file " + path;
+    std::lock_guard<std::mutex> lock(g_nt_mu);
+    auto it = g_click_shapes.find(key);
+    if (it != g_click_shapes.end()) return it->second;
   }
   std::vector<uint8_t> file;
   PartShapeMesh mesh;
-  if (path.empty() || !part_read_file(path, &file) || !part_shape_mesh_read(file, &mesh))
-    return;
-  out->reserve(mesh.xyz.size() / 3);
-  for (size_t i = 0; i + 2 < mesh.xyz.size(); i += 3)
-    out->push_back(cam_v(mesh.xyz[i], mesh.xyz[i + 1], mesh.xyz[i + 2]));
+  std::shared_ptr<const ClickShape> done;
+  if (!path.empty() && part_read_file(path, &file) &&
+      part_shape_mesh_read(file, &mesh)) {
+    shape->xyz = std::move(mesh.xyz);
+    shape->tri = std::move(mesh.tri);
+    const std::vector<float>& v = shape->xyz;
+    shape->nrm.resize(shape->tri.size());
+    for (size_t t = 0; t + 2 < shape->tri.size(); t += 3) {
+      const float* v0 = &v[static_cast<size_t>(shape->tri[t]) * 3];
+      const float* v1 = &v[static_cast<size_t>(shape->tri[t + 1]) * 3];
+      const float* v2 = &v[static_cast<size_t>(shape->tri[t + 2]) * 3];
+      const float e1x = v1[0] - v0[0], e1y = v1[1] - v0[1], e1z = v1[2] - v0[2];
+      const float e2x = v2[0] - v1[0], e2y = v2[1] - v1[1], e2z = v2[2] - v1[2];
+      float nx = e2z * e1y - e2y * e1z;
+      float ny = e2x * e1z - e2z * e1x;
+      float nz = e2y * e1x - e2x * e1y;
+      const float len = std::sqrt(ny * ny + nx * nx + nz * nz);
+      if (len != 0.f) {
+        const float inv = 1.f / len;
+        nx = inv * nx;
+        ny = ny * inv;
+        nz = nz * inv;
+      }
+      shape->nrm[t] = nx;
+      shape->nrm[t + 1] = ny;
+      shape->nrm[t + 2] = nz;
+    }
+    const size_t n = v.size() / 3;
+    const size_t seen = record ? n : (n > 0 ? n - 1 : 0);
+    float far2 = 0.f;
+    for (size_t i = 0; i < seen; ++i) {
+      float d2 = v[i * 3] * v[i * 3] + v[i * 3 + 1] * v[i * 3 + 1] +
+                 v[i * 3 + 2] * v[i * 3 + 2];
+      if (d2 <= far2) d2 = far2;
+      far2 = d2;
+    }
+    constexpr float kRadiusPad = 0.05f;  // DAT_00594798
+    shape->radius = std::sqrt(far2) + kRadiusPad;
+    done = shape;
+  }
+  std::lock_guard<std::mutex> lock(g_nt_mu);
+  auto& slot = g_click_shapes[key];
+  if (!slot) slot = done;
+  return slot;
 }
 
 // The words only the car's keyword table has (NativeTypes_part6.inc).
@@ -1002,11 +1089,14 @@ const PartTypeDesc& part_type_box(const PartTypeDesc& td) {
     const CamV3 at = e.off + cam_mul(e.rot, e.com);
     for (const CamV3& p : e.pts) grow(at + cam_mul(e.rot, p), e.margin);
   }
-  if (d->has_click && !d->click_word.empty()) {
-    std::vector<CamV3> click;
-    part_click_shape(d->click_word.c_str(), d->click_pack, &click);
-    for (const CamV3& p : click)
-      grow(d->click_off + cam_mul(d->click_rot, p), 0.01f);  // DAT_005935d0
+  if (d->click_shape) {
+    // A leaf child: its margin is shape+0x10 plus 0.01 (DAT_005935d0).
+    const ClickShape& s = *d->click_shape;
+    const float margin = s.skin + 0.01f;
+    for (size_t i = 0; i + 2 < s.xyz.size(); i += 3)
+      grow(d->click_off + cam_mul(d->click_rot, cam_v(s.xyz[i], s.xyz[i + 1],
+                                                      s.xyz[i + 2])),
+           margin);
   }
   return td;
 }
@@ -1077,6 +1167,17 @@ const PartTypeDesc* part_type_desc(const GameTypeDesc* type) {
   }
   if (d->cfg_found)
     parse_part_cfg(text, rpak_id_pack(type->type_id), d.get());
+  // FUN_004bf230 makes the click line's body type while the cfg is read
+  // (m6 step 1).
+  if (d->has_click && !d->click_word.empty()) {
+    d->click_shape = part_click_shape(d->click_word.c_str(), d->click_pack);
+    if (!d->click_shape && native_type_log())
+      std::fprintf(stderr,
+                   "[native-type] part type 0x%08X cfg '%s': click '%s' did "
+                   "not load (Invalid clickdef): no click body\n",
+                   static_cast<unsigned>(type->type_id), d->cfg_path.c_str(),
+                   d->click_word.c_str());
+  }
   // payload+0x18 of the type node: `lod_amp` (or the LODA chunk), default
   // 1.0 (FUN_0051faf0).
   d->lod_amp = type->has_lod_amp ? type->lod_amp : 1.f;
@@ -1178,11 +1279,18 @@ class PartObject;
 // exit that runs the static destructors they are torn down after everything
 // defined here, and each ~PartObject they release still reads the list.
 std::vector<PartObject*>& g_parts_live = *new std::vector<PartObject*>();
+// (m6 step 1) Fork: the host ids that stand for the click bodies' "click"
+// nodes (PartObject::phy_id_) and the node of the object each belongs to:
+// what the exe's type-2 node has as its parent (ResourceRef.getParent,
+// M6 step 4). Main thread only; never destroyed, like the list above.
+std::unordered_map<int32_t, InvObject*>& g_click_phy =
+    *new std::unordered_map<int32_t, InvObject*>();
 
 class PartObject : public NativeObject {
  public:
   PartObject() { g_parts_live.push_back(this); }
   ~PartObject() override {
+    if (phy_id_) g_click_phy.erase(phy_id_);
     for (size_t i = g_parts_live.size(); i-- > 0;)
       if (g_parts_live[i] == this) {
         g_parts_live[i] = g_parts_live.back();
@@ -1247,6 +1355,13 @@ class PartObject : public NativeObject {
   void* walk_parent_ = nullptr;
   uint32_t walk_frame_ = 0;
   bool gone_ = false;        // destroy() ran
+  // (m6 step 1) The click body (part+0x3C, FUN_004c1f90): `phy_id_` the host
+  // id that stands for its "click" node (0: the type has no click shape),
+  // `click_hidden_` the body flag 0x4000 that takes it out of the pick:
+  // set by the falloff branch of `remove` and by `filter .. 2`, cleared by
+  // `filter .. 0` and `1` (X 1.6); clear at the create.
+  int32_t phy_id_ = 0;
+  bool click_hidden_ = false;
 
   // part+0x78: one 0x68-byte entry per slot of the type, in the type's
   // order (FUN_004c1f90 copies position and rotation from the type's list;
@@ -1580,6 +1695,22 @@ void part_init(PartObject* part, const NativeCreate& c) {
   part->texture_ = d.texture_id;
   part->mesh_ = d.mesh_id;
   part->render_type_ = d.main_render;
+  // The click body (asm 0x4c24b1..0x4c267a): a type-2 node "click" (or
+  // "cbone") under the part's node, owned by it, for a type whose click
+  // line made a body type. Fork: no node is made; the object keeps an id
+  // that stands for it (the `phy` of the cursor's events), from the
+  // sequence the physics instances of the scripts take theirs from, and the
+  // pick poses the body from the object's pose (NativeTypes_part11.inc).
+  // Fork (X 1.7 item 7): a type without a `click` line gets no id and no
+  // pick body; the exe picks its cfg `body` entries instead (X 1.1: 80
+  // cfgs, traffic, police, fake racers; m6_spec follow-up 2).
+  if (d.click_shape) {
+    {
+      std::lock_guard<std::mutex> lock(g_mu);
+      part->phy_id_ = resref_next_runtime_id();
+    }
+    g_click_phy[part->phy_id_] = part->key_;
+  }
   part->owns_create_pose = true;
   part->push_pose();
   // PE 940 FUN_00523c80 (the node of a GameRef.create): before the type's
@@ -1601,8 +1732,8 @@ void part_init(PartObject* part, const NativeCreate& c) {
   // FUN_004c2950: the level the node's detail gives, then FUN_004c2b10.
   part->level_ = part_level_for(d, part->detail_);
   part_make_render_instances(part, part->level_);
-  // Not made here (Fork): the bodies and the click shape themselves, the
-  // callback lists
+  // Not made here (Fork): the bodies (the click body is posed by the pick
+  // from the object's pose, NativeTypes_part11.inc), the callback lists
   // (FUN_004ebd90(part, 0x10295, 0)): a part has nothing to tick on the
   // host yet, so `ticks` stays off.
   if (native_type_log()) {

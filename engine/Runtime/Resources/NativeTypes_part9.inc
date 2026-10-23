@@ -419,6 +419,12 @@ struct CursorProf {
   double rays_us = 0.0;  // render_d3d9_pick_rays
   double bodies_us = 0.0;  // physics_pick_bodies, the owner chains
   double walk_us = 0.0;  // the tests
+  double walk_max_us = 0.0;  // the dearest pick's tests
+  uint64_t clicks = 0;     // click bodies listed (M6 step 1)
+  uint64_t click_kept = 0;  // of them entered by a ray's sphere test
+  uint64_t click_tests = 0;  // of them through the sphere gate
+  uint64_t click_tris = 0;   // triangles tested
+  double list_us = 0.0;      // of bodies_us: the two listings and their order
   double tick_us = 0.0;  // the whole animate call
 };
 CursorProf g_cursor_prof;
@@ -505,14 +511,17 @@ float pick_box_t(const float a[3], const float b[3], const float h[3]) {
 // (render_d3d9_pick_rays); per camera FUN_004fe1a0 casts the segment from
 // the near to the far plane into the physics below the camera's world-tree
 // root, and the first camera that hits anything ends the search.
-// What a camera's walk FUN_004fddf0 reaches of a script-made body: the
-// type-2 node of the body hangs under its owner's node, and the walk
-// descends from the root through every game node that has no WORLDTREELEAF
-// (0x40), the root included. That is how the boxes of a hidden Group drop
-// out. The event mask is not looked at, nor the body's thickness.
+// What a camera's walk FUN_004fddf0 reaches of a body: the type-2 node of
+// the body hangs under its owner's node, and the walk descends from the
+// root through every game node that has no WORLDTREELEAF (0x40), the root
+// included. That is how the boxes of a hidden Group drop out. The event
+// mask is not looked at, nor the body's thickness. The bodies: those the
+// scripts made (physics_pick_bodies: boxes and spheres) and the click
+// bodies of the part and car objects (click_pick_bodies, M6 step 1:
+// triangle meshes, NativeTypes_part11.inc).
 // Fork: the bounds test of child nodes (node+0xb0) is skipped, it only
-// saves work; collision triangles of nodes and the bodies of part and car
-// objects are M4 step 4.
+// saves work; the collision triangles of nodes (the map's PHYS chunks,
+// M4 Q7) are not tested.
 bool cursor_pick(float x, float y) {
   // At entry, before any viewport is looked at: the hit handle and the
   // body released, the point zeroed, the triangle index -1, t 0. The far
@@ -533,53 +542,158 @@ bool cursor_pick(float x, float y) {
     t0 = std::chrono::steady_clock::now();
   }
   if (n <= 0) return false;
+  // FUN_004fe1a0: per ray the segment (0x5DADF8 A, 0x5DAE04 B), its
+  // direction from A to B (0x5DAE10) and its length (0x5DAE1C).
+  struct Seg {
+    float dir[3];
+    float len;
+  };
+  Seg segs[kMaxRays];
+  for (int32_t i = 0; i < n; ++i) {
+    const float* a = rays[i].far_pt;
+    const float* b = rays[i].near_pt;
+    const float dx = b[0] - a[0];
+    const float dy = b[1] - a[1];
+    const float dz = b[2] - a[2];
+    const float len = std::sqrt(dy * dy + dx * dx + dz * dz);
+    float inv = len;
+    if (len <= 9.99999997e-07f) inv = 9.99999997e-07f;  // DAT_0059a450
+    inv = 1.f / inv;
+    segs[i].dir[0] = inv * dx;
+    segs[i].dir[1] = inv * dy;
+    segs[i].dir[2] = inv * dz;
+    segs[i].len = len;
+  }
   std::vector<PhysicsPickBody> bodies;
   physics_pick_bodies(&bodies);
-  if (bodies.empty()) return false;
+  std::vector<ClickPickBody> clicks;
+  click_pick_bodies(&clicks);
+  const size_t clicks_listed = clicks.size();
+  // Fork (cost only, M6): the sphere gate of every click body (the first
+  // test of FUN_004fc140) is asked here for every ray with best = 1.0, the
+  // value each ray's walk below starts at; best only shrinks, so a body no
+  // ray enters at 0 <= t <= 1 is never tested there. Only the bodies some
+  // ray enters keep their place, and only for them is the owner looked up
+  // (click_pick_resolve) and the reach walked. The exe gates a subtree by
+  // the sphere of each body it meets (X 1.3); the result is the same.
+  {
+    size_t keep = 0;
+    for (size_t c = 0; c < clicks.size(); ++c) {
+      bool in = false;
+      for (int32_t i = 0; i < n && !in; ++i) {
+        if (!rays[i].root) continue;
+        const float ts = pick_sphere_t(rays[i].far_pt, segs[i].dir,
+                                       segs[i].len, clicks[c].pos,
+                                       clicks[c].radius);
+        in = 0.f <= ts && ts <= 1.f;
+      }
+      if (!in) continue;
+      if (keep != c) clicks[keep] = clicks[c];
+      ++keep;
+    }
+    clicks.resize(keep);
+  }
+  click_pick_resolve(&clicks);
+  if (bodies.empty() && clicks.empty()) return false;
   // Fork: the exe meets the bodies in the order of its tree walk, and of
   // two bodies at the same t the first met wins (FUN_004fc140: `t < best`).
-  // The host takes them in the order they were created.
-  std::sort(bodies.begin(), bodies.end(),
-            [](const PhysicsPickBody& a, const PhysicsPickBody& b) {
-              return a.seq != b.seq ? a.seq < b.seq : a.id < b.id;
-            });
-  // The way up from an owner, once per owner and pick: every node from the
-  // owner to the top, each with "a WORLDTREELEAF node at or below it".
-  struct Up {
-    void* node;
-    bool leaf;
+  // The host takes them in the order they were created: the script bodies
+  // by their PhysicsRef, the click bodies by their object's node, in one
+  // order (m6_spec Q15).
+  struct Cand {
+    uint64_t seq;
+    int32_t id;
+    const PhysicsPickBody* body;  // a script body, or
+    const ClickPickBody* click;   // a click body
+    InvObject* owner;
   };
-  struct Chain {
-    InvObject* owner = nullptr;
-    int32_t owner_id = 0;  // 0: the owner is no live node
-    std::vector<Up> up;
-  };
-  std::vector<Chain> chains;
-  auto chain_of = [&chains](InvObject* owner) -> size_t {
-    for (size_t k = 0; k < chains.size(); ++k)
-      if (chains[k].owner == owner) return k;
-    Chain c;
-    c.owner = owner;
-    // Fork: a PhysicsRef the script made under a node that was destroyed
-    // since stays in the host's table (the exe deletes it with the node).
-    const int32_t id = java_util_resource_ResourceRef_id(owner);
-    c.owner_id = cursor_node(id) == owner ? id : 0;
-    if (c.owner_id != 0) {
-      bool leaf = false;
-      void* cur = owner;
-      for (int guard = 0; cur && guard < 64; ++guard) {
-        if (gameref_get_flags(static_cast<InvObject*>(cur)) & kNodeWorldTreeLeaf)
-          leaf = true;
-        c.up.push_back({cur, leaf});
-        cur = render_d3d9_camera_walk_parent(cur);
+  std::vector<Cand> cands;
+  cands.reserve(bodies.size() + clicks.size());
+  for (const PhysicsPickBody& b : bodies)
+    cands.push_back({b.seq, b.id, &b, nullptr, b.owner});
+  for (const ClickPickBody& c : clicks)
+    cands.push_back({c.seq, c.phy, nullptr, &c, c.owner});
+  std::sort(cands.begin(), cands.end(), [](const Cand& a, const Cand& b) {
+    return a.seq != b.seq ? a.seq < b.seq : a.id < b.id;
+  });
+  if (prof) {
+    g_cursor_prof.clicks += clicks_listed;
+    g_cursor_prof.click_kept += clicks.size();
+    g_cursor_prof.list_us += cursor_us_since(t0);
+  }
+  // The node id each body's owner is reported with; 0: the owner is no
+  // live node. Fork: a PhysicsRef the script made under a node that was
+  // destroyed since stays in the host's table (the exe deletes it with the
+  // node). A click body's owner is a live part or car node, its id comes
+  // with the list.
+  std::vector<int32_t> owner_id(cands.size(), 0);
+  {
+    std::unordered_map<InvObject*, int32_t> seen;
+    for (size_t k = 0; k < cands.size(); ++k) {
+      if (cands[k].click) {
+        owner_id[k] = cands[k].click->owner_id;
+        continue;
       }
+      InvObject* const ow = cands[k].owner;
+      auto it = seen.find(ow);
+      if (it == seen.end()) {
+        const int32_t id = java_util_resource_ResourceRef_id(ow);
+        it = seen.emplace(ow, cursor_node(id) == ow ? id : 0).first;
+      }
+      owner_id[k] = it->second;
     }
-    chains.push_back(std::move(c));
-    return chains.size() - 1;
+  }
+  // Whether a ray's walk (FUN_004fddf0) reaches an owner: the ray's root is
+  // on the owner's way up (at most 64 nodes) and no node from the owner to
+  // the root, both included, has WORLDTREELEAF (0x40).
+  // Fork (cost, M6 step 1): asked once per pick for every owner as a mask
+  // over the distinct roots of the rays: mask(n) = 0 when n has the flag,
+  // else the bit of n when n is a root, or'ed with mask(parent of n),
+  // through a memo per node (the click bodies of every part of a car share
+  // the way up from the car on).
+  std::vector<void*> roots;
+  std::vector<uint64_t> ray_bit(static_cast<size_t>(n), 0);
+  for (int32_t i = 0; i < n; ++i) {
+    if (!rays[i].root) continue;
+    size_t k = 0;
+    while (k < roots.size() && roots[k] != rays[i].root) ++k;
+    if (k == roots.size()) roots.push_back(rays[i].root);
+    ray_bit[static_cast<size_t>(i)] = uint64_t{1} << k;  // n <= kMaxRays = 64
+  }
+  std::unordered_map<void*, uint64_t> mask_of;
+  mask_of.reserve(cands.size() + 64);
+  auto reach_mask = [&mask_of, &roots](void* owner) -> uint64_t {
+    void* path[64];
+    int np = 0;
+    uint64_t above = 0;  // the mask of the first known node above the path
+    void* cur = owner;
+    for (int guard = 0; cur && guard < 64; ++guard) {
+      auto it = mask_of.find(cur);
+      if (it != mask_of.end()) {
+        above = it->second;
+        break;
+      }
+      path[np++] = cur;
+      if (gameref_get_flags(static_cast<InvObject*>(cur)) & kNodeWorldTreeLeaf) {
+        above = 0;  // nothing above reaches the nodes below
+        mask_of.emplace(cur, uint64_t{0});
+        --np;
+        break;
+      }
+      cur = render_d3d9_camera_walk_parent(cur);
+    }
+    // Down the path: each node adds its own root bit.
+    uint64_t m = above;
+    for (int k = np - 1; k >= 0; --k) {
+      for (size_t r = 0; r < roots.size(); ++r)
+        if (roots[r] == path[k]) m |= uint64_t{1} << r;
+      mask_of.emplace(path[k], m);
+    }
+    return np > 0 ? m : above;
   };
-  std::vector<size_t> chain_ix(bodies.size());
-  for (size_t k = 0; k < bodies.size(); ++k)
-    chain_ix[k] = chain_of(bodies[k].owner);
+  std::vector<uint64_t> owner_mask(cands.size(), 0);
+  for (size_t k = 0; k < cands.size(); ++k)
+    if (owner_id[k] != 0) owner_mask[k] = reach_mask(cands[k].owner);
   if (prof) {
     g_cursor_prof.bodies_us += cursor_us_since(t0);
     t0 = std::chrono::steady_clock::now();
@@ -588,39 +702,53 @@ bool cursor_pick(float x, float y) {
     bool on;
     std::chrono::steady_clock::time_point t0;
     ~WalkTime() {
-      if (on) g_cursor_prof.walk_us += cursor_us_since(t0);
+      if (!on) return;
+      const double us = cursor_us_since(t0);
+      g_cursor_prof.walk_us += us;
+      if (g_cursor_prof.walk_max_us < us) g_cursor_prof.walk_max_us = us;
     }
   } walk_time{prof, t0};
   for (int32_t i = 0; i < n; ++i) {
     const RenderPickRay& ray = rays[i];
     if (!ray.root) continue;
-    // FUN_004fe1a0: the segment (0x5DADF8 A, 0x5DAE04 B), its direction
-    // from A to B (0x5DAE10), its length (0x5DAE1C), best t = 1.0.
+    // FUN_004fe1a0: the segment, its direction and length (segs, above),
+    // best t = 1.0.
     const float* a = ray.far_pt;
     const float* b = ray.near_pt;
-    const float dx = b[0] - a[0];
-    const float dy = b[1] - a[1];
-    const float dz = b[2] - a[2];
-    const float len = std::sqrt(dy * dy + dx * dx + dz * dz);
-    float inv = len;
-    if (len <= 9.99999997e-07f) inv = 9.99999997e-07f;  // DAT_0059a450
-    inv = 1.f / inv;
-    const float dir[3] = {inv * dx, inv * dy, inv * dz};
+    const float len = segs[i].len;
+    const float* dir = segs[i].dir;
     float best = 1.f;  // _DAT_005947d0
-    const PhysicsPickBody* got = nullptr;
+    const Cand* got = nullptr;
     int32_t got_owner = 0;
+    int32_t got_tri = 0;
     CamM3 got_rot = cam_identity();
-    for (size_t bi = 0; bi < bodies.size(); ++bi) {
-      const PhysicsPickBody& body = bodies[bi];
-      const Chain& c = chains[chain_ix[bi]];
-      if (c.owner_id == 0) continue;
-      bool reached = false;
-      for (const Up& u : c.up)
-        if (u.node == ray.root) {
-          reached = !u.leaf;
-          break;
+    float got_pos[3] = {0.f, 0.f, 0.f};
+    for (size_t bi = 0; bi < cands.size(); ++bi) {
+      const Cand& cd = cands[bi];
+      if (owner_id[bi] == 0) continue;
+      if (!(owner_mask[bi] & ray_bit[static_cast<size_t>(i)])) continue;
+      if (cd.click) {
+        // FUN_004fc140 on a click body (kind 7): the sphere of its shape at
+        // the body (shape+0xC, which holds the 0.05 already), entered at 0
+        // <= t <= best; then the triangles (FUN_004fd6d0).
+        const ClickPickBody& cb = *cd.click;
+        const float ts = pick_sphere_t(a, dir, len, cb.pos, cb.radius);
+        if (!(0.f <= ts) || best < ts) continue;
+        int32_t tri = -1;
+        const float t = click_pick_test(cb, a, b, best, &tri);
+        if (prof) ++g_cursor_prof.click_tests;
+        if (0.f < t && t < best) {
+          best = t;
+          got = &cd;
+          got_owner = owner_id[bi];
+          got_tri = tri;  // DAT_005dae5c: the triangle's index
+          for (int r = 0; r < 3; ++r)
+            for (int k = 0; k < 3; ++k) got_rot.m[r][k] = cb.rot[r][k];
+          for (int k = 0; k < 3; ++k) got_pos[k] = cb.pos[k];
         }
-      if (!reached) continue;
+        continue;
+      }
+      const PhysicsPickBody& body = *cd.body;
       // FUN_004fc140(body): the bounding sphere of the body type first
       // (shape+0xC: the half diagonal of a box, the radius of a sphere, each
       // plus 0.05), entered at 0 <= t <= best.
@@ -653,17 +781,19 @@ bool cursor_pick(float x, float y) {
       }
       if (t < best) {
         best = t;
-        got = &body;
-        got_owner = c.owner_id;
+        got = &cd;
+        got_owner = owner_id[bi];
+        got_tri = 0;  // DAT_005dae5c of a box or sphere hit
         got_rot = rot;
+        for (int k = 0; k < 3; ++k) got_pos[k] = body.pos[k];
       }
     }
     if (got && best < 1.f) {
       // The tail of FUN_004fe1a0: the world point (A - B) t + B, into the
       // frame of the body that was hit.
-      const float wx = (a[0] - b[0]) * best + b[0] - got->pos[0];
-      const float wy = (a[1] - b[1]) * best + b[1] - got->pos[1];
-      const float wz = (a[2] - b[2]) * best + b[2] - got->pos[2];
+      const float wx = (a[0] - b[0]) * best + b[0] - got_pos[0];
+      const float wy = (a[1] - b[1]) * best + b[1] - got_pos[1];
+      const float wz = (a[2] - b[2]) * best + b[2] - got_pos[2];
       for (int k = 0; k < 3; ++k)
         g_pick.point[k] = got_rot.m[1][k] * wy + got_rot.m[0][k] * wx +
                           got_rot.m[2][k] * wz;
@@ -672,7 +802,7 @@ bool cursor_pick(float x, float y) {
         g_pick.near_pt[k] = b[k];
       }
       g_pick.t = best;
-      g_pick.tri = 0;  // DAT_005dae5c of a box or sphere hit
+      g_pick.tri = got_tri;
       g_pick.body_id = got->id;
       g_pick.obj_id = got_owner;
       g_pick.vp_pri = ray.vp_pri;
@@ -718,6 +848,21 @@ void cursor_pick_dump(float x, float y) {
             [](const PhysicsPickBody& a, const PhysicsPickBody& b) {
               return a.seq != b.seq ? a.seq < b.seq : a.id < b.id;
             });
+  std::vector<ClickPickBody> clicks;
+  click_pick_bodies(&clicks);
+  for (const ClickPickBody& c : clicks) {
+    const int32_t oid = java_util_resource_ResourceRef_id(c.owner);
+    void* up = render_d3d9_camera_walk_parent(c.owner);
+    std::fprintf(stderr,
+                 "[cursor] pickdbg click %d owner=%p 0x%08X live=%d pos=(%.4f, "
+                 "%.4f, %.4f) radius=%.4f under=%p 0x%08X\n",
+                 c.phy, static_cast<void*>(c.owner), static_cast<unsigned>(oid),
+                 cursor_node(oid) == c.owner ? 1 : 0, c.pos[0], c.pos[1],
+                 c.pos[2], c.radius, up,
+                 static_cast<unsigned>(
+                     up ? java_util_resource_ResourceRef_id(static_cast<InvObject*>(up))
+                        : 0));
+  }
   for (const PhysicsPickBody& b : bodies) {
     const int32_t oid = java_util_resource_ResourceRef_id(b.owner);
     std::string up;
@@ -1524,10 +1669,16 @@ void native_cursor_debug_dump(FILE* out) {
     std::fprintf(out,
                  "[cursor] prof ticks=%llu tick=%.1f ms (%.1f us each, script "
                  "handlers included) picks=%llu rays=%.1f bodies=%.1f "
-                 "walk=%.1f us each\n",
+                 "(lists %.1f) walk=%.1f us each; walk_max=%.1f us; click "
+                 "bodies %.1f, through the sphere %.2f, triangles %.0f each; "
+                 "entered by a ray %.2f\n",
                  static_cast<unsigned long long>(p.ticks), p.tick_us / 1000.0,
                  p.tick_us / static_cast<double>(p.ticks),
                  static_cast<unsigned long long>(p.picks), p.rays_us / np,
-                 p.bodies_us / np, p.walk_us / np);
+                 p.bodies_us / np, p.list_us / np, p.walk_us / np, p.walk_max_us,
+                 static_cast<double>(p.clicks) / np,
+                 static_cast<double>(p.click_tests) / np,
+                 static_cast<double>(p.click_tris) / np,
+                 static_cast<double>(p.click_kept) / np);
   }
 }

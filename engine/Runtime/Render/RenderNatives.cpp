@@ -11,6 +11,7 @@
 #include "runtime.hpp"
 #include "render_d3d9.hpp"
 #include "tree_interp.hpp"
+#include "tree_interp_internal.hpp"  // m6 rig: tree_field_slot (the [text] log)
 #include "input_win32.hpp"
 #include "video_fmv.hpp"
 
@@ -507,6 +508,9 @@ int32_t java_render_GfxEngine_isPlayingVideo() {
   return video_fmv_is_playing();
 }
 
+// m6 rig: the boot loop's clock (game_boot_part1.inc).
+double pe_boot_log_time();
+
 namespace {
 // PE dword_612C64 .data ; u32 init 0xFFFFFFFF (int_convert 4294967295).
 int32_t g_text_default_color = static_cast<int32_t>(0xFFFFFFFFu);
@@ -531,6 +535,86 @@ bool text_charset_font(InvObject* charset) {
                  static_cast<unsigned>(rid));
   return render_d3d9_font_load(charset, "simple20");
 }
+
+// Fork (m6 test rig; the exe has nothing of this, and nothing below runs
+// without SLRR_PE_TEXT_LOG=1): one line
+//   [text] t=<s> 0x<id> #<n> "<text>" at (<x>, <y>) align <a>
+// whenever the string a Text.update reads differs from the last one
+// logged for that Text ("" before the first). t = seconds on the boot
+// loop's clock (the `t=` of the `[career]` and `[pe-boot] mouse` lines,
+// -1 before the loop); id = the resource id of the Text's renderinst
+// handle (the exe's r_text node; 0 while the host gives that handle
+// none); #n = this log's number of the Text (Text.create numbers it, a
+// Text made again at the same address starts over), which tells texts
+// without an id apart; x, y = its position as create / setPos gave it;
+// a = its align (2, the create default, until changeAlign). The text
+// is printed with \ " and control characters escaped. Read only: the
+// Text's fields and the handle's record are looked up, never made; no
+// VM call.
+bool text_log_on() {
+  static const bool on = [] {
+    const char* e = std::getenv("SLRR_PE_TEXT_LOG");
+    return e && e[0] == '1';
+  }();
+  return on;
+}
+
+struct TextLogEntry {
+  uint32_t n = 0;
+  std::string last;
+};
+
+std::unordered_map<InvObject*, TextLogEntry> g_text_log;
+uint32_t g_text_log_n = 0;
+
+void text_log_created(InvObject* self) {
+  if (!self || !text_log_on()) return;
+  TextLogEntry& e = g_text_log[self];
+  e.n = ++g_text_log_n;
+  e.last.clear();
+}
+
+void text_log_update(InvObject* self) {
+  if (!self || !text_log_on()) return;
+  InvObject* so = tree_field_get_obj(self, "text");
+  const char* s = so ? string_cstr(so) : nullptr;
+  if (!s) s = "";
+  auto it = g_text_log.find(self);
+  if (it == g_text_log.end()) {
+    it = g_text_log.emplace(self, TextLogEntry{}).first;
+    it->second.n = ++g_text_log_n;
+  }
+  if (it->second.last == s) return;
+  it->second.last = s;
+  int32_t id = 0;
+  if (InvObject* ri = tree_field_get_obj(self, "renderinst")) {
+    std::lock_guard<std::mutex> lock(g_mu);
+    const auto r = g_res.find(ri);
+    if (r != g_res.end()) id = r->second.id;
+  }
+  const JvmValue* al = tree_field_slot(self, "_text_align", false);
+  const int32_t align = (al && al->tag == JvmTag::Int) ? al->v.i : 2;
+  std::string q;
+  for (const char* p = s; *p; ++p) {
+    const unsigned char c = static_cast<unsigned char>(*p);
+    if (c == '"' || c == '\\') {
+      q += '\\';
+      q += static_cast<char>(c);
+    } else if (c == '\n') {
+      q += "\\n";
+    } else if (c < 0x20) {
+      char b[8];
+      std::snprintf(b, sizeof b, "\\x%02X", c);
+      q += b;
+    } else {
+      q += static_cast<char>(c);
+    }
+  }
+  std::printf("[text] t=%.2f 0x%08X #%u \"%s\" at (%.4f, %.4f) align %d\n",
+              pe_boot_log_time(), static_cast<uint32_t>(id), it->second.n, q.c_str(),
+              tree_field_get_float(self, "_text_px"), tree_field_get_float(self, "_text_py"),
+              align);
+}
 }
 
 void java_render_Text_create(InvObject* self, InvObject* parent, InvObject* charset, float x, float z) {
@@ -547,6 +631,7 @@ void java_render_Text_create(InvObject* self, InvObject* parent, InvObject* char
   // PE 940: FUN_004e5b30 -> FUN_004e8f40 (payload +0x170 text, +0x174 align
   // = 2, +0x178 scale = 1.0, +0x17c colour).
   text_charset_font(charset);
+  text_log_created(self);  // m6 rig (SLRR_PE_TEXT_LOG)
   if (std::getenv("SLRR_PE_STREAM_TRACE"))
     std::fprintf(stderr, "[native] Text.create self=%p parent=%p charset=%p font_ready=%d x=%g z=%g\n",
                  static_cast<void*>(self), static_cast<void*>(parent), static_cast<void*>(charset),
@@ -733,6 +818,7 @@ void java_render_Text_update(InvObject* self) {
     render_d3d9_text_set_string(self, string_cstr(s));
   else
     render_d3d9_text_set_string(self, "");
+  text_log_update(self);  // m6 rig (SLRR_PE_TEXT_LOG)
   if (std::getenv("SLRR_PE_STREAM_TRACE"))
     std::fprintf(stderr, "[native] Text.update self=%p text='%.40s' osd_texts=%d\n",
                  static_cast<void*>(self), render_d3d9_text_get_string(self), render_d3d9_osd_text_count());

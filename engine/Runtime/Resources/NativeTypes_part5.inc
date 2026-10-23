@@ -69,7 +69,8 @@
 // installed through are cleared, the part leaves its car and becomes its
 // own, and with a root its compound goes to (0, 0, 0) and its node under
 // the root (part_cmd_remove).
-// Not ported: `cancel`, `repair`, `flap_toggle`, `texture`,
+// `repair` and `cancel` (m6 step 4): part_cmd_repair below.
+// Not ported: `flap_toggle`, `texture`,
 // `bigdecal`, `decal`, `paint`, `colorscheme` (the host's generic chain
 // sees them as before), bone01 of a `skinned` type (type+0x11F8), the
 // state a slot inherits from the target (part+0xB0, part+0x120), the car's
@@ -105,6 +106,13 @@ struct PartInstallStats {
   // installed part off its slot.
   int removes = 0;
   int removed = 0;
+  // (m6 step 2) Part.install_OK on the script boot: the probes a part or
+  // car object answered (native_part_install_ok) and those that found a
+  // slot; the calls of the legacy stand-in (Part.cpp) that wrote the
+  // legacy slot tables on the script boot (part_install), which must stay 0.
+  int probes = 0;
+  int probes_found = 0;
+  int legacy_install_ok = 0;
 };
 PartInstallStats g_part_install_stats;
 
@@ -797,9 +805,12 @@ bool part_cmd_install(PartObject* me, const char* text, bool with_place) {
       on_car = (top && top->type_index == kNativeCar) ||
                part_node_unported(tp->car_);
     }
+    // Fork (log only, m6 step 2): a part that was taken off before (state 2
+    // or 3) is logged whenever it goes back, like the first four.
+    const bool was_off = me->state_ == 2 || me->state_ == 3;
     part_install(me, mine, target, tp.get(), target_slot);
     ++g_part_install_stats.matched;
-    if (log && (!on_car || g_part_install_stats.matched <= 4)) {
+    if (log && (!on_car || g_part_install_stats.matched <= 4 || was_off)) {
       const RpakEntry* a = rpak_find_entry(me->type_->type_id);
       const RpakEntry* b = rpak_find_entry(tp->type_->type_id);
       std::fprintf(stderr,
@@ -932,6 +943,8 @@ void part_remove_finish(PartObject* me, int32_t root_id) {
   ++g_part_install_stats.removed;
   if (root_id == 0) {
     part_script_call(me->key_, "falloff", "()V", {});
+    // The click body gets flag 0x4000 (0x4c86d9..0x4c86eb): out of the pick.
+    me->click_hidden_ = true;
     InvObject* const up = gameref_get_parent(me->key_);
     InvObject* const up2 = up ? gameref_get_parent(up) : nullptr;
     if (up2 && !part_same_node(up2, me->key_))
@@ -1136,6 +1149,8 @@ void PartObject::destroy() {
   }
   insts_.clear();
   render_d3d9_mesh_destroy(key_);  // the pose entry of the key
+  // The click node goes with the part's node (m6 step 1).
+  if (phy_id_) g_click_phy.erase(phy_id_);
   ++g_part_tree_gen;  // the slot handles on this node are unbound now
   for (InvObject* d : doomed) {
     if (!part_of(d)) continue;  // gone already
@@ -1176,11 +1191,96 @@ bool PartObject::set_matrix(const float pos[3], const float ypr[3]) {
   return true;
 }
 
-// vt+0x3C FUN_004c3da0: 1 the physics instance, 6 the type, 7 the kind of
-// object (9), 0x17 the first render instance, 0x27 the free slots, 0x2B
-// the car, 0x2F the body a slot is on, and more part queries (wear, mesh,
-// texture). GameRef.getPos asks channel 2, which the engine answers from
-// the physics instance of query 1: the compound `part_comp`.
+// GII_SIZE, getinfo 0xB (NativeTypes_part11.inc).
+bool part_gii_size(PartObject* p, NativeInfo* out);
+
+// PE 940 FUN_004ca300(type, part) (gh/b02 lines 1-37; X 2.7): getinfo 0x29
+// GII_GETOUT_OK = GII_REMOVE_OK of a part, and 41 of a car (FUN_004a15c0
+// calls the same function). -1 when the chain the part is installed
+// through is locked (FUN_004cb0b0); else over its slot records in the
+// type's order: -1 at the first with flags & 0x11 == 0x11 (installed
+// through a disabled slot), the id of the part on the other side (rec+8,
+// the handle's id) at the first with flag 2 (a part is installed on the
+// slot); 0 when there is none.
+int32_t part_getout_ok(PartObject* p) {
+  if (part_chain_locked(p, 0)) return -1;
+  for (const PartObject::Slot& s : p->slots_) {
+    if ((s.flags & 0x11u) == 0x11u) return -1;
+    if (!(s.flags & 2u) || !s.other) continue;
+    const int32_t id = part_node_id(s.other);
+    if (id != 0) return id;
+  }
+  return 0;
+}
+
+// getinfo 0x3C, after part+0x58 is set: FUN_004c6510 colours the part
+// again. Fork: FUN_004c6510 was not read; the host picks the colour of
+// every render instance as the create does (the entry's `colors` list at
+// the index modulo its length, part_make_render_instance).
+void part_recolour(PartObject* p) {
+  const PartTypeDesc& d = *p->type_;
+  for (const PartObject::Inst& in : p->insts_) {
+    if (!in.r || in.entry < 0 ||
+        in.entry >= static_cast<int>(d.entries.size()))
+      continue;
+    const PartEntry& e = d.entries[static_cast<size_t>(in.entry)];
+    if (e.colors.empty()) continue;
+    const int32_t n = static_cast<int32_t>(e.colors.size());
+    const int32_t pick = p->colour_index_ % n;
+    render_d3d9_mesh_set_color(
+        in.r, e.colors[static_cast<size_t>(pick < 0 ? pick + n : pick)]);
+  }
+}
+
+// vt+0x3C FUN_004c3da0 (gh/b01 lines 1-238, asm gh/b02; X 5.1). The int
+// the exe returns is out->i (an out handle: out->obj; the float out
+// pointer: out->v[0]). The exe answers 0 to a query it has no row for;
+// this returns false then, and for 0x17 / 0x2B without a target, so that
+// the host's own callers can tell (native_part_getinfo answers 0).
+//   2: the compound's origin (`part_comp`), which GameRef.getPos reads
+//      through the physics instance of query 1 in the exe;
+//   6: the type id (type+0xC); Fork: the out handle on the type is not
+//      kept (the host has no node object for a type record);
+//   7: 9 (GIR_CAT_PART); 0xB: GII_SIZE (NativeTypes_part11.inc);
+//   0xF GII_DAMAGE: (int)(part+0xB4 x 100.0). Fork (Q10): from the host's
+//      tear store, Part.getTear of the node's script instance (Part.cpp),
+//      1.0 until the first setTear; the exe reads part+0xB4;
+//   0x17: the first render instance (part+0x4C), its id;
+//   0x27: the free slots (type slot count - slots in use);
+//   0x28: "%d %d" FUN_004c89f0(me, a handle on the first number, the
+//      second, no place): a free slot of mine that takes that slot of
+//      that type, 0 when none. The first number is a TYPE id [I: the
+//      handle stands where FUN_004c9af0 passes the installing part's type
+//      handle, and FUN_004c9d90 compares its id with the type ids of the
+//      `attach` lists]; an id that names no part or car type gives 0
+//      (Fork: the exe would read a null slot list);
+//   0x29: FUN_004ca300 (part_getout_ok);
+//   0x2B: the id of the car (part+0xC8; the part itself until installed);
+//   0x2F: with a block, its handle bound to the body slot block[0] hangs on
+//      (Fork: a part's reference body has no node of its own on the host,
+//      the part's node stands for it; the host's block has no block[3]:
+//      0); without one 0;
+//   0x31: with a block, the entry of the list part+0xDC after the one
+//      whose id is block[2] (the first for 0; none past the end), the
+//      return block[2]; without one 0;
+//   0x37 GII_PART_CATEGORY: type+0x115C, the cfg `category` (a car 2);
+//   0x3C: a non-zero argument becomes part+0x58 (the colour index), then
+//      the part is coloured again; the return part+0x58;
+//   0x3F: part+0xAC, the owner of the render instances (part_owner_id);
+//   0x47 GII_INSTALL_OK: "%d %d %d %d %f %f %f" (root, -, target, target
+//      slot, place; the place only when all seven convert): the root
+//      handle part+0x60 bound to the first id (FUN_0051fa40(id, 1, 0);
+//      it stays bound, as after Part.install_OK), a handle on the target
+//      (FUN_0047f200), FUN_004c96c0(me, target, &slot, place) (the search
+//      of `install` and of step 2's probe, part_find_install); the return
+//      is the id of that handle afterwards: the target found, else the one
+//      given (0 for none). Fork: a search that would go on into a type
+//      without host object (`assume`) finds nothing, as in the probe;
+//   0x49: part+0x5C, the state (1 installed, 2 removed onto a root, 3
+//      fallen off).
+// Not here (native_part_getinfo leaves them to GameRef.getInfo's
+// switch): 1 (Fork: no physics instance), 0x3A and 0x48 (Q9), 0x4D
+// GII_PAINTABLE (the paint booth).
 bool PartObject::getinfo(int32_t query, NativeInfo* out) {
   switch (query) {
     case 2: {
@@ -1190,20 +1290,97 @@ bool PartObject::getinfo(int32_t query, NativeInfo* out) {
       out->v[2] = c.z;
       return true;
     }
+    case 6:
+      out->i = type_->type_id;
+      return true;
     case 7:
       out->i = 9;
       return true;
+    case 0xb:
+      return part_gii_size(this, out);
+    case 0xf: {
+      constexpr float kCent = 100.f;  // DAT_0059385c
+      const float tear = key_ ? java_game_parts_Part_getTear(key_) : 1.f;
+      out->i = static_cast<int32_t>(tear * kCent);  // CVTTSS2SI
+      return true;
+    }
     case 0x17:
       out->obj = insts_.empty() ? nullptr : insts_[0].r;
+      out->i = out->obj ? part_node_id(out->obj) : 0;
       return out->obj != nullptr;
     case 0x27:
       out->i = static_cast<int32_t>(slots_.size()) - installed_;
       return true;
+    case 0x28: {
+      int32_t type_id = 0, its_slot = 0;
+      engine_sscanf(out->arg_str ? out->arg_str : "", "%d %d", &type_id,
+                    &its_slot);
+      out->i = 0;
+      const GameTypeDesc* gt = gametype_desc(type_id);
+      if (gt->found && (gt->native_index == kNativePart ||
+                        gt->native_index == kNativeCar))
+        out->i = part_free_slot_for(this, *part_type_desc(gt), its_slot,
+                                    nullptr);
+      return true;
+    }
+    case 0x29:
+      out->i = part_getout_ok(this);
+      return true;
     case 0x2b:
       out->obj = car_;
+      out->i = car_ ? part_node_id(car_) : 0;
       return car_ != nullptr;
+    case 0x2f:
+      out->i = 0;
+      if (out->block) out->obj = slot(out->arg) ? key_ : nullptr;
+      return true;
+    case 0x31:
+      out->i = 0;
+      if (!out->block) return true;
+      out->i = out->arg;
+      out->obj = nullptr;
+      if (attached_.empty()) return true;
+      if (out->arg == 0) {
+        out->obj = attached_[0];
+        return true;
+      }
+      for (size_t k = 0; k + 1 < attached_.size(); ++k)
+        if (part_node_id(attached_[k]) == out->arg) {
+          out->obj = attached_[k + 1];
+          break;
+        }
+      return true;
+    case 0x37:
+      out->i = type_->category;
+      return true;
+    case 0x3c:
+      if (out->arg != 0) colour_index_ = out->arg;
+      part_recolour(this);
+      out->i = colour_index_;
+      return true;
+    case 0x3f:
+      out->i = part_owner_id(this);
+      return true;
+    case 0x47: {
+      int32_t root_id = 0, unused = 0, target_id = 0, tslot = 0;
+      float place[3] = {0.f, 0.f, 0.f};
+      const int got = engine_sscanf(
+          out->arg_str ? out->arg_str : "", "%d %d %d %d %f %f %f", &root_id,
+          &unused, &target_id, &tslot, &place[0], &place[1], &place[2]);
+      root_ = part_node_by_id(root_id);
+      InvObject* target = part_node_by_id(target_id);
+      bool assume = false;
+      const int32_t mine = part_find_install(
+          this, &target, &tslot, got >= 7 ? place : nullptr, &assume);
+      out->obj = mine ? target : nullptr;
+      out->i = mine ? part_node_id(target) : target_id;
+      return true;
+    }
+    case 0x49:
+      out->i = state_;
+      return true;
     default:
-      return false;  // 1: Fork, no physics instance; the rest: later
+      return false;
   }
 }
 
@@ -1250,11 +1427,87 @@ bool part_cmd_filter(PartObject* me, const char* text) {
   return true;
 }
 
+// (m6 step 4) PE 940 FUN_004c6b40(type, part), the slot half of `repair`
+// (gh/b01:333-432): per slot record, in the type's order (type+0x1160 of
+// them, the list type+0x116C): the moved flag 0x20 cleared and position and
+// rotation copied back from the type's slot (+0x24, +0x30), the record's
+// flap record (+0x28) back to its rest pose; when the slot's handle is bound
+// (+0x08) and its node alive, this part is put on its slot again when it is
+// installed THROUGH the slot (flag 1), else the part on the slot is
+// (FUN_004cb8d0), and a flap that is not open is posed again
+// (FUN_004b10c0(0), FUN_004b1770).
+// Fork: flap records are not ported (m6 step 6), so none is reset or posed.
+// The counts are for the log line only.
+void part_repair_slots(PartObject* me, int* moved, int* reposed) {
+  const PartTypeDesc& d = *me->type_;
+  const size_t n = std::min(d.slots.size(), me->slots_.size());
+  for (size_t i = 0; i < n; ++i) {
+    PartObject::Slot& rec = me->slots_[i];
+    if (rec.flags & 0x20u) ++*moved;
+    rec.flags &= ~0x20u;
+    rec.pos = d.slots[i].pos;
+    rec.rot = d.slots[i].rot;
+    if (!rec.other) continue;
+    if (rec.flags & 1u) {
+      if (me->pose_on_slot(0)) ++*reposed;
+    } else if (std::shared_ptr<PartObject> o = part_of(rec.other)) {
+      if (o->pose_on_slot(0)) ++*reposed;
+    }
+  }
+}
+
+// (m6 step 4) `repair` ("%*s %d"; Part.repair sends none: 0), of a part
+// (FUN_004c4400, m4/gh/q08_part_car_event.txt:248-260) and of a car
+// (FUN_004a2e60, gh/prev_m3_gh_a03_event_getinfo.txt:1150-): FUN_004c6b40,
+// then FUN_004c72d0(type, me, type+0x10F8), the mesh of the cfg's `mesh` line
+// again (a part: only when type+0x1100 != 0; a car: always, and a type
+// without the line has nothing to put back). A part with argument 1:
+// part+0xB8 = 0. Fork (Q10): which of part+0xB4 / +0xB8 is the wear and which
+// the tear is not settled; the host's stores are left alone (no script sends
+// the argument). A car: car+0x70 |= 0x300000, then its wheel records
+// (car+0x1414: flag 0x20 at +0x100 cleared, the geometry copied back from the
+// type's), FUN_004aa830, and the car's own copy of a type table (car+0x2050)
+// set back to the type's. Fork: the host keeps no damaged wheel geometry and
+// no such table; those three are not ported.
+bool part_cmd_repair(PartObject* me, const char* text, bool car) {
+  int32_t arg = 0;
+  engine_sscanf(text ? text : "", "%*s %d", &arg);
+  int moved = 0, reposed = 0;
+  part_repair_slots(me, &moved, &reposed);
+  const int32_t mesh_was = me->mesh_;
+  if (me->type_->mesh_id) part_set_mesh(me, me->type_->mesh_id);
+  if (car) me->flags_ |= 0x300000u;
+  if (native_getinfo_log()) {
+    const RpakEntry* a = rpak_find_entry(me->type_->type_id);
+    std::fprintf(stderr,
+                 "[native-type] repair '%s' %s (node 0x%08X): %zu slot "
+                 "record(s) back to the type's, %d moved, %d part(s) put on "
+                 "their slots again; mesh 0x%08X -> 0x%08X; arg %d t=%.2f\n",
+                 a ? a->name.c_str() : "", car ? "car" : "part",
+                 static_cast<unsigned>(part_node_id(me->key_)),
+                 me->slots_.size(), moved, reposed,
+                 static_cast<unsigned>(mesh_was),
+                 static_cast<unsigned>(me->mesh_), arg, native_loop_time());
+  }
+  return true;
+}
+
+// (m6 step 4) `cancel`: the part's handler does nothing and returns 1
+// (FUN_004c4400). The car's calls FUN_00477320 when car+0x5C is 4 or 5 and
+// returns 1 (FUN_004a2e60). Fork: FUN_00477320 not read; no car on the
+// mechanic's paths is in either state, and no shipped script sends the word.
+bool part_cmd_cancel(PartObject* me, bool car) {
+  if (native_getinfo_log())
+    std::fprintf(stderr, "[native-type] cancel %s (node 0x%08X) state %d\n",
+                 car ? "car" : "part",
+                 static_cast<unsigned>(part_node_id(me->key_)), me->state_);
+  return true;
+}
+
 // vt+0x38 FUN_004c4400. Events 1 and 4 (damage), 0x80 and 0x10000 are not
 // ported; of the commands (event 0x10) `install`, `remove`, `add_part`,
-// `rem_part`, `filter`, `texture` and `mesh` are. Not ported and left to
-// the generic chain: `repair` (which also puts the cfg mesh back,
-// FUN_004c72d0 with type+0x10F8), `cancel`, `flap_toggle`, `colorscheme`,
+// `rem_part`, `filter`, `texture`, `mesh`, `repair` and `cancel` are. Not
+// ported and left to the generic chain: `flap_toggle`, `colorscheme`,
 // `paint`, `decal`, `bigdecal` (the paint booth).
 bool PartObject::event(int32_t type, const char* text) {
   if (type != 0x10) return false;
@@ -1278,6 +1531,8 @@ bool PartObject::event(int32_t type, const char* text) {
     return true;
   }
   if (word_is(word, "filter")) return part_cmd_filter(this, text);
+  if (word_is(word, "repair")) return part_cmd_repair(this, text, false);
+  if (word_is(word, "cancel")) return part_cmd_cancel(this, false);
   if (word_is(word, "texture")) {
     // "%*s %d": FUN_0047f200(id, 7), a handle on the texture record, then
     // FUN_004c75a0 when part+0x84 != 0: what Part.setTexture does.
@@ -1299,9 +1554,239 @@ bool PartObject::event(int32_t type, const char* text) {
 
 }  // namespace
 
+// PE 940 Part.install_OK(GameRef dest, int slot, GameRef part, int slot2,
+// Vector3 pos) 0x4CD3A0 (gh/b01_getinfo_flap_rempart.txt:764-871, asm
+// gh/b12_installok_asm.txt), the probe of an install. It installs nothing:
+//   1. dest null: null, nothing bound;
+//   2. the part's root handle part+0x60 is bound to dest (asm
+//      0x4cd4c7..0x4cd4d0) and stays bound (the `install` or `remove`
+//      command that follows binds it again);
+//   3. pos (null = none): its x, y, z by field name (0x59f088 / 08c / 090),
+//      the hint of the search (read by the caller, Part.cpp);
+//   4. FUN_004c96c0(part, an unbound target handle, &slot2, hint): the
+//      search the `install` command makes (part_find_install: the target,
+//      none here; the root; for a car root every part on it), slot2 the
+//      target slot in and out; the `slot` argument is not read;
+//   5. the out GameRef `part`, when given, is bound to the target found,
+//      unbound when none was (FUN_0040cac0, 0x4cd548..0x4cd556);
+//   6. a slot found: a new int[2] {my slot, target slot} (class "[I" at
+//      0x59f0a0); else null.
+// Returns false when the receiver has no part or car object (the legacy
+// stand-in answers then). Steps 5 and 6 are the caller's (Part.cpp), outside
+// every lock: `*bind_out` says whether step 5 runs and `*target` is the node
+// to bind to; `*my_slot` 0 means null.
+// Fork: a search that would go on into a node of a native type without host
+// object (`assume`) answers no slot; no part of the player's car is of such
+// a type [I].
+bool native_part_install_ok(InvObject* self, InvObject* dest, int32_t slot2,
+                            const float* hint, int32_t* my_slot,
+                            int32_t* target_slot, InvObject** target,
+                            bool* bind_out) {
+  *my_slot = 0;
+  *target_slot = slot2;
+  *target = nullptr;
+  *bind_out = false;
+  std::shared_ptr<PartObject> me = part_of(self);
+  if (!me) return false;
+  if (!dest) return true;
+  ++g_part_install_stats.probes;
+  const int32_t dest_id = part_node_id(dest);
+  me->root_ = part_node_by_id(dest_id);
+  InvObject* found = nullptr;
+  int32_t tslot = slot2;
+  bool assume = false;
+  const int32_t mine =
+      part_find_install(me.get(), &found, &tslot, hint, &assume);
+  *bind_out = true;
+  *target = mine ? found : nullptr;
+  *my_slot = mine;
+  *target_slot = tslot;
+  if (mine) ++g_part_install_stats.probes_found;
+  if (native_type_log() && g_part_install_stats.probes <= 32) {
+    const RpakEntry* a = rpak_find_entry(me->type_->type_id);
+    std::shared_ptr<PartObject> tp = mine ? part_of(found) : nullptr;
+    const RpakEntry* b = tp ? rpak_find_entry(tp->type_->type_id) : nullptr;
+    char where[96] = "";
+    if (hint)
+      std::snprintf(where, sizeof(where), ", hint (%.3f, %.3f, %.3f)",
+                    hint[0], hint[1], hint[2]);
+    std::fprintf(stderr,
+                 "[native-type] install_OK '%s' (node 0x%08X) dest 0x%08X%s: "
+                 "%s my slot %d, target '%s' (node 0x%08X) slot %d%s\n",
+                 a ? a->name.c_str() : "",
+                 static_cast<unsigned>(part_node_id(me->key_)),
+                 static_cast<unsigned>(dest_id), where,
+                 mine ? "int[2]" : "null,", mine,
+                 b ? b->name.c_str() : "",
+                 static_cast<unsigned>(mine ? part_node_id(found) : 0),
+                 mine ? tslot : 0, assume ? " (assume)" : "");
+  }
+  return true;
+}
+
+// Fork (m6 step 2 rig): the legacy stand-in of Part.install_OK (Part.cpp)
+// is about to write the legacy slot tables (part_install) on the script
+// boot; counted for the `[native-type] install_OK` line at loop end.
+void native_part_install_ok_legacy() {
+  if (native_script_boot()) ++g_part_install_stats.legacy_install_ok;
+}
+
+// (m6 step 3) GameRef.getInfo 0x47DDF0 calls the type's vt+0x3C for every
+// query (X 5.1). On the script boot a node with a part or car object
+// answers from the object; GameRef_core.cpp keeps its switch for every
+// other node and for the queries left to it here:
+//   a part (FUN_004c3da0): every query, 0 for one it has no row for, as in
+//     the exe; but 1 (Fork: no physics instance, the switch's GII_BONE),
+//     0x3A and 0x48 (Q9: FUN_004c7b60, FUN_004c7a50, FUN_004c7730 not
+//     read; the switch's answers, 0x48 being the catalog's
+//     GII_COMPATIBLE) and 0x4D GII_PAINTABLE (the paint booth);
+//   a car (FUN_004a15c0): 6, 7 (5), 0xB, 0xF, 0x27, 0x28, 0x29 (41), 0x2B,
+//     0x2F, 0x31, 0x37 (55) and 0x3F, the rows of its table the host
+//     has. Fork: every other car query keeps the switch until the car's
+//     table is ported whole (GII_OWNER 24 is read only by the dealer's
+//     TEST and by driving; 52, 56 by the race code).
+// `arg` is the int of getInfo(II)I (the exe's param_4: 0x3C's colour;
+// for 0x2F / 0x31 it stands where the exe has its block, Fork: no block
+// is read from a script int), `arg_str` the String of getInfo(ILString;)I
+// (null for the int form). Returns 0 when the switch answers, 1 when a
+// part did, 2 when a car did; the answer in *answer.
+// Fork (m6 step 3 rig): the step's diagnostic lines (the getinfo lines,
+// their census, the car's commands) only with SLRR_PE_NATIVE_TYPE_LOG=1
+// (m6_spec.md "Runs"); native_type_log() follows SLRR_PE_NATIVE_PROF,
+// which every rig run sets.
+bool native_getinfo_log() {
+  static const bool on = [] {
+    const char* e = std::getenv("SLRR_PE_NATIVE_TYPE_LOG");
+    return e && e[0] && e[0] != '0';
+  }();
+  return on;
+}
+
+int native_part_getinfo(InvObject* self, int32_t query, int32_t arg,
+                        const char* arg_str, int32_t* answer) {
+  *answer = 0;
+  if (!self || !native_script_boot()) return 0;
+  std::shared_ptr<PartObject> p = part_of(self);
+  if (!p) return 0;
+  const bool car = p->type_index == kNativeCar;
+  if (car) {
+    switch (query) {
+      case 6: case 7: case 0xb: case 0xf: case 0x27: case 0x28: case 0x29:
+      case 0x2b: case 0x2f: case 0x31: case 0x37: case 0x3f:
+        break;
+      default:
+        return 0;
+    }
+  } else if (query == 1 || query == 0x3a || query == 0x48 || query == 0x4d) {
+    return 0;
+  }
+  NativeInfo info;
+  info.arg = arg;
+  info.arg_str = arg_str;
+  if (p->getinfo(query, &info)) *answer = info.i;
+  return car ? 2 : 1;
+}
+
+namespace {
+
+// Fork (m6 step 3 rig, SLRR_PE_NATIVE_TYPE_LOG): the census of the step
+// (m6_spec.md step 3 item 4): per query and node kind the calls, how many
+// answers differ from the host switch's, and the answers of both.
+struct GetinfoCensus {
+  int calls = 0;
+  int differ = 0;
+  std::vector<std::pair<int32_t, int>> object, host;  // value, count
+  int logged = 0;
+};
+// Key: kind << 32 | query. Never destroyed (main thread only).
+std::unordered_map<int64_t, GetinfoCensus>& g_getinfo_census =
+    *new std::unordered_map<int64_t, GetinfoCensus>();
+
+void getinfo_census_add(std::vector<std::pair<int32_t, int>>* v,
+                        int32_t value) {
+  for (auto& e : *v)
+    if (e.first == value) {
+      ++e.second;
+      return;
+    }
+  v->emplace_back(value, 1);
+}
+
+std::string getinfo_census_text(const std::vector<std::pair<int32_t, int>>& v) {
+  std::string s;
+  char b[48];
+  for (size_t k = 0; k < v.size() && k < 6; ++k) {
+    std::snprintf(b, sizeof(b), "%s%d x%d", k ? ", " : "", v[k].first,
+                  v[k].second);
+    s += b;
+  }
+  if (v.size() > 6) s += ", ...";
+  return s;
+}
+
+}  // namespace
+
+// One GameRef.getInfo answered by a part or car object (kind 1 / 2):
+// counted for the census, and the first four per query and kind as
+// `[native-type] getinfo 0x<q> part|car '<type>' (node 0x..): <answer>
+// (host switch <host>)[ arg "<String>"]`. Diagnostic only; the caller
+// passes the switch's answer for the same call.
+void native_part_getinfo_note(InvObject* self, int32_t query, int kind,
+                              int32_t answer, int32_t host,
+                              const char* arg_str) {
+  if (!native_getinfo_log() || !kind) return;
+  GetinfoCensus& c = g_getinfo_census[(static_cast<int64_t>(kind) << 32) |
+                                      static_cast<uint32_t>(query)];
+  ++c.calls;
+  if (answer != host) ++c.differ;
+  getinfo_census_add(&c.object, answer);
+  getinfo_census_add(&c.host, host);
+  if (c.logged >= 4) return;
+  ++c.logged;
+  std::shared_ptr<PartObject> p = part_of(self);
+  const RpakEntry* e = p ? rpak_find_entry(p->type_->type_id) : nullptr;
+  std::fprintf(stderr,
+               "[native-type] getinfo 0x%02X %s '%s' (node 0x%08X): %d (host "
+               "switch %d)%s%s%s t=%.2f\n",
+               static_cast<unsigned>(query), kind == 2 ? "car" : "part",
+               e ? e->name.c_str() : "",
+               static_cast<unsigned>(p ? part_node_id(p->key_) : 0), answer,
+               host, arg_str ? " arg \"" : "", arg_str ? arg_str : "",
+               arg_str ? "\"" : "", native_loop_time());
+}
+
+// The census at loop end, one line per query and node kind; only in a run
+// with SLRR_PE_NATIVE_TYPE_LOG in which an object answered.
+void native_part_getinfo_dump(FILE* out) {
+  if (!out || !native_getinfo_log()) return;
+  std::vector<int64_t> keys;
+  for (const auto& kv : g_getinfo_census) keys.push_back(kv.first);
+  std::sort(keys.begin(), keys.end());
+  for (const int64_t key : keys) {
+    const GetinfoCensus& c = g_getinfo_census[key];
+    std::fprintf(out,
+                 "[native-type] getinfo census 0x%02X %s: %d call(s), %d "
+                 "differ from the host switch; object %s; host switch %s\n",
+                 static_cast<unsigned>(key & 0xffffffff),
+                 (key >> 32) == 2 ? "car" : "part", c.calls, c.differ,
+                 getinfo_census_text(c.object).c_str(),
+                 getinfo_census_text(c.host).c_str());
+  }
+}
+
 // One `[render-dbg]` line: what the `install` commands of the run came to.
 void native_part_install_dump(FILE* out) {
   if (!out || !native_script_boot()) return;
+  native_part_getinfo_dump(out);  // (m6 step 3 rig)
+  // (m6 step 2 rig) only when Part.install_OK was called on the script boot.
+  if (g_part_install_stats.probes || g_part_install_stats.legacy_install_ok)
+    std::fprintf(out,
+                 "[native-type] install_OK: %d probe(s) answered by a part "
+                 "or car object, %d found a slot; %d legacy part_install "
+                 "call(s) on the script boot\n",
+                 g_part_install_stats.probes,
+                 g_part_install_stats.probes_found,
+                 g_part_install_stats.legacy_install_ok);
   std::fprintf(out,
                "[render-dbg] part installs: %d on a slot, %d assumed (target "
                "or root is, or sits on, a type without host object), %d "

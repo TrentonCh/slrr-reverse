@@ -199,9 +199,20 @@ test copy's saves). Stock frames of the dealers and the car lot:
      0x4B2DC0 / 0x4B2680); the ENGINE page's figures still come from the
      dyno stand-in. The catalog works by the user's own play;
    - spec step 7: the paint booth with car side files;
-   - next: the mechanic (taking parts off, putting them back, dragging,
-     filters, tuning) and the dyno port, specified in
-     `../slrr-ghidra/notes/m6/m6_spec.md` (stock frames 65..68);
+   - the mechanic, spec steps 0 to 4: done (this commit). Spec, maps,
+     step reports in `../slrr-ghidra/notes/m6/` (`run_m6.sh`,
+     `m6_check.py --list`). Hover a part: its name in the info line; a
+     left click takes it off into the bin with everything mounted on it;
+     a click on its bin item or a drag puts it back; right click looks at
+     it; drag into the bin, swap, SELL PART, REPAIR, REPAIR ALL; a removed
+     part survives the career autosave; the catalog's per-car pages list
+     their parts. Open, in order: spec step 5 (the three filters), step 6
+     (tuning, flaps such as doors opening, MOVE PARTS), step 7 (the dyno
+     port, targets SunStrip 1.8 DVC 160 HP and Coyot T1800 219 HP);
+     dragging a part that is still installed onto the floor moves nothing,
+     as the exe's slot search reads (a stock check would confirm); the
+     pick lists every live car's click bodies per pass (about 60 us in the
+     LOAD CAR garage).
    - copied light payloads are never freed.
 5. Field initialisers: done (this commit). The exe runs them at
    allocation for every class from `java.lang.Object` down
@@ -318,6 +329,7 @@ comes after the menu is up.
 | Mouse on the script boot: `cursor` and `player` types, ray pick and the eighteen cursor events, camera control, test rig; legacy pack scan 40 % faster | (this commit) | hover, press and click in menu, dialogs and garage; camera orbit and zoom within 2 % of the model; old-build regression 109 s -> 67 s |
 | Buying and keeping cars: by-name calls and native rows as the exe, field initialisers at allocation, `object` type, per-map fog, dealer ground programs | (this commit) | dealers open, buy / sell / trade-in, car lot park and fetch, stock-compatible saves |
 | Car info and club info: chassis box natives on the car object, anchored frame shots in the rig | (this commit) | all four car info pages and club info open and close; the CAR page reads the car's real dimensions |
+| Mechanic: pick of part click bodies, take off / put back, install_OK as the 940 probe, getInfo from part and car objects, drag / bin / sell / repair, child handles boxed by restype | (this commit) | parts come off into the bin and go back; catalog per-car pages filled |
 
 ## In progress
 

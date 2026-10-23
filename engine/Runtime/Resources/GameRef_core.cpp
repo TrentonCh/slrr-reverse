@@ -1372,14 +1372,30 @@ int32_t java_util_resource_GameRef_isScripted(InvObject* self, InvObject* clazzn
   self = gameref_node_object(self);  // any handle on the node (script boot)
   std::string have;
   InvObject* script = nullptr;
+  bool no_create = false;
   {
     std::lock_guard<std::mutex> lock(g_gr_mu);
     auto it = g_refs.find(self);
     if (it == g_refs.end()) return 0;
     const GameRefState& r = it->second;
-    if (!r.script && r.script_class.empty()) return 0;
+    no_create = !r.script && r.script_class.empty();
     have = r.script_class;
     script = r.script;
+  }
+  if (no_create) {
+    // (m6 fixer) A handle on a typeof-8 record that no create stands
+    // behind (`new GameRef(id)`, a child getFirstChild / getNextChild
+    // boxed as a GameRef): the RESTYPE_GAME branch, payload+0x10, the
+    // class the record's `script` line names (gametype_desc, as
+    // GameRef.create takes it); no such line, or an inline class: 0.
+    // Catalog.java:341 / 386 and Garage.java:1983 / 1990 walk the pack
+    // tree with it. Script boot only; the legacy path answers 0.
+    if (!native_script_boot()) return 0;
+    const int32_t id = java_util_resource_ResourceRef_id(self);
+    const GameTypeDesc* d = id ? gametype_desc(id) : nullptr;
+    if (!d || !d->found || !d->has_script || d->script_is_inline) return 0;
+    have = script_fqn_from_script_arg(d->script_arg);
+    if (have.empty()) return 0;
   }
   if (!clazzname) return 1;
   const char* want = string_cstr(clazzname);
@@ -1467,8 +1483,38 @@ InvObject* java_util_resource_GameRef_getScriptInstance(InvObject* self) {
   return script;
 }
 
+// The host's answer of GameRef.getInfo: the switch below, a stand-in for
+// the type's vt+0x3C (M6 step 3: only for a node without a part or car
+// object, and for the queries native_part_getinfo leaves to it).
+static int32_t gameref_getinfo_host(InvObject* self, int32_t query,
+                                    int32_t subquery);
+
 int32_t java_util_resource_GameRef_getInfo(InvObject* self, int32_t query,
                                           int32_t subquery) {
+  // PE @ 0x0047DDF0: the type's vt+0x3C for every query (comment below).
+  // M6 step 3: on the script boot a node with a part or car object answers
+  // from the object (FUN_004c3da0 / FUN_004a15c0, native_part_getinfo in
+  // NativeTypes_part5.inc); the switch answers for every other node and
+  // for the queries the object leaves to it.
+  if (!self) return 0;
+  int32_t answer = 0;
+  if (const int kind =
+          native_part_getinfo(self, query, subquery, nullptr, &answer)) {
+    // Fork (diagnostic, SLRR_PE_NATIVE_TYPE_LOG): the switch's answer
+    // beside the object's; GII_SIZE's switch asks the object itself since
+    // M6 step 1 (its own `getinfo 0xB` line), so it is not asked twice.
+    if (native_getinfo_log())
+      native_part_getinfo_note(
+          self, query, kind, answer,
+          query == 11 ? answer : gameref_getinfo_host(self, query, subquery),
+          nullptr);
+    return answer;
+  }
+  return gameref_getinfo_host(self, query, subquery);
+}
+
+static int32_t gameref_getinfo_host(InvObject* self, int32_t query,
+                                    int32_t subquery) {
   // PE @ 0x0047DDF0 size 0x150 (336). Shared with
   // getInfo(ILjava.lang.String;)I — same native (Natives_RegisterAll
   // data xrefs @ 0x00489666 + 0x00489685). Java getInfo(I) is non-native
@@ -1613,6 +1659,13 @@ int32_t java_util_resource_GameRef_getInfo(InvObject* self, int32_t query,
       return java_util_resource_ResourceRef_id(self);
     }
     case kGiiSize: {
+      // M6 step 1: a part or car object answers itself (FUN_004c3da0 case
+      // 0xB, NativeTypes_part11.inc); script boot only (native_getinfo
+      // finds no object on the legacy path).
+      {
+        NativeInfo info;
+        if (native_getinfo(self, kGiiSize, &info)) return info.i;
+      }
       // InventoryPanel: createDefCamera(size/100.0) — centimetres.
       const int32_t stored = tree_field_get_int(self, "gii_size");
       if (stored > 0) return stored;
@@ -1668,8 +1721,40 @@ int32_t java_util_resource_GameRef_getInfo(InvObject* self, int32_t query,
   }
 }  // PE @ 0x0047DDF0
 
+// The host's answer of GameRef.getInfo(ILString;)I (the body below).
+static int32_t gameref_getinfo_str_host(InvObject* self, int32_t query,
+                                        InvObject* subquery);
+
 int32_t java_util_resource_GameRef_getInfo_1(InvObject* self, int32_t query,
                                             InvObject* subquery) {
+  // M6 step 3: a part or car object reads the String itself for 0x28 and
+  // a part for 0x47 GII_INSTALL_OK 71 (FUN_004c3da0: "%d %d", "%d %d %d %d
+  // %f %f %f": the search of `install` from the root given, the id of the
+  // target found or 0; native_part_getinfo). GII_COMPATIBLE 72 keeps the
+  // host's answer below (Q9: FUN_004c7730 not read).
+  constexpr int32_t kGiiInstallOk = 71;
+  constexpr int32_t kGiiFreeSlotFor = 0x28;  // "%d %d" (no GII name)
+  if (self && (query == kGiiInstallOk || query == kGiiFreeSlotFor)) {
+    const char* arg = string_cstr(subquery);
+    if (!arg) arg = "";
+    int32_t answer = 0;
+    if (const int kind = native_part_getinfo(self, query, 0, arg, &answer)) {
+      // Fork (diagnostic, SLRR_PE_NATIVE_TYPE_LOG): the host's answer beside.
+      if (native_getinfo_log())
+        native_part_getinfo_note(
+            self, query, kind, answer,
+            query == kGiiInstallOk
+                ? gameref_getinfo_str_host(self, query, subquery)
+                : gameref_getinfo_host(self, query, 0),
+            arg);
+      return answer;
+    }
+  }
+  return gameref_getinfo_str_host(self, query, subquery);
+}
+
+static int32_t gameref_getinfo_str_host(InvObject* self, int32_t query,
+                                        InvObject* subquery) {
   // PE @ 0x0047DDF0 size 0x150 — same entry as getInfo(II)I. UnboxArg
   // writes String* into subquery dword; vtbl+0x3C receives it unchanged.
   // Contrast getInfo(II): int subquery vs String*; PE walk identical.

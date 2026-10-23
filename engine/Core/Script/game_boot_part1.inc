@@ -1,5 +1,6 @@
 #include "tree_interp_internal.hpp"
 #include "Resources_internal.hpp"  // m5 rig: g_res / g_mu (the car's node id)
+#include <atomic>
 #include <chrono>
 #include <cstdlib>
 // Fragment 1/2 of game_boot.cpp — included, not compiled on its own.
@@ -321,6 +322,19 @@ std::string rig_int_text(const JvmValue* v) {
   return "?";
 }
 
+// m6 rig: the size of a java.util.Vector, a host bag (tree_vector_*) or
+// an object of the script class system/scripts/util/Vector.class, whose
+// count is its `elementCount` field.
+std::string rig_vector_size(InvObject* v) {
+  if (!v) return "null";
+  if (tree_vector_is(v)) return std::to_string(tree_vector_size(v));
+  const JvmValue* n = tree_field_slot(v, "elementCount", false);
+  // A field never written has no slot: the script reads the int's 0.
+  const char* cn = tree_host_class(v);
+  if (!n && cn && std::strcmp(cn, "java.util.Vector") == 0) return "0";
+  return rig_int_text(n);
+}
+
 }  // namespace
 
 // m5 rig: jvm_vmthread_part1.inc.
@@ -330,6 +344,19 @@ void vmthread_set_enter_call_hook(void (*cb)(const char* cls, const char* method
 JvmValue vm_array_elem_get(InvObject* arr, int32_t idx);
 // m5 step 2 diagnostic (jvm_vmthread_part2.inc; SLRR_PE_NOINIT_REPORT=1).
 void jvm_noinit_report();
+
+// Fork (m6 test rig): the boot loop's clock for log lines printed in
+// other files (`[text]`, RenderNatives.cpp): seconds since the loop's t0,
+// the `t=` of the `[career]` and `[pe-boot] mouse` lines; -1 before the
+// loop has started.
+static std::atomic<int64_t> g_pe_log_t0{0};
+
+double pe_boot_log_time() {
+  const int64_t t0 = g_pe_log_t0.load(std::memory_order_relaxed);
+  if (t0 == 0) return -1.0;
+  const int64_t now = std::chrono::steady_clock::now().time_since_epoch().count();
+  return std::chrono::duration<double>(std::chrono::steady_clock::duration(now - t0)).count();
+}
 
 namespace {
 
@@ -414,6 +441,32 @@ std::string rig_fields() {
   }
   s += " day=" + rig_int_text(rig_static("day"));
   s += " mode=" + rig_int_text(rig_static("gameMode"));
+  // m6 rig: bin=<items>/<cline> of GameLogic.garage.mechanic.inventory,
+  // parts=<items> of GameLogic.player.parts, gmode=<Garage.mode>, and
+  // secs=<GameLogic.time> in seconds (time= is h:mm). `null` where an
+  // object of the chain is not there.
+  InvObject* ga = rig_obj(rig_static("garage"));
+  InvObject* mech = ga ? rig_obj(tree_field_slot(ga, "mechanic", false)) : nullptr;
+  InvObject* binv = mech ? rig_obj(tree_field_slot(mech, "inventory", false)) : nullptr;
+  InvObject* bits = binv ? rig_obj(tree_field_slot(binv, "items", false)) : nullptr;
+  s += " bin=";
+  s += bits ? rig_vector_size(bits) + "/" +
+                  rig_int_text(tree_field_slot(binv, "cline", false))
+            : std::string("null");
+  InvObject* pinv = pl ? rig_obj(tree_field_slot(pl, "parts", false)) : nullptr;
+  InvObject* pits = pinv ? rig_obj(tree_field_slot(pinv, "items", false)) : nullptr;
+  s += " parts=";
+  s += pits ? rig_vector_size(pits) : std::string("null");
+  s += " gmode=";
+  s += ga ? rig_int_text(tree_field_slot(ga, "mode", false)) : std::string("null");
+  if (tv && (tv->tag == JvmTag::Float || tv->tag == JvmTag::Int)) {
+    std::snprintf(b, sizeof b, " secs=%.2f",
+                  tv->tag == JvmTag::Float ? static_cast<double>(tv->v.f)
+                                           : static_cast<double>(tv->v.i));
+    s += b;
+  } else {
+    s += " secs=?";
+  }
   return s;
 }
 
@@ -1140,6 +1193,7 @@ int game_interactive_run(Jvm& jvm, const char* game_root,
     jvm.invoke("java.game.Init", "<init>", "(I)V",
                {JvmValue::make_obj(init_obj), JvmValue::make_int(0)}, false);
     const auto boot_t0 = std::chrono::steady_clock::now();
+    g_pe_log_t0.store(boot_t0.time_since_epoch().count(), std::memory_order_relaxed);  // m6 rig
     if (rig.log) {  // Fork (m5 test rig): rig_enter_call
       g_rig_cb = &rig;
       g_rig_cb_t0 = boot_t0;
@@ -1587,6 +1641,9 @@ int game_interactive_run(Jvm& jvm, const char* game_root,
             const bool ok = render_d3d9_print_screen(s.path.c_str());
             std::printf("[pe-boot] shot#%zu t=%.2f %s -> %d (bound_vps=%d cam_instances=%d cam_texts=%d)\n",
                         i + 1, el, s.path.c_str(), ok ? 1 : 0, vps, inst, txt);
+            // m6 rig: the career fields of the pass this frame was taken in.
+            if (rig.log)
+              std::printf("[career] t=%.2f shot#%zu %s\n", el, i + 1, rig_fields().c_str());
           }
         }
       }

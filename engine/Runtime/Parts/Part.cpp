@@ -478,7 +478,33 @@ static void part_soft_refresh_drag_install_remove(InvObject* node) {
   part_soft_accumulate_mesh_drag(node, /*mode=*/1, /*depth=*/0);
 }
 
+// Fork: typed primitive-array elements (jvm_vmthread_part1.inc).
+bool vm_array_elem_set(InvObject* arr, int32_t idx, const JvmValue& v);
+
 InvObject* java_game_parts_Part_install_OK(InvObject* self, InvObject* dest, int32_t slot, InvObject* part, int32_t slot2, InvObject* pos) {
+  {
+    // PE 940 0x4CD3A0 on the script boot (m6 step 2): the probe of the part
+    // or car object (native_part_install_ok, NativeTypes_part5.inc), which
+    // installs nothing. `slot` is not read.
+    float hint[3] = {0.f, 0.f, 0.f};
+    int32_t mine = 0, tslot = 0;
+    InvObject* target = nullptr;
+    bool bind_out = false;
+    if (pos) vec3_get(pos, &hint[0], &hint[1], &hint[2]);  // 0x59f088..090
+    if (self && native_part_install_ok(self, dest, slot2, pos ? hint : nullptr,
+                                       &mine, &tslot, &target, &bind_out)) {
+      // FUN_0040cac0 on the out handle (0x4cd548..0x4cd556): the target
+      // found, or unbound.
+      if (part && bind_out) java_util_resource_ResourceRef_set_1(part, target);
+      if (!mine) return nullptr;
+      // FUN_00567a20(0x1c) of class "[I" (0x59f0a0), length 2
+      // (FUN_0054cab0), the elements by FUN_004ed300.
+      InvObject* out = tree_array_new_desc(2, "[I");
+      vm_array_elem_set(out, 0, JvmValue::make_int(mine));
+      vm_array_elem_set(out, 1, JvmValue::make_int(tslot));
+      return out;
+    }
+  }
   // PE @ 0x0046A680 size 0x1F3 — IDA java_game_parts_Part_install_OK.
   // Unbox this+dest+slot+part+slot2+pos (Vector3). dest==0 → null.
   // Native.ptr (dword_62E008). Dual ResHandle_getPayload @ 0x00419860
@@ -514,6 +540,7 @@ InvObject* java_game_parts_Part_install_OK(InvObject* self, InvObject* dest, int
     return nullptr;
   }
 
+  native_part_install_ok_legacy();  // m6 step 2 rig: 0 on the script boot
   if (!part_install(parent, ps, child, cs)) return nullptr;
   // PE Part_installMeshSlot@474170 @4742BE: accumulate(leaf, block, mode=1)
   // after link flags|2; parent bubble is inside accumulate (flags&1 →
