@@ -209,8 +209,9 @@ test copy's saves). Stock frames of the dealers and the car lot:
      their parts. Open, in order: spec step 5 (the three filters), step 6
      (tuning, flaps such as doors opening, MOVE PARTS), step 7 (the dyno
      port, targets SunStrip 1.8 DVC 160 HP and Coyot T1800 219 HP);
-     dragging a part that is still installed onto the floor moves nothing,
-     as the exe's slot search reads (a stock check would confirm); the
+     a part cannot be dragged onto the floor, in the stock game as on the
+     host (confirmed by the user 2026-10-24; the exe's slot search finds no
+     target); the
      pick lists every live car's click bodies per pass (about 60 us in the
      LOAD CAR garage).
    - copied light payloads are never freed.
