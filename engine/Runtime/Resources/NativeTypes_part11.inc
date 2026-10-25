@@ -120,6 +120,10 @@ float click_tri_t(const float* v, const float* n, const uint32_t* idx,
 // meshes recentred by FUN_00508d20; X 1.1: 80 cfgs, traffic and police
 // cars, the fake racers; none on the player's path).
 // The owners' creation order and node ids are left to click_pick_resolve.
+bool native_filter_hidden(void* node) {
+  return node && !g_filter_hidden.empty() && g_filter_hidden.count(node) != 0;
+}
+
 void click_pick_bodies(std::vector<ClickPickBody>* out) {
   if (!out) return;
   out->clear();

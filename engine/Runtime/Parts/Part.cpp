@@ -600,6 +600,11 @@ InvObject* java_game_parts_Part_install_OK(InvObject* self, InvObject* dest, int
 int32_t java_game_parts_Part_flap(InvObject* self, int32_t mode) {
   // PE @ 0x0046A5A0 size 0xD9. Fail walk → eax=-1; Part_flapApply miss → 0.
   if (!self) return -1;
+  {
+    // PE 940 0x4CC440 = FUN_004c5ed0 on the part object (m6 step 6).
+    int32_t ret = 0;
+    if (native_part_flap(self, mode, &ret)) return ret;
+  }
   int32_t st = tree_field_get_int(self, "flap_state");
   if (mode == 1) {
     // Host: return NEW 0/1 (smoke). PE mode1 returns OLD enc 1/2.

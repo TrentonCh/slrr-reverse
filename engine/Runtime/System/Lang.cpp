@@ -2,6 +2,7 @@
 #include "runtime.hpp"
 
 #include <cmath>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -313,6 +314,116 @@ InvObject* java_lang_Integer_toHexString(int32_t i) {
   return lang_string_from_cstr(buf);
 }
 
+// The script-boot gate (Runtime/Resources/NativeTypes.cpp).
+bool native_script_boot();
+
+namespace {
+
+// PE 940 FUN_00527620(dst, value, width, pad): the decimal digits of
+// |value|, a '-' first when negative (the width then counts it; with a pad
+// other than '0' the padding goes before the sign), padded on the left to
+// `width` with `pad`.
+void exe940_put_int(std::string* out, int32_t value, int width, char pad) {
+  const bool neg = value < 0;
+  uint32_t u = neg ? 0u - static_cast<uint32_t>(value) : static_cast<uint32_t>(value);
+  char digits[16];
+  int n = 0;
+  do {
+    digits[n++] = static_cast<char>('0' + u % 10u);
+    u /= 10u;
+  } while (u != 0u);
+  if (neg) {
+    if (width >= 1) --width;
+    if (pad != '0' && n < width) {
+      out->append(static_cast<size_t>(width - n), pad);
+      width = n;
+    }
+    out->push_back('-');
+  }
+  if (n < width) out->append(static_cast<size_t>(width - n), pad);
+  while (n > 0) out->push_back(digits[--n]);
+}
+
+// The exe truncates a double to int with fistp under round-toward-zero; an
+// out-of-range value gives 0x80000000.
+int32_t exe940_trunc(double v) {
+  if (!(v > -2147483649.0 && v < 2147483648.0)) return INT32_MIN;
+  return static_cast<int32_t>(v);
+}
+
+// PE 940 FUN_00527a20(dst, value, width, precision, pad): '%f'.
+void exe940_put_f(std::string* out, double v, int width, int prec, char pad) {
+  if (v < 0.0) {
+    v = -v;
+    out->push_back('-');
+  }
+  const int32_t ip = exe940_trunc(v);
+  exe940_put_int(out, ip, width, pad);
+  if (prec == 0) return;
+  out->push_back('.');
+  const double f = (v - static_cast<double>(ip)) * 100000000.0;  // 0x5A9270
+  int32_t fi = exe940_trunc(f);
+  if (f - static_cast<double>(fi) >= 0.5) ++fi;  // 0x5A72C0
+  std::string digits;
+  exe940_put_int(&digits, fi, 8, '0');
+  int n = prec < 9 ? prec : 8;
+  if (n < 0) {
+    n = 1;
+    for (int k = 7; k > 0; --k)
+      if (k < static_cast<int>(digits.size()) && digits[static_cast<size_t>(k)] != '0') {
+        n = k + 1;
+        break;
+      }
+  }
+  size_t i = 0;
+  while (n > 0 && i < digits.size()) {
+    out->push_back(digits[i++]);
+    --n;
+  }
+  if (n > 0) out->append(static_cast<size_t>(n), '0');
+}
+
+// PE 940 FUN_005277d0 (vsprintf) for one double argument: literal text,
+// "%%" and "%[0][width][.prec][h|l|L]f". False for any other conversion
+// (the caller keeps snprintf: the exe would read that argument from the
+// list as an int or a pointer).
+bool exe940_format_double(const char* fmt, double v, std::string* out) {
+  bool used = false;
+  for (const char* p = fmt; *p;) {
+    if (*p != '%') {
+      out->push_back(*p++);
+      continue;
+    }
+    ++p;
+    char pad = ' ';
+    int width = 0, prec = -1;
+    if (*p == '0') {
+      pad = '0';
+      ++p;
+    }
+    while (*p >= '0' && *p <= '9') width = width * 10 + (*p++ - '0');
+    if (*p == '.') {
+      ++p;
+      prec = 0;
+      while (*p >= '0' && *p <= '9') prec = prec * 10 + (*p++ - '0');
+    }
+    if (*p == 'h' || *p == 'l' || *p == 'L') ++p;
+    if (*p == '%') {
+      out->push_back('%');
+      ++p;
+    } else if (*p == 'f' && !used) {
+      exe940_put_f(out, v, width, prec, pad);
+      used = true;
+      ++p;
+    } else {
+      return false;
+    }
+  }
+  return true;
+}
+
+}  // namespace
+
 InvObject* java_lang_Float_toString(float f, InvObject* fmt) {
   // PE @ 0x00481DD0 size 0x51 (int_convert). Static UnboxArg
   // dest0=nullptr (skip this), dest1=float (var_404), dest2=fmt cstr
@@ -328,6 +439,14 @@ InvObject* java_lang_Float_toString(float f, InvObject* fmt) {
       fmt ? reinterpret_cast<InvString*>(fmt)->utf8 : nullptr;
   if (!fmt_cstr) {
     fmt_cstr = "%f";
+  }
+  // PE 940: FUN_004da0e0 -> FUN_005277d0, the exe's own vsprintf: '%f'
+  // cuts the fraction to the precision instead of rounding it there
+  // ("%1.2f" of 29.3999996 is "29.39"). Script boot only.
+  if (native_script_boot()) {
+    std::string s;
+    if (exe940_format_double(fmt_cstr, static_cast<double>(f), &s) && s.size() < sizeof(buf))
+      return lang_string_from_cstr(s.c_str());
   }
   std::snprintf(buf, sizeof(buf), fmt_cstr, static_cast<double>(f));
   return lang_string_from_cstr(buf);

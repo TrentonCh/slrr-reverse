@@ -16,8 +16,13 @@
 #include <vector>
 
 #include "world_state.hpp"
+#include "NativeTypes.hpp"
+
+#include <cstdint>
 
 namespace inv {
+
+#include "DynoData_940.inc"
 
 // Host stand-ins for DynoSim slots on Native.ptr blob (PE 0x1EC).
 // Cleared with g_dyno in newNative/deleteNative; filled in calcDyno.
@@ -80,6 +85,7 @@ void java_game_parts_DynoData_deleteNative(InvObject* self) {
   // PE @ 0x0046A9C0 size 0x52. Unbox; if ptr: DynoSim_dtor+Engine_free;
   // ALWAYS set_int_field(0).
   if (!self) return;
+  g_dyno940.erase(self);  // m6 step 7: the exe's engine object
   if (g_dyno.find(self) != g_dyno.end()) {
     g_dyno_watts.erase(self);        // PE DynoSim_dtor @ 0x004B6630 (+0x1DC..+0x1E8)
     g_dyno_nm_nitro.erase(self);     // PE +0x1E0
@@ -206,6 +212,8 @@ static float dyno_sample_table(int rpm_step, const std::vector<float>& table,
 // Known wrong until the cycle is ported; not in M3.
 float java_game_parts_DynoData_calcDyno(InvObject* self, float tablesize) {
   if (!self) return 0.f;  // PE derefs Unbox this; host guard
+  // m6 step 7: the exe's cycle (DynoData_940.inc) on the script boot.
+  if (native_script_boot()) return dyno940_calc(self, tablesize);
 
   // PE: inherited Native + Native.ptr; else temp 0x1EC. Host: g_dyno miss = temp.
   const bool had_handle = g_dyno.find(self) != g_dyno.end();
@@ -569,6 +577,10 @@ float java_game_parts_DynoData_getTorque(InvObject* self, float RPM,
   // lerp +0x1DC table via +0x1D0 step / +0x1D4 count.
   (void)nitro;  // PE unboxed @ var_4, unused
   if (!self) return 0.f;  // GAP: PE UnboxArg
+  if (native_script_boot()) {  // m6 step 7: PE 940 0x4CC2B0
+    float v = 0.f;
+    return dyno940_sample(self, false, RPM, &v) ? v : 0.f;
+  }
   auto it = g_dyno.find(self);
   if (it == g_dyno.end() || it->second.nm.empty()) return 0.f;  // PE ptr/table
   auto sit = g_dyno_rpm_step.find(self);
@@ -585,6 +597,10 @@ float java_game_parts_DynoData_getHP(InvObject* self, float RPM, float nitro) {
   // lerp watts table this+0x1E4 (not Nm*omega). Host g_dyno_watts sample.
   (void)nitro;
   if (!self) return 0.f;
+  if (native_script_boot()) {  // m6 step 7: PE 940 0x4CC1B0
+    float v = 0.f;
+    return dyno940_sample(self, true, RPM, &v) ? v : 0.f;
+  }
   auto it = g_dyno.find(self);
   auto wit = g_dyno_watts.find(self);
   if (it == g_dyno.end() || wit == g_dyno_watts.end() || wit->second.empty())

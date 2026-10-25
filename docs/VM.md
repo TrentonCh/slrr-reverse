@@ -659,3 +659,15 @@ right click did nothing), the removable rule never named the part that
 blocks, and child handles were all plain ResourceRefs, so the catalog's
 per-car pages listed nothing. Two fix passes were cut off by usage limits
 and the acceptance was finished by hand.
+
+Later (2026-10-25): the rest of the mechanic. The filters hide a part's
+render instances and its click body. Tuning worked once the dialogs could
+be reached, with one difference from the stock capture: the tyre read
+"29.40 psi" where the stock game says "29.39"; the exe formats with its
+own printf, which truncates at the precision, and the host now does too.
+Doors, the hood and the trunk keep the exe's flap records and return
+codes; the swing is a stand-in pose, since the exe hands it to the hinge
+physics. The dyno is the exe's combustion cycle transcribed in float32:
+the tamas car reads 518 HP as its source says, where the old stand-in
+said 211, and stock-engined dealer cars come within a few percent of the
+horsepower their descriptions state.

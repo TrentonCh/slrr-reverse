@@ -1076,19 +1076,105 @@ void PartObject::set_ref_pose(const CamV3& pos, const CamM3& rot,
   }
 }
 
+// (m6 step 6) The flap record of `me`'s slot record `s` (installed through,
+// flag 1): on my slot when my type defines a flap there, else on the
+// target's slot. Made (closed) when missing or made for another part.
+PartObject::Slot* part_flap_record(PartObject* me, PartObject::Slot& s,
+                                   PartObject* t, const PartSlot** def) {
+  PartObject::Slot* rec = nullptr;
+  InvObject* for_node = nullptr;
+  const PartSlot* ds = part_type_slot(*me->type_, s.id);
+  if (ds && ds->has_flap) {
+    rec = &s;
+    for_node = s.other;
+  } else {
+    ds = part_type_slot(*t->type_, s.other_slot);
+    if (ds && ds->has_flap) {
+      rec = t->slot(s.other_slot);
+      for_node = me->key_;
+    }
+  }
+  if (!rec) return nullptr;
+  if (rec->flap_for != for_node) {
+    rec->flap_for = for_node;
+    rec->flap_bits = 1u;  // FUN_004a8200: a new record starts closed
+  }
+  *def = ds;
+  return rec;
+}
+
 // PE 940 FUN_004cb8d0.
+// (m6 step 6) Fork (Q4): an open flap record (bit 0 clear) turns the pose
+// about its hinge by the upper limit, in the frame of the slot's body.
 bool PartObject::pose_on_slot(int depth) {
-  for (const Slot& s : slots_) {
+  for (Slot& s : slots_) {
     if (!s.other || !(s.flags & 1u)) continue;
     std::shared_ptr<PartObject> t = part_of(s.other);
     if (!t) continue;
     CamV3 p;
     CamM3 r = cam_identity();
     part_install_pose(this, s.id, t.get(), s.other_slot, &p, &r);
+    const PartSlot* def = nullptr;
+    if (native_script_boot()) {
+      const Slot* rec = part_flap_record(this, s, t.get(), &def);
+      if (rec && !(rec->flap_bits & 1u) && cam_len2(def->flap_axis) > 0.f) {
+        CamV3 bp;
+        CamM3 bR = cam_identity();
+        if (rec == &s) {
+          bp = p;
+          bR = r;
+        } else {
+          t->slot_frame(s.other_slot, &bp, &bR);
+        }
+        const CamV3 w = bp + cam_mul(bR, def->flap_pivot);
+        CamV3 a = cam_mul(bR, def->flap_axis);
+        a = a * (1.f / std::sqrt(cam_len2(a)));
+        const CamM3 q = cam_rot_vector(a * def->flap_hi);
+        p = w + cam_mul(q, p - w);
+        r = cam_mm(q, r);
+      }
+    }
     set_ref_pose(p, r, nullptr, depth);
     return true;
   }
   return false;
+}
+
+// PE 940 FUN_004c5ed0(part, mode): `flap_toggle` (mode 1) and Part.flap.
+// Returns the record's code before the change, 0 without a flap.
+int32_t part_flap(PartObject* me, int32_t mode) {
+  for (PartObject::Slot& s : me->slots_) {
+    if (!s.other || !(s.flags & 1u)) continue;
+    std::shared_ptr<PartObject> t = part_of(s.other);
+    if (!t) continue;
+    const PartSlot* def = nullptr;
+    PartObject::Slot* rec = part_flap_record(me, s, t.get(), &def);
+    if (!rec) continue;
+    uint32_t& b = rec->flap_bits;
+    const int32_t ret = ((b & 1u) ? 1 : 2) | ((b & 2u) ? 4 : 0) | ((b & 4u) ? 8 : 0);
+    const bool closed = (b & 1u) != 0;
+    if (mode == 1) {
+      if (closed) b = (b & ~1u) | 2u;  // FUN_004b1030
+      else b = (b & ~2u) | 4u;
+    } else if (mode == 2) {
+      if (closed) b &= ~1u;
+      b = (b & ~4u) | 2u;
+    } else if (mode == 3) {
+      if (!closed) b = (b & ~6u) | 1u;  // FUN_004b1770
+    } else if (mode == 4) {
+      if (!closed) b = (b & ~2u) | 4u;
+    }
+    // Fork (Q4): no hinge physics; a closing request latches at once.
+    if (!(b & 1u) && (b & 4u)) b = (b & ~6u) | 1u;
+    me->pose_on_slot(0);
+    if (native_type_log()) {
+      const RpakEntry* a = rpak_find_entry(me->type_->type_id);
+      std::fprintf(stderr, "[native-type] flap '%s' slot %d mode %d -> %d bits=%u\n",
+                   a ? a->name.c_str() : "", s.id, mode, ret, b);
+    }
+    return ret;
+  }
+  return 0;
 }
 
 // PE 940 FUN_005032d0, as far as the position goes: the compound's origin
@@ -1405,8 +1491,12 @@ bool PartObject::get_ori(float ypr[3]) {
 // and clears both, 1 shows them and sets 0x20000000, 2 hides every render
 // instance (node flag 0x400000) and sets 0x10000000. The command then goes
 // on to every part on the list part+0xDC.
-// Fork: only the bits are kept; no instance is hidden or shown (the garage
-// sends mode 0 unless its filter buttons were used, which need the mouse).
+// (m6 step 5) Mode 2 hides every render instance and sets the click body
+// flag 0x4000 (0x4c4b41); modes 0 and 1 show the non-lamp instances and
+// clear it (0x4c4bc9 / 0x4c4c59). The host makes no lamp instance.
+// Fork: the hidden parts are a set of nodes (g_filter_hidden) the camera
+// pass asks, not node flag 0x400000 on each instance (Q3); FUN_0047df80 on
+// part+0x2C is not ported (Q5).
 bool part_cmd_filter(PartObject* me, const char* text) {
   int32_t category = 0, mode = 0;
   engine_sscanf(text, "%*s %d %d", &category, &mode);
@@ -1418,6 +1508,15 @@ bool part_cmd_filter(PartObject* me, const char* text) {
         me->flags_ = (me->flags_ & ~0x10000000u) | 0x20000000u;
     } else if (mode == 2) {
       if ((me->flags_ & 0x30000000u) != 0x10000000u) me->flags_ |= 0x10000000u;
+    }
+    if (native_script_boot() && me->key_ && mode >= 0 && mode <= 2) {
+      const bool hide = mode == 2;
+      if (hide) g_filter_hidden.insert(me->key_);
+      else g_filter_hidden.erase(me->key_);
+      me->click_hidden_ = hide;
+      if (native_type_log())
+        std::fprintf(stderr, "[native-type] filter %d %d %p hidden=%d\n", category, mode,
+                     static_cast<void*>(me->key_), hide ? 1 : 0);
     }
   }
   const std::vector<InvObject*> listed = me->attached_;
@@ -1531,6 +1630,10 @@ bool PartObject::event(int32_t type, const char* text) {
     return true;
   }
   if (word_is(word, "filter")) return part_cmd_filter(this, text);
+  if (word_is(word, "flap_toggle")) {
+    part_flap(this, 1);  // FUN_004c5ed0(part, 1) (m6 step 6)
+    return true;
+  }
   if (word_is(word, "repair")) return part_cmd_repair(this, text, false);
   if (word_is(word, "cancel")) return part_cmd_cancel(this, false);
   if (word_is(word, "texture")) {
@@ -1575,6 +1678,15 @@ bool PartObject::event(int32_t type, const char* text) {
 // stand-in answers then). Steps 5 and 6 are the caller's (Part.cpp), outside
 // every lock: `*bind_out` says whether step 5 runs and `*target` is the node
 // to bind to; `*my_slot` 0 means null.
+// (m6 step 6) PE 940 Part.flap(I) 0x4CC440 = FUN_004c5ed0 on the part object.
+bool native_part_flap(InvObject* self, int32_t mode, int32_t* ret) {
+  if (!native_script_boot()) return false;
+  std::shared_ptr<PartObject> p = part_of(self);
+  if (!p) return false;
+  *ret = part_flap(p.get(), mode);
+  return true;
+}
+
 // Fork: a search that would go on into a node of a native type without host
 // object (`assume`) answers no slot; no part of the player's car is of such
 // a type [I].

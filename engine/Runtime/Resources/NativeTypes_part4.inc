@@ -358,6 +358,11 @@ struct PartSlot {
   };
   std::vector<Attach> attach;      // +0xC4: `attach <type> <slot>`
   std::vector<Attach> compatible;  // +0x110: `compatible <type> <slot>`
+  // +0x154: a `flap` line behind the slot (m6 step 6): the hinge's pivot
+  // and axis (rebased with the slot), a second vector and the two limits.
+  bool has_flap = false;
+  CamV3 flap_pivot, flap_axis, flap_dir;
+  float flap_lo = 0.f, flap_hi = 0.f;
 };
 
 // One 200-byte wheel record of a car type (type+0x1FB8 + n * 200; count
@@ -921,6 +926,17 @@ void parse_part_cfg(const std::string& text, int32_t pack, PartTypeDesc* d) {
                     &s.pos.z, &s.ypr[0], &s.ypr[1], &s.ypr[2], &s.id);
       s.rot = cam_ypr_to_matrix(s.ypr[0], s.ypr[1], s.ypr[2]);
       d->slots.push_back(s);
+    } else if (word_is(l.word, "flap")) {
+      // (m6 step 6) srec+0x154: the flap definition of the slot before the
+      // line, "%f %f %f %f %f %f %f %f %f %f %f" (84 car cfgs).
+      if (!d->slots.empty()) {
+        PartSlot& s = d->slots.back();
+        const int n = engine_sscanf(
+            l.rest, "%f %f %f %f %f %f %f %f %f %f %f", &s.flap_pivot.x, &s.flap_pivot.y,
+            &s.flap_pivot.z, &s.flap_axis.x, &s.flap_axis.y, &s.flap_axis.z, &s.flap_dir.x,
+            &s.flap_dir.y, &s.flap_dir.z, &s.flap_lo, &s.flap_hi);
+        s.has_flap = n == 11;
+      }
     } else if (word_is(l.word, "bolt")) {
       // FUN_004bfd00, "%f %f %f %f %f %f %d": a bolt of the slot before
       // the line (its place, and the render object of the bolt). The host
@@ -1128,6 +1144,11 @@ void part_type_rebase_slots(PartTypeDesc* d) {
   for (PartSlot& s : d->slots) {
     s.pos = cam_mul(rot, s.pos - base);
     s.rot = cam_mm(rot, s.rot);
+    if (s.has_flap) {
+      s.flap_pivot = cam_mul(rot, s.flap_pivot - base);
+      s.flap_axis = cam_mul(rot, s.flap_axis);
+      s.flap_dir = cam_mul(rot, s.flap_dir);
+    }
   }
 }
 
@@ -1285,12 +1306,17 @@ std::vector<PartObject*>& g_parts_live = *new std::vector<PartObject*>();
 // M6 step 4). Main thread only; never destroyed, like the list above.
 std::unordered_map<int32_t, InvObject*>& g_click_phy =
     *new std::unordered_map<int32_t, InvObject*>();
+// (m6 step 5) Fork: the nodes of the parts `filter .. 2` hid (PE 940 sets
+// node flag 0x400000 on each render instance instead, FUN_004ebdd0).
+// Never destroyed, like the two above.
+std::unordered_set<void*>& g_filter_hidden = *new std::unordered_set<void*>();
 
 class PartObject : public NativeObject {
  public:
   PartObject() { g_parts_live.push_back(this); }
   ~PartObject() override {
     if (phy_id_) g_click_phy.erase(phy_id_);
+    if (key_) g_filter_hidden.erase(key_);
     for (size_t i = g_parts_live.size(); i-- > 0;)
       if (g_parts_live[i] == this) {
         g_parts_live[i] = g_parts_live.back();
@@ -1382,6 +1408,12 @@ class PartObject : public NativeObject {
     // node object. A handle goes unbound when its node is destroyed.
     InvObject* other = nullptr;
     int32_t other_slot = 0;      // +0x10
+    // (m6 step 6) +0x28: the flap record of a slot whose type defines one,
+    // its flags (record+0x88: bit 0 closed, bits 1 and 2 the open and
+    // closing requests) and the node it was made for (Fork: made again,
+    // closed, when another part sits on the slot).
+    uint32_t flap_bits = 0;
+    InvObject* flap_for = nullptr;
   };
   std::vector<Slot> slots_;
   int installed_ = 0;          // +0x74: slots in use, both directions

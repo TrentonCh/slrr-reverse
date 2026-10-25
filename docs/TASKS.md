@@ -206,9 +206,16 @@ test copy's saves). Stock frames of the dealers and the car lot:
      a click on its bin item or a drag puts it back; right click looks at
      it; drag into the bin, swap, SELL PART, REPAIR, REPAIR ALL; a removed
      part survives the career autosave; the catalog's per-car pages list
-     their parts. Open, in order: spec step 5 (the three filters), step 6
-     (tuning, flaps such as doors opening, MOVE PARTS), step 7 (the dyno
-     port, targets SunStrip 1.8 DVC 160 HP and Coyot T1800 219 HP);
+     their parts. Steps 5 to 7 done (this commit): the ENGINE / BODY /
+     RUNNING GEAR filters hide parts and take them out of the pick; TUNE
+     PART dialogs and sliders (numbers formatted by the exe's own printf:
+     "2.00 bar (29.39 psi)" as stock); doors, hood and trunk open and
+     close (flap records; the swing is a stand-in pose at the upper limit,
+     the exe uses its hinge physics); MOVE PARTS; the dyno is the exe's
+     combustion cycle (tamas 518 HP as its source says, Ninja TurboHatch
+     219 HP like the stock Coyot T1800, Naxas Tornado 551 HP for a stated
+     550). Open: the flap swing itself (physics), the paint booth (spec m5
+     step 7);
      a part cannot be dragged onto the floor, in the stock game as on the
      host (confirmed by the user 2026-10-24; the exe's slot search finds no
      target); the
@@ -331,6 +338,7 @@ comes after the menu is up.
 | Buying and keeping cars: by-name calls and native rows as the exe, field initialisers at allocation, `object` type, per-map fog, dealer ground programs | (this commit) | dealers open, buy / sell / trade-in, car lot park and fetch, stock-compatible saves |
 | Car info and club info: chassis box natives on the car object, anchored frame shots in the rig | (this commit) | all four car info pages and club info open and close; the CAR page reads the car's real dimensions |
 | Mechanic: pick of part click bodies, take off / put back, install_OK as the 940 probe, getInfo from part and car objects, drag / bin / sell / repair, child handles boxed by restype | (this commit) | parts come off into the bin and go back; catalog per-car pages filled |
+| Mechanic filters, tuning, flaps, MOVE PARTS; the exe's printf for Float.toString; the dyno's combustion cycle | (this commit) | top-bar HP and car info engine figures from the exe's cycle |
 
 ## In progress
 

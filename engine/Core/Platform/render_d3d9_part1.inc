@@ -2558,6 +2558,7 @@ void draw_viewport_cameras() {
         if (hidden) ++g_cam_pass_stats.hidden_instances;
         continue;
       }
+      if (native_filter_hidden(chain_parent_of(mk.first))) continue;  // m6 step 5
       members.push_back(mk.first);
     }
     std::sort(members.begin(), members.end(), [](void* a, void* b) {

@@ -344,6 +344,10 @@ InvObject* gameref_get_parent(InvObject* o);
 // Fork: GameRef flag word (PE 940 node+0x84, GameRef.setFlags FUN_004db900:
 // WORLDTREEROOT 0x10, WORLDTREELEAF 0x40); 0 for an object that is no GameRef.
 int32_t gameref_get_flags(InvObject* o);
+// (m6 step 5) Fork: true when `node` is the node of a part (or car) that
+// `filter .. 2` hid; the camera pass skips the render instances under it
+// (PE 940: node flag 0x400000 on each instance, FUN_004ebdd0). Script boot.
+bool native_filter_hidden(void* node);
 // Fork: the flag word a pack node starts with (PE 940 FUN_0051eaa0: node+0x84
 // = the record's flags byte; 0x10 WORLDTREEROOT, 0x01 has bounds) for a handle
 // bound to a game instance record (typeof 1); 0 for any other object.
@@ -427,6 +431,9 @@ void native_part_debug_dump(FILE* out);
 //   native_part_slot_count / _slot_id / _slot_index: the slot list of the
 //     type in cfg order; an index past the end gives id 0, an unknown id
 //     index 0.
+// (m6 step 6) PE 940 Part.flap(I) 0x4CC440 = FUN_004c5ed0 on the part
+// object; false when `self` has none (the legacy body answers).
+bool native_part_flap(InvObject* self, int32_t mode, int32_t* ret);
 bool native_part_car(InvObject* self, int32_t* node_id,
                      InvObject** script_instance);
 bool native_part_slot_count(InvObject* self, int32_t* count);
