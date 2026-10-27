@@ -176,6 +176,13 @@ City.class 8).
 
 ### 4.2 Sources and the on-demand compiler
 
+**Update, 2026-10-26.** The host now compiles on demand too, with the C++ port of
+`tools/slrrc` in `engine/Core/Jvm/Compiler` (equal to the reference on all 3,454 sources,
+class bytes included). Unlike the exe it never writes into the install: a missing class file
+whose source exists is compiled into a per-install cache (`script_compiler.hpp`), and an
+entry is reused while its manifest (compiler version, float mode, source hash, the
+declarations of every consulted class) still holds. Script boot only.
+
 Sources live at `X/src/Name.java` and compile to `X/Name.class`. The exe contains the
 compiler: a flex scanner and yacc parser (`yacc stack overflow`,
 `fatal flex scanner internal error`), `CompileAll: begin file scan...`, and the path

@@ -671,3 +671,18 @@ physics. The dyno is the exe's combustion cycle transcribed in float32:
 the tamas car reads 518 HP as its source says, where the old stand-in
 said 211, and stock-engined dealer cars come within a few percent of the
 horsepower their descriptions state.
+
+### 2026-10-26 (session 10): the compiler in the engine
+
+The C++ port of the script compiler was half done since 2026-10-12: its
+scanner, parser and declarations matched the reference, and an emitter
+had been written but never tested. It turned out to be complete: all
+3,454 sources gave the reference's trees (629,417 nodes). What was
+missing was the writer (the last two pool passes and the chunks), a
+small module; with it every source compiles to the reference's bytes.
+Thirteen "failing" runs of the extra checks were the test counting runs
+it never credited. In the engine the class loader now compiles a missing
+class from its source into a cache outside the install, so a career whose
+car carries parts that ship only as source loads without a precompiled
+cache. One snag on the way: cache paths under a deep folder passed the
+260-character limit of `fopen`; such entries now get a short hashed name.

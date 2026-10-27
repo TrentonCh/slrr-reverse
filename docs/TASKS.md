@@ -237,20 +237,35 @@ test copy's saves). Stock frames of the dealers and the car lot:
    install); fill it with
    `python -I slrrc --root <game dir> --out out\class_cache --only-missing`.
    With it a stock-written career whose car has a source-only rim and
-   tyre loads into the garage. Open:
-   - the C++ port linked into the engine (`engine/Core/Jvm/Compiler`),
-     equal to the reference at every level (`--impl cpp` hook in the
-     tests), then compile on demand in the class loader with a cache;
+   tyre loads into the garage.
+   - Done (this commit): the C++ port in the engine
+     (`engine/Core/Jvm/Compiler`), equal to the reference on all 3,454
+     sources at every level (tokens, AST, rows, trees, class bytes:
+     8,531,110 bytes) and in every extra check (224,489 runs), tested
+     outside the repo in `../slrr-ghidra/compiler_cpp` (`ref\tests\
+     t7_cpp.py all`). The class loader compiles a missing class from its
+     source on demand (script boot) into a per-install cache
+     (`%LOCALAPPDATA%\slrr-reverse\script-cache\<key>`, or
+     `SLRR_SCRIPT_CACHE_DIR`), with a manifest of the compiler version,
+     float mode, source hash and the declarations of every class the
+     compilation consulted; nothing is written into the install;
+     `SLRR_SCRIPT_COMPILE=0` turns it off and `SLRR_CLASS_CACHE` still
+     comes first. The Fagut-1 career loads without the precompiled cache;
+     `SLRR_SCRIPT_COMPILE_ALL=1` compiles all 635 source-only classes in
+     3.8 s, every one byte-identical to the reference and loaded by the
+     engine's reader. The compiler starts once, at the first missing
+     class (about 0.55 s).
    - done (a4c77f2): the two exe reads. Float literals use the engine's
      own SSE single-precision `sscanf("%f")` (setting B, now the
      default; the 136 class files the Build 940 exe itself wrote are
      byte-identical under it). Pack names come from the resource
      engine's pack table (first registration spelling), replayed by
-     `packs.PackTable`. Host side still open: `rpak.cpp` does not keep
-     the first spelling of a pack, so the engine cannot answer
-     `PackNames` yet (needed by the C++ port);
-   - stale detection for cache entries (the manifest records source size
-     and hash; the host does not check it yet).
+     `packs.PackTable`; the engine uses the compiler's own replay of the
+     install's pack table (`InstallPacks`), as the tests do;
+   - open: the copy in `engine/Core/Jvm/Compiler` and
+     `../slrr-ghidra/compiler_cpp/src` are kept equal by hand (the test
+     tool should build from the engine's copy); a cache that cannot be
+     written means no class (the spec allows loading from memory).
 8. Frame-loop differences listed in ENGINE.md section 3. Done on the
    script boot (this commit): one gated `input_tick` and one game tick
    per pass after more than 15 ms, with the same whole-millisecond dt.
@@ -334,6 +349,7 @@ comes after the menu is up.
 | tools/slrrc: reference compiler for the script dialect, with its proofs | 1342f63 | 2,649 of 2,651 shipped class files byte-identical; all 635 source-only classes compile |
 | Car in the garage, second half: lit material classes with environment map and specular, paint, shadows | 430ab5e | painted car with reflections and a shadow; the lift matches stock in metals and shadow marks |
 | Class cache: classes missing in the install are read from `SLRR_CLASS_CACHE` | d3872e1 | a stock-written career with a source-only rim and tyre loads into the garage |
+| Script compiler in the engine: C++ port equal to the reference at every level, compile on demand with a per-install cache | (this commit) | careers with source-only parts load without a precompiled cache; 635/635 source-only classes compile and load |
 | Mouse on the script boot: `cursor` and `player` types, ray pick and the eighteen cursor events, camera control, test rig; legacy pack scan 40 % faster | (this commit) | hover, press and click in menu, dialogs and garage; camera orbit and zoom within 2 % of the model; old-build regression 109 s -> 67 s |
 | Buying and keeping cars: by-name calls and native rows as the exe, field initialisers at allocation, `object` type, per-map fog, dealer ground programs | (this commit) | dealers open, buy / sell / trade-in, car lot park and fetch, stock-compatible saves |
 | Car info and club info: chassis box natives on the car object, anchored frame shots in the rig | (this commit) | all four car info pages and club info open and close; the CAR page reads the car's real dimensions |

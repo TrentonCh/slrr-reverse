@@ -25,6 +25,8 @@
 #include <windows.h>
 #endif
 
+#include "script_compiler.hpp"
+
 namespace inv {
 
 // PE JVM load / compile gate (ticket jvm_load_host; ticket VA 0x00416000 is
@@ -189,6 +191,10 @@ bool Jvm::load_class_file_named(const char* path, std::string* first_fqn) {
       std::fprintf(stderr, "[jvm] class from cache %s" "\n", cached.c_str());
       path = cached.c_str();
     }
+    // Fork: compiled from its source into the script cache
+    // (script_compiler.hpp; the exe compiles into the install).
+    if (cached.empty() && script_compile_missing(game_root_, path, &cached))
+      path = cached.c_str();
   }
   std::vector<JvmClass> all;
   std::string err;
@@ -287,6 +293,14 @@ bool Jvm::load_class(const char* fqn) {
       std::fprintf(stderr, "[jvm] class from cache %s" "\n", cached.c_str());
       if (load_class_file(cached.c_str()) && find_class(fqn)) return true;
     }
+  }
+  {
+    // Fork: compiled from its source into the script cache
+    // (script_compiler.hpp; the exe compiles into the install).
+    std::string compiled;
+    if (script_compile_missing(game_root_, path, &compiled) &&
+        load_class_file(compiled.c_str()) && find_class(fqn))
+      return true;
   }
 
   // Sibling class: MainMenuDialog lives inside MainMenu.class (multi-TUFA).

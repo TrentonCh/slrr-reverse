@@ -25,6 +25,20 @@ add_executable(slrr_engine
   core/Jvm/tufa.cpp
   core/Jvm/callinfo.cpp
   core/Jvm/runtime.cpp
+  core/Jvm/script_compile.cpp
+  core/Jvm/Compiler/classes.cpp
+  core/Jvm/Compiler/classfile.cpp
+  core/Jvm/Compiler/decl.cpp
+  core/Jvm/Compiler/diag.cpp
+  core/Jvm/Compiler/emit.cpp
+  core/Jvm/Compiler/floatlit.cpp
+  core/Jvm/Compiler/install.cpp
+  core/Jvm/Compiler/packs.cpp
+  core/Jvm/Compiler/parser.cpp
+  core/Jvm/Compiler/pool.cpp
+  core/Jvm/Compiler/scanner.cpp
+  core/Jvm/Compiler/slrrc.cpp
+  core/Jvm/Compiler/write.cpp
   core/Platform/rpak.cpp
   core/Platform/render_d3d9.cpp
   core/Platform/video_fmv.cpp
@@ -88,6 +102,17 @@ add_custom_command(TARGET slrr_engine POST_BUILD
 )
 
 target_include_directories(slrr_engine PRIVATE include)
+# The script compiler (core/Jvm/Compiler, the C++ port of tools/slrrc): its float
+# literal conversion needs IEEE single precision in SSE registers, never x87 or
+# fast math (Compiler/floatlit.hpp); its float self test runs before the first
+# compilation.
+if(MSVC)
+  file(GLOB SLRR_COMPILER_SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/core/Jvm/Compiler/*.cpp)
+  set_source_files_properties(${SLRR_COMPILER_SOURCES} PROPERTIES COMPILE_OPTIONS "/fp:precise")
+  if(CMAKE_SIZEOF_VOID_P EQUAL 4)
+    set_source_files_properties(${SLRR_COMPILER_SOURCES} PROPERTIES COMPILE_OPTIONS "/fp:precise;/arch:SSE2")
+  endif()
+endif()
 
 if(MSVC)
   target_compile_options(slrr_engine PRIVATE /W3 /utf-8)
