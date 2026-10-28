@@ -135,4 +135,45 @@ bool paint_texture_target(int32_t id) {
   return true;
 }
 
+// The mesh of an unsaved row of a car file (restype 5, FUN_004d5d60): a
+// bent panel, which the exe writes to "<file>.<k>" through the mesh's own
+// writer (FUN_004ebb10 -> mesh vt+0x0C) and reads back as a runtime mesh.
+// The side file is INVO version 4 in the writer's own layout (list
+// pointers of the writing process, then chunks with 32-byte vertices), not
+// the pack meshes' {type, offset} directory (m5 exe_cars.md U10).
+// Fork: the host keeps the file's bytes under a runtime id, Part.setMesh
+// takes that id (Part.getMesh answers it, so the part saves it again) and
+// the next save of the car writes the same bytes back; the host deforms no
+// mesh, so they are what the exe would write. The part is drawn with its
+// pack mesh until the writer's layout is read.
+namespace {
+std::unordered_map<int32_t, std::vector<uint8_t>>& g_side_mesh =
+    *new std::unordered_map<int32_t, std::vector<uint8_t>>();
+}  // namespace
+
+int32_t side_mesh_from_file(const char* path) {
+  if (!native_script_boot() || !path || !path[0]) return 0;
+  FILE* fp = std::fopen(path, "rb");
+  if (!fp) return 0;
+  std::vector<uint8_t> bytes;
+  uint8_t buf[65536];
+  size_t n = 0;
+  while ((n = std::fread(buf, 1, sizeof buf, fp)) > 0)
+    bytes.insert(bytes.end(), buf, buf + n);
+  std::fclose(fp);
+  if (bytes.size() < 8 || std::memcmp(bytes.data(), "INVO", 4) != 0) return 0;
+  const int32_t id = static_cast<int32_t>(host_alloc_local_rid());
+  const size_t size = bytes.size();
+  g_side_mesh[id] = std::move(bytes);
+  if (native_type_log())
+    std::fprintf(stderr, "[paint] mesh side file '%s' -> mesh 0x%08X (%zu bytes)\n",
+                 path, static_cast<unsigned>(id), size);
+  return id;
+}
+
+const std::vector<uint8_t>* side_mesh_bytes(int32_t id) {
+  auto it = g_side_mesh.find(id);
+  return it == g_side_mesh.end() ? nullptr : &it->second;
+}
+
 }  // namespace inv

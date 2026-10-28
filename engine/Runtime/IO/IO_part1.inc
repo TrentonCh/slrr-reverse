@@ -346,9 +346,8 @@ bool soft_packfile_path_exists(const char* path) {
 // a side file), one without is the side file "<car file>.<k>" (`sourcefile
 // <file>.<k>`, `flags 1`); each becomes a runtime texture, and readResID
 // maps ordinal k to its id. Script boot only.
-// Fork: a mesh row (a bent panel, written by the exe as an INVO v4 side
-// file) is read past: the host has no deformed meshes and the part keeps
-// its pack mesh.
+// A mesh row (a bent panel) is its side file "<car file>.<k>" (INVO v4),
+// kept as bytes under a runtime id (side_mesh_from_file).
 bool file_sdat_soft_skip_type2_textures(FileState* st, FILE* fp,
                                         uint32_t count) {
   for (uint32_t i = 0; i < count; ++i) {
@@ -377,6 +376,13 @@ bool file_sdat_soft_skip_type2_textures(FileState* st, FILE* fp,
       node.abs_id = paint_texture_from_file(
           source.c_str(), text.empty() ? nullptr : text.c_str());
       node.restype = 7;
+      if (node.abs_id) st->unsaved.push_back(node);
+    } else if (kind == 5 && st && native_script_boot()) {
+      FileUnsavedRes node;
+      node.ordinal = static_cast<int32_t>(id);
+      node.abs_id =
+          side_mesh_from_file((st->path + "." + std::to_string(id)).c_str());
+      node.restype = 5;
       if (node.abs_id) st->unsaved.push_back(node);
     }
   }
@@ -479,10 +485,25 @@ bool file_sdat_soft_flush_trailer(FileState* st) {
   // row. A texture read from a side file under save\ keeps its payload
   // text inline (size = its length); any other texture is size 0 and the
   // side file "<file>.<k>", a baseline JPEG, quality 95 (FUN_004ebb80).
-  // Fork: a mesh row is written size 0 with no side file (the host has no
-  // deformed meshes to write).
+  // A mesh row is size 0 and its side file "<file>.<k>" (FUN_004ebb10);
+  // Fork: the bytes the mesh was read from (side_mesh_bytes).
   for (const FileUnsavedRes& u : st->unsaved) {
     std::string inline_text;
+    if (u.restype == 5 && native_script_boot()) {
+      const std::string side = st->path + "." + std::to_string(u.ordinal);
+      const std::vector<uint8_t>* bytes = side_mesh_bytes(u.abs_id);
+      FILE* out = bytes ? std::fopen(side.c_str(), "wb") : nullptr;
+      const bool ok = out && std::fwrite(bytes->data(), 1, bytes->size(), out) ==
+                                 bytes->size();
+      if (out) std::fclose(out);
+      if (!ok)
+        std::fprintf(stderr, "[paint] side file %s NOT written (mesh 0x%08X)\n",
+                     side.c_str(), static_cast<unsigned>(u.abs_id));
+      else if (native_type_log())
+        std::fprintf(stderr, "[paint] side file %s (mesh 0x%08X, %zu bytes)\n",
+                     side.c_str(), static_cast<unsigned>(u.abs_id),
+                     bytes->size());
+    }
     if (u.restype == 7 && native_script_boot()) {
       // "sourcefile %5s" of the payload, compared with "save\" and
       // "save/" (FUN_0057c11e, 0 = equal): inline when it is neither.
@@ -1035,6 +1056,10 @@ int32_t java_io_File_write_2(InvObject* self, InvObject* value) {
     // restype 7.
     if (restype == 0 && native_script_boot() && paint_texture_handle(id))
       restype = 7;
+    // The same for the mesh of a car file's unsaved row (`new ResourceRef(
+    // part.getMesh())`), restype 5.
+    if (restype == 0 && native_script_boot() && side_mesh_bytes(id))
+      restype = 5;
     const int32_t gate = restype - 5;
     if (gate != 0 && gate != 2) return 0;
     for (const FileUnsavedRes& u : st->unsaved) {

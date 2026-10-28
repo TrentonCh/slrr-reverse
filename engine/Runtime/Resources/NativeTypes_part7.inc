@@ -274,6 +274,8 @@ int32_t part_texture_line(const PartObject* p, const RenderObjectDesc* desc,
 bool part_names_record(int32_t id, int restype) {
   // M7: a runtime texture of the paint booth (Resources_part5.inc).
   if (restype == 7 && id && paint_texture_handle(id)) return true;
+  // The mesh of a car file's unsaved row (Resources_part5.inc).
+  if (restype == 5 && id && side_mesh_bytes(id)) return true;
   const RpakEntry* e = id ? rpak_find_entry(id) : nullptr;
   return e && e->restype == restype;
 }
@@ -391,6 +393,21 @@ void part_set_mesh(PartObject* p, int32_t id) {
                    "record, ignored (the part keeps 0x%08X)\n",
                    static_cast<unsigned>(id), car_type_alias(d.type_id),
                    static_cast<unsigned>(p->mesh_));
+    return;
+  }
+  // Fork: the mesh of a car file's side file (a bent panel) is the part's
+  // handle, so Part.getMesh answers it and the part saves it again, but the
+  // render line keeps the pack mesh: the host does not read the exe
+  // writer's INVO layout (Resources_part5.inc).
+  if (side_mesh_bytes(id)) {
+    ++g_paint.mesh_no_slot;
+    if (native_type_log())
+      std::fprintf(stderr,
+                   "[native-type] Part.setMesh(0x%08X) on '%s': a mesh side "
+                   "file; drawn with 0x%08X\n",
+                   static_cast<unsigned>(id), car_type_alias(d.type_id),
+                   static_cast<unsigned>(p->mesh_));
+    p->mesh_ = id;
     return;
   }
   const RenderObjectDesc* desc = render_object_desc(p->render_type_);

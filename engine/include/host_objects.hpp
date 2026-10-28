@@ -415,6 +415,11 @@ InvObject* paint_texture_handle(int32_t id);
 // row unless it starts `sourcefile save\` or `sourcefile save/`.
 std::string paint_texture_payload(int32_t id);
 bool paint_texture_target(int32_t id);
+// The mesh of an unsaved row of a car file (restype 5): the side file
+// "<file>.<k>" kept as bytes under a runtime id, written back by the next
+// save of the car (Resources_part5.inc); 0 / null when there is none.
+int32_t side_mesh_from_file(const char* path);
+const std::vector<uint8_t>* side_mesh_bytes(int32_t id);
 // ResourceRef.makeTexture (FUN_00539170): the runtime texture `id` that
 // `ref` holds, read from `path`, findable by its id (a Decal the player
 // bought is `new Decal(id)`: another handle on the same resource).

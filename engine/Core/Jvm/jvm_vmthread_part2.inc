@@ -1584,8 +1584,10 @@ VmCallFrame* vmthread_build_tree_frame(VmThread* thr, const JvmClass* cls,
   // class is java.lang.String (Class::isInheritedFrom FUN_00549d80): formats
   // "%d" and "%.3f", then JVM_String_from_cstr. GameLogic.run relies on it:
   // dayTxt.changeText(day) passes GameLogic.day:I to changeText(String).
-  // Fork: only this conversion is applied here; the I <-> F ones stay with
-  // vmthread_assign_coerce at the stores.
+  // The same conversion makes an int argument of an F parameter a float
+  // and a float of an I parameter an int: ColorShop passes
+  // Palette.getChannel(..) / MUL_R to Slider.setValue(F), whose
+  // (value - a) / (b - a) must not divide as ints.
   const std::vector<std::string> ptypes = pe_split_args(m->signature);
   const bool typed = ptypes.size() == args.size();
   // PE @ 0x420333: pops run from the operand-stack top down.
@@ -1599,6 +1601,10 @@ VmCallFrame* vmthread_build_tree_frame(VmThread* thr, const JvmClass* cls,
       else
         std::snprintf(buf, sizeof buf, "%.3f", static_cast<double>(v.v.f));
       v = JvmValue::make_obj(string_new(buf));
+    } else if (typed && ptypes[ri] == "F" && v.tag == JvmTag::Int) {
+      v = JvmValue::make_float(static_cast<float>(v.v.i));
+    } else if (typed && ptypes[ri] == "I" && v.tag == JvmTag::Float) {
+      v = JvmValue::make_int(static_cast<int32_t>(v.v.f));
     }
     fr->locals.push_back(v);
   }

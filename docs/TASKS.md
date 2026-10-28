@@ -205,6 +205,14 @@ test copy's saves). Stock frames of the dealers and the car lot:
      and read back; the ground's software lighting (C3DLow vt+0x11C) and
      the 0x8000 slot-copy props, so the booth's walls, floor and panels
      match the stock frame (70 / 74 / 30 / 247 against 70 / 74 / 31 / 248);
+     the paint shop's RGB knobs follow their values (script methods take
+     their int / float arguments converted to the parameter type, as the
+     exe's assignment conversion does); mesh side files (bent panels) are
+     read and written back byte for byte (a stock dented Duhen SunStrip
+     round-trips); open: the exe writer's INVO layout of those meshes (m5
+     U10), so a dent is kept but drawn with the pack mesh. Test saves
+     (2026-10-28): career `fix-1` (Einvagen 110 GT in the garage, $6,316)
+     and `save/cars/tamas` in the test copy;
    - the mechanic, spec steps 0 to 4: done (this commit). Spec, maps,
      step reports in `../slrr-ghidra/notes/m6/` (`run_m6.sh`,
      `m6_check.py --list`). Hover a part: its name in the info line; a
