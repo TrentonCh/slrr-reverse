@@ -32,3 +32,4 @@
 #include "Resources_part2.inc"
 #include "Resources_part3.inc"
 #include "Resources_part4.inc"
+#include "Resources_part5.inc"

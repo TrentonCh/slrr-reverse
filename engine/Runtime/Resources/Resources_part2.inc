@@ -1166,6 +1166,20 @@ InvObject* resref_find_by_id(int32_t id) {
   return nullptr;
 }
 
+// M7: the render instance (type 3) with this id that hangs under one of
+// `parents` (the host gives an instance its render type's id).
+InvObject* resref_find_render_instance(int32_t id, InvObject* const* parents,
+                                       int count) {
+  if (!id) return nullptr;
+  std::lock_guard<std::mutex> lock(g_mu);
+  for (auto& kv : g_res) {
+    if (kv.second.id != id || kv.second.type != 3) continue;
+    for (int i = 0; i < count; ++i)
+      if (parents[i] && kv.second.parent == parents[i]) return kv.first;
+  }
+  return nullptr;
+}
+
 InvObject* resref_find_by_id_restype(int32_t id, int32_t restype) {
   if (!id) return nullptr;
   std::lock_guard<std::mutex> lock(g_mu);
@@ -1786,10 +1800,17 @@ void java_util_resource_ResourceRef_makeTexture(InvObject* self, InvObject* pare
     resolved = rpak_resolve_path(fn);
     if (resolved.empty()) resolved = fn;
   }
+  // M7: ResourceEngine_type_texture takes its id from the node allocator
+  // (AllocLocalRid, 0xFFFF0000 | n), as every runtime resource; a car or
+  // career file writes such an id as an unsaved row (File.write). Script
+  // boot only; the legacy path keeps its counter.
+  const int32_t new_id = native_script_boot()
+                             ? static_cast<int32_t>(host_alloc_local_rid())
+                             : 0;
   {
     std::lock_guard<std::mutex> lock(g_mu);
     auto& r = R(self);
-    r.id = resref_next_runtime_id();
+    r.id = new_id ? new_id : resref_next_runtime_id();
     r.type = 7;  // RESTYPE_TEXTURE (PE ResourceEngine_type_texture v9[0]=7)
     r.parent = parent;
     r.parent_id = R(parent).id;
@@ -1798,6 +1819,16 @@ void java_util_resource_ResourceRef_makeTexture(InvObject* self, InvObject* pare
   }
   if (!resolved.empty()) {
     render_d3d9_texture_create_from_file(self, resolved.c_str());
+    int32_t id = 0;
+    {
+      std::lock_guard<std::mutex> lock(g_mu);
+      id = R(self).id;
+    }
+    // The payload the exe builds: "sourcefile %s\r\nflags %d\r\n", flags 0.
+    const std::string payload =
+        std::string("sourcefile ") + fn + "\r\nflags 0\r\n";
+    paint_texture_register_file(id, self, resolved.c_str(),
+                                payload.c_str());  // M7
   }
 }
 void java_util_resource_ResourceRef_makeSound(InvObject* self, InvObject* parent,
@@ -1829,6 +1860,14 @@ void java_util_resource_ResourceRef_scaleMesh(InvObject* self, float x, float y,
   if (!render_d3d9_mesh_ready(self)) return;
   render_d3d9_mesh_scale_vertices(self, x, y, z);
 }
+// M7: the render type copies ResourceRef.duplicate made, by their new id.
+std::unordered_map<int32_t, InvObject*>& g_render_type_copies =
+    *new std::unordered_map<int32_t, InvObject*>();
+InvObject* render_type_copy(int32_t id) {
+  auto it = g_render_type_copies.find(id);
+  return it == g_render_type_copies.end() ? nullptr : it->second;
+}
+
 void java_util_resource_ResourceRef_duplicate(InvObject* self, InvObject* src) {
    if (std::getenv("SLRR_PE_STREAM_TRACE")) { float a[3]{}, b[3]{}; if (src) render_d3d9_mesh_local_bounds(src, a, b); std::string ep; int32_t sid = 0, styp = 0; if (src) { std::lock_guard<std::mutex> lock(g_mu); ep = R(src).entry_path; sid = R(src).id; styp = R(src).type; } std::fprintf(stderr, "[native] ResourceRef.duplicate self=%p(%s) src=%p(%s) src_id=%d type=%d path=%s ready=%d bmin=(%g,%g,%g) bmax=(%g,%g,%g)\n", (void*)self, tree_host_class(self) ? tree_host_class(self) : "", (void*)src, src && tree_host_class(src) ? tree_host_class(src) : "", sid, styp, ep.c_str(), src ? (render_d3d9_mesh_ready(src) ? 1 : 0) : -1, a[0], a[1], a[2], b[0], b[1], b[2]); }
  // PE @ 0x004802C0 → ResourceHandle_bindOrClone @ 0x0048D860.
@@ -1871,6 +1910,25 @@ void java_util_resource_ResourceRef_duplicate(InvObject* self, InvObject* src) {
       std::lock_guard<std::mutex> lock(g_mu);
       src_id = R(src).id;
       restype = R(src).restype;
+    }
+    // M7: a render type (typeof 14) is copied into a new node too
+    // (FUN_004e9470 -> FUN_0051ee30, the node allocator FUN_00518a40): the
+    // copy gets its own id, so that `new RenderRef(parent, copy.id(), ..)`
+    // makes an instance of the copy, with the lines RenderRef.changeResource
+    // replaced in it (the Painter's decal buttons, Painter.java:378-393).
+    // The host's copy keeps its payload by handle (the mesh clone above);
+    // render_type_copy finds the handle by the new id.
+    // A render type that no instance has loaded yet has no mesh here; the
+    // copy takes the record's (the pending loader, as for an instance).
+    if (restype == 14 && src_id != 0 && !render_d3d9_mesh_ready(self))
+      renderref_materialise_pending(self, src_id);
+    if (restype == 14 && src_id != 0 && render_d3d9_mesh_ready(self)) {
+      const int32_t copy_id = static_cast<int32_t>(host_alloc_local_rid());
+      {
+        std::lock_guard<std::mutex> lock(g_mu);
+        R(self).id = copy_id;
+      }
+      g_render_type_copies[copy_id] = self;
     }
     if (restype == 13 && src_id != 0) {
       int32_t copy_id = 0;
@@ -1926,6 +1984,9 @@ LineOverrides line_overrides_of(InvObject* instance) {
 // again. Main thread.
 InvObject* line_texture(int32_t texture_id) {
   if (!texture_id) return nullptr;
+  // M7: a runtime texture (a paintable copy, a side file) is its handle.
+  if (InvObject* paint = paint_texture_handle(texture_id))
+    return render_d3d9_texture_ready(paint) ? paint : nullptr;
   struct Tex {
     InvObject* ref = nullptr;
     bool tried = false;
@@ -2187,6 +2248,18 @@ void java_util_resource_RenderRef_create(InvObject* self, InvObject* parent,
   if (!self) return;
   // PE Mighty ERROR if type && !parent. Camera.create shims type=null.
   if (type && !parent) return;
+  // M7: a handle bound to the id of a render type copy (`new RenderRef(
+  // parent, copy.id(), ..)`) names the copy's node in the exe; the host's
+  // copy is its handle (ResourceRef.duplicate).
+  if (type && !render_d3d9_mesh_ready(type)) {
+    int32_t tid = 0;
+    {
+      std::lock_guard<std::mutex> lock(g_mu);
+      tid = R(type).id;
+    }
+    if (InvObject* copy = tid ? render_type_copy(tid) : nullptr)
+      if (render_d3d9_mesh_ready(copy)) type = copy;
+  }
   // Fork (M2 spec Q2): the exe builds a pack instance's game object on the
   // first payload request for the node; whether its render-instance factory
   // FUN_00524840 makes one for the parent was not read. The host also

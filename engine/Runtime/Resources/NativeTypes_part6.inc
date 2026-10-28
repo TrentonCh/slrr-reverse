@@ -979,6 +979,9 @@ bool CarObject::event(int32_t type, const char* text) {
     part_set_mesh(this, id);
     return true;
   }
+  // M7: `bigdecal`, `decal`, `paint` (FUN_004a2e60: the same functions as
+  // the part's, FUN_004c8c60, FUN_004ca120, FUN_004eaf60).
+  if (part_cmd_painter(this, word, text)) return true;
 
   // Taken and stored. Fork: not acted on (each needs the drive train, the
   // seats or the lamp, wing and flap records of the car object):

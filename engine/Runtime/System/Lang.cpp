@@ -424,6 +424,12 @@ bool exe940_format_double(const char* fmt, double v, std::string* out) {
 
 }  // namespace
 
+// The exe's '%f' for other natives that format with Util_Sprintf (M7: the
+// Painter's `bigdecal` line). False for a conversion other than %f.
+bool exe940_format_f(const char* fmt, double v, std::string* out) {
+  return exe940_format_double(fmt, v, out);
+}
+
 InvObject* java_lang_Float_toString(float f, InvObject* fmt) {
   // PE @ 0x00481DD0 size 0x51 (int_convert). Static UnboxArg
   // dest0=nullptr (skip this), dest1=float (var_404), dest2=fmt cstr

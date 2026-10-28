@@ -1606,8 +1606,9 @@ bool part_cmd_cancel(PartObject* me, bool car) {
 // vt+0x38 FUN_004c4400. Events 1 and 4 (damage), 0x80 and 0x10000 are not
 // ported; of the commands (event 0x10) `install`, `remove`, `add_part`,
 // `rem_part`, `filter`, `texture`, `mesh`, `repair` and `cancel` are. Not
-// ported and left to the generic chain: `flap_toggle`, `colorscheme`,
-// `paint`, `decal`, `bigdecal` (the paint booth).
+// ported and left to the generic chain: `colorscheme`. `flap_toggle` is
+// part_flap (m6 step 6); `paint`, `decal` and `bigdecal` are the paint
+// booth's (M7, NativeTypes_part12.inc).
 bool PartObject::event(int32_t type, const char* text) {
   if (type != 0x10) return false;
   char word[1025];
@@ -1636,6 +1637,7 @@ bool PartObject::event(int32_t type, const char* text) {
   }
   if (word_is(word, "repair")) return part_cmd_repair(this, text, false);
   if (word_is(word, "cancel")) return part_cmd_cancel(this, false);
+  if (part_cmd_painter(this, word, text)) return true;  // M7
   if (word_is(word, "texture")) {
     // "%*s %d": FUN_0047f200(id, 7), a handle on the texture record, then
     // FUN_004c75a0 when part+0x84 != 0: what Part.setTexture does.
@@ -1784,13 +1786,18 @@ int native_part_getinfo(InvObject* self, int32_t query, int32_t arg,
   if (car) {
     switch (query) {
       case 6: case 7: case 0xb: case 0xf: case 0x27: case 0x28: case 0x29:
-      case 0x2b: case 0x2f: case 0x31: case 0x37: case 0x3f:
+      case 0x2b: case 0x2f: case 0x31: case 0x37: case 0x3f: case 0x4d:
         break;
       default:
         return 0;
     }
-  } else if (query == 1 || query == 0x3a || query == 0x48 || query == 0x4d) {
+  } else if (query == 1 || query == 0x3a || query == 0x48) {
     return 0;
+  }
+  // M7: GII_PAINTABLE, both tables (FUN_004c3da0 / FUN_004a15c0).
+  if (query == 0x4d) {
+    *answer = native_part_paintable(p.get(), car);
+    return car ? 2 : 1;
   }
   NativeInfo info;
   info.arg = arg;

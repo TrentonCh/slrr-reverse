@@ -340,6 +340,7 @@ std::shared_ptr<NativeObject> car_create(const NativeCreate& c);
 std::shared_ptr<NativeObject> player_create(const NativeCreate& c);
 std::shared_ptr<NativeObject> cursor_create(const NativeCreate& c);
 std::shared_ptr<NativeObject> object_create(const NativeCreate& c);
+std::shared_ptr<NativeObject> button_create(const NativeCreate& c);  // M7
 
 using NativeFactory = std::shared_ptr<NativeObject> (*)(const NativeCreate&);
 struct NativeTypeRow {
@@ -359,7 +360,7 @@ const NativeTypeRow kNativeTypes[kNativeTypeCount] = {
     {"part", &part_create},
     {"trigger", nullptr},
     {"player", &player_create},
-    {"button", nullptr},
+    {"button", &button_create},
     {"cursor", &cursor_create},
     {"bot", nullptr},
     {"road", nullptr},
@@ -1471,5 +1472,13 @@ std::shared_ptr<NativeObject> ground_create(const NativeCreate& c) {
 // What the cursor's pick finds of the part and car objects: their click
 // bodies (M6 step 1), and GII_SIZE.
 #include "NativeTypes_part11.inc"
+
+// The paint booth (M7): the `paint`, `decal` and `bigdecal` commands, the
+// paintable copy of a part's texture, the pick of the Painter natives.
+#include "NativeTypes_part12.inc"
+
+// The `button` type (table row 7): Osd.createIcon's GameRef, the Painter's
+// decal buttons (M7).
+#include "NativeTypes_part13.inc"
 
 }  // namespace inv

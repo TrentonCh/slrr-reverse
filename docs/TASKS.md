@@ -198,7 +198,13 @@ test copy's saves). Stock frames of the dealers and the car lot:
      ported onto the car object (the chassis compound's box, 0x4B3220 /
      0x4B2DC0 / 0x4B2680); the ENGINE page's figures still come from the
      dyno stand-in. The catalog works by the user's own play;
-   - spec step 7: the paint booth with car side files;
+   - spec step 7, the paint booth: done (this commit). Spec in
+     `../slrr-ghidra/notes/m7/exe_paint.md`. PAINT and DECAL strokes as the
+     exe's PaintTexture / PaintDecal jobs into a private copy of the part
+     texture, the brush preview, painted textures saved as JPEG side files
+     and read back; the ground's software lighting (C3DLow vt+0x11C) and
+     the 0x8000 slot-copy props, so the booth's walls, floor and panels
+     match the stock frame (70 / 74 / 30 / 247 against 70 / 74 / 31 / 248);
    - the mechanic, spec steps 0 to 4: done (this commit). Spec, maps,
      step reports in `../slrr-ghidra/notes/m6/` (`run_m6.sh`,
      `m6_check.py --list`). Hover a part: its name in the info line; a
@@ -262,10 +268,11 @@ test copy's saves). Stock frames of the dealers and the car lot:
      engine's pack table (first registration spelling), replayed by
      `packs.PackTable`; the engine uses the compiler's own replay of the
      install's pack table (`InstallPacks`), as the tests do;
-   - open: the copy in `engine/Core/Jvm/Compiler` and
-     `../slrr-ghidra/compiler_cpp/src` are kept equal by hand (the test
-     tool should build from the engine's copy); a cache that cannot be
-     written means no class (the spec allows loading from memory).
+   - one copy of the sources: the test tool in `../slrr-ghidra/compiler_cpp`
+     builds from `engine/Core/Jvm/Compiler` (`SLRRC_SOURCE_DIR`), so the
+     tests check what the game runs (2026-10-27, `t7_cpp.py all` unchanged);
+   - open: a cache that cannot be written means no class (the spec allows
+     loading from memory).
 8. Frame-loop differences listed in ENGINE.md section 3. Done on the
    script boot (this commit): one gated `input_tick` and one game tick
    per pass after more than 15 ms, with the same whole-millisecond dt.
@@ -355,6 +362,7 @@ comes after the menu is up.
 | Car info and club info: chassis box natives on the car object, anchored frame shots in the rig | (this commit) | all four car info pages and club info open and close; the CAR page reads the car's real dimensions |
 | Mechanic: pick of part click bodies, take off / put back, install_OK as the 940 probe, getInfo from part and car objects, drag / bin / sell / repair, child handles boxed by restype | (this commit) | parts come off into the bin and go back; catalog per-car pages filled |
 | Mechanic filters, tuning, flaps, MOVE PARTS; the exe's printf for Float.toString; the dyno's combustion cycle | (this commit) | top-bar HP and car info engine figures from the exe's cycle |
+| Paint booth: paint and decal jobs into a private texture copy, brush preview, JPEG side files; ground software lighting and slot-copy props | (this commit) | the booth's walls, floor and panels within 1 of the stock frame; painted textures saved as side files |
 
 ## In progress
 

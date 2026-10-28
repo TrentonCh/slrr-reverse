@@ -533,6 +533,9 @@ struct MeshSubmesh {
   // when the source has neither a colour nor a second uv set). Material
   // mode 3 (draw_mode3_section, render_d3d9_part4.inc) draws from it.
   std::vector<MeshVertexWide> wide;
+  // M7: the light list a ground section's vertex diffuse was last lit with
+  // (ground_apply_lights, render_d3d9_part4.inc); 0 = never.
+  uint64_t ground_light_stamp = 0;
   void* texture_key = nullptr;  // entry in g_textures (owned via mesh)
   std::string texture_path;
   uint32_t diffuse = 0xFF808080u;
@@ -1827,6 +1830,10 @@ struct CamLights {
 };
 static void collect_camera_lights(void* root, CamLights* out);
 static void apply_camera_lights(const CamLights& lights);
+// M7: C3DLow vt+0x11C, the software lighting of the ground vertices
+// (render_d3d9_part4.inc).
+static void ground_apply_lights(const std::vector<GroundSec>& secs,
+                                const CamLights& lights);
 static void end_camera_lights();
 
 // Fragment 7: the projected shadows of a camera pass (FUN_00460ba0, after
@@ -2345,7 +2352,9 @@ static void draw_camera_instances(const std::vector<void*>& members,
     if (g_pass_fog) g_dev->SetRenderState(D3DRS_FOGENABLE, TRUE);
   }
   // rg_ground, then the object groups. The ground group leaves the state
-  // the object groups start from.
+  // the object groups start from. Before it, FUN_0045a2c0's software
+  // lighting of the ground vertices (M7).
+  if (boot940) ground_apply_lights(ground, lights);
   draw_ground_group(ground);
   if (boot940) {
     // rg_object_prelit: material mode 3 for the sections that have a
@@ -2707,6 +2716,7 @@ void draw_viewport_cameras() {
     }
     g_pass_cam = cam_key;
     draw_camera_instances(members, cam_world, lights);
+    render_d3d9_paint_draw_previews(members);  // M7: FUN_00421760
     draw_camera_text_section(texts);  // rg_text_section: after every mesh group
     g_fold_own_bone0 = false;
   }

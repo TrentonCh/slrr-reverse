@@ -1365,7 +1365,21 @@ void draw_mode3_section(const MeshSubmesh& sm, bool group_alpha_test = false) {
       g_dev->SetTextureStageState(1, D3DTSS_COLORARG1, D3DTA_TEXTURE);
       g_dev->SetTextureStageState(1, D3DTSS_COLORARG2, D3DTA_CURRENT);
     }
+    if (!lightmap) {
+      // FUN_0043c420: a third stage multiplies the mix by the vertex
+      // diffuse, the colour of the software lighting (ground_apply_lights;
+      // M7, settles M2 spec Q13).
+      g_dev->SetTextureStageState(2, D3DTSS_COLOROP, D3DTOP_MODULATE);
+      g_dev->SetTextureStageState(2, D3DTSS_COLORARG1, D3DTA_CURRENT);
+      g_dev->SetTextureStageState(2, D3DTSS_COLORARG2, D3DTA_DIFFUSE);
+      g_dev->SetTextureStageState(2, D3DTSS_ALPHAOP, D3DTOP_SELECTARG1);
+      g_dev->SetTextureStageState(2, D3DTSS_ALPHAARG1, D3DTA_CURRENT);
+    }
     mode3_draw(sm);
+    if (!lightmap) {
+      g_dev->SetTextureStageState(2, D3DTSS_COLOROP, D3DTOP_DISABLE);
+      g_dev->SetTextureStageState(2, D3DTSS_ALPHAOP, D3DTOP_DISABLE);
+    }
     if (lightmap) {
       // Pass 1 (FUN_00440f50, then the stage states): the frame is
       // multiplied by the lightmap. ALPHABLENDENABLE 1, SRCBLEND ZERO,
@@ -1392,11 +1406,8 @@ void draw_mode3_section(const MeshSubmesh& sm, bool group_alpha_test = false) {
       g_dev->SetRenderState(D3DRS_SRCBLEND, D3DBLEND_SRCALPHA);
       g_dev->SetRenderState(D3DRS_DESTBLEND, D3DBLEND_INVSRCALPHA);
     }
-    // else, Fork (M2 spec Q13): without a lightmap slot the exe's setup is
-    // FUN_0043c420, whose third stage multiplies the mix by D3DTA_DIFFUSE.
-    // A ground vertex carries no diffuse RGB (c0 & 0xFF000000), so what
-    // that setup shows was not settled; the host draws the mix alone.
-    // No material of garage1 comes here.
+    // Without a lightmap slot (FUN_0043c420) the third stage above took the
+    // vertex diffuse, which the software lighting fills (M7).
     g_dev->SetTexture(0, nullptr);
     g_dev->SetTexture(1, nullptr);
     g_dev->SetTextureStageState(0, D3DTSS_TEXCOORDINDEX, 0);
@@ -1536,11 +1547,13 @@ void draw_mode3_section(const MeshSubmesh& sm, bool group_alpha_test = false) {
     g_dev->SetTextureStageState(1, D3DTSS_COLORARG1, D3DTA_TEXTURE);
     g_dev->SetTextureStageState(1, D3DTSS_COLORARG2, D3DTA_CURRENT);
   } else {
-    // Fork (M2 spec Q13): FUN_0043c9a0 binds the primary alone and leaves
-    // stage 0 on its default MODULATE with the vertex diffuse; see the
-    // MixVCA note above. The host draws the texture alone. No material of
-    // garage1 comes here; 1,456 of the 1,542 ground materials of the other
-    // maps do.
+    // FUN_0043c9a0 binds the primary alone and leaves stage 0 on its
+    // default MODULATE with the vertex diffuse: texture x the colour the
+    // software lighting gave the vertex (ground_apply_lights; M7, settles
+    // M2 spec Q13). No material of garage1 comes here; 1,456 of the 1,542
+    // ground materials of the other maps do.
+    g_dev->SetTextureStageState(0, D3DTSS_COLOROP, D3DTOP_MODULATE);
+    g_dev->SetTextureStageState(0, D3DTSS_COLORARG2, D3DTA_DIFFUSE);
     g_dev->SetTextureStageState(1, D3DTSS_COLOROP, D3DTOP_DISABLE);
   }
   mode3_draw(sm);
@@ -1550,6 +1563,7 @@ void draw_mode3_section(const MeshSubmesh& sm, bool group_alpha_test = false) {
   g_dev->SetTexture(1, nullptr);
   g_dev->SetTextureStageState(0, D3DTSS_TEXCOORDINDEX, 0);
   g_dev->SetTextureStageState(0, D3DTSS_COLOROP, D3DTOP_MODULATE);
+  g_dev->SetTextureStageState(0, D3DTSS_COLORARG2, D3DTA_CURRENT);
   g_dev->SetTextureStageState(1, D3DTSS_COLOROP, D3DTOP_DISABLE);
 }
 
@@ -1661,6 +1675,143 @@ void set_object_world(void* key, const MeshState& ms) {
 // Fork: the world matrix is the identity times MeshState::unit (1.0 for
 // POLY metres; the exe multiplied the vertices by 10.0 into its engine
 // units). The cull mode is the exe's (draw_mode3_section).
+// PE 940 C3DLow vt+0x11C FUN_004231f0, run by FUN_0045a2c0 for a sector
+// whose light list changed: the software lighting of the ground vertices
+// (M7, ../slrr-ghidra/notes/m7/gh/static_light.c). RI_ground leaves a
+// vertex's diffuse RGB at 0 (FUN_004658b0: c0 & 0xFF000000); this fills it
+// from the sector's lights, D3D's fixed-function terms in software:
+//   start at C3DLow+0x30, the global ambient: 0 (only the ctor writes it,
+//   the frame defaults re-send it);
+//   a directional light: its ambient, plus diffuse x d with d = -(N . dir)
+//   when d > 0 (DAT_00593580);
+//   a point or spot light within its range: (ambient + diffuse x N.L) x a,
+//   a = 1 / (a0 + a1 d + a2 d^2), N.L < 0 giving the ambient part alone; a
+//   spot's cone: inside theta full, between theta and phi linear, outside
+//   nothing;
+// then FUN_004550d0 writes the colour into the vertex (clamped), alpha
+// kept. The material (FUN_0043c9a0 for Tex, FUN_0043c420 for MixVCA)
+// multiplies by it (draw_mode3_section).
+// Fork: the lights are the camera's device list (collect_camera_lights,
+// the same selection FUN_0045a2c0 makes of the sector's lights); the
+// per-light multiplier (record +0x68, cLight+0xB0 = 1.0) is 1; the factor
+// a vertex gives its own sector light (FUN_004231f0 param_6) is not
+// ported (the ground is lit with param_6 = the sector's, no POLY vertex
+// carries one). Lit again only when the list differs from the last one.
+static uint64_t g_ground_light_stamp = 0;
+
+static uint64_t ground_light_hash(const CamLights& lights) {
+  uint64_t h = 1469598103934665603ull;
+  const unsigned char* p =
+      reinterpret_cast<const unsigned char*>(lights.device.data());
+  const size_t n = lights.device.size() * sizeof(D3DLIGHT9);
+  for (size_t i = 0; i < n; ++i) {
+    h ^= p[i];
+    h *= 1099511628211ull;
+  }
+  return h ^ (n + 1);
+}
+
+// `own`: the vertex's factor for the sector's own light, the first
+// directional one (FUN_0045a2c0 passes its index as param_6; the vertex's
+// float +0x18 multiplies N . L of that light alone). Host: the specular
+// alpha, which RI_ground fills from the POLY vertex's second colour c1
+// (FUN_004658b0), / 255 [I: the staging copy FUN_00454fd0 was not read;
+// with it the booth's floor and ceiling take the ambient alone, as the
+// stock frames show].
+static void ground_light_vertex(const std::vector<D3DLIGHT9>& lights,
+                                const float* pos, const float* nrm,
+                                float own, float rgb[3]) {
+  rgb[0] = rgb[1] = rgb[2] = 0.f;  // C3DLow+0x30
+  bool first_directional = true;
+  for (const D3DLIGHT9& l : lights) {
+    if (l.Type == D3DLIGHT_DIRECTIONAL) {
+      float d = -(nrm[0] * l.Direction.x + nrm[1] * l.Direction.y +
+                  nrm[2] * l.Direction.z);
+      if (first_directional && d > 0.f) d *= own;
+      first_directional = false;
+      if (d > 0.f) {
+        rgb[0] += d * l.Diffuse.r;
+        rgb[1] += d * l.Diffuse.g;
+        rgb[2] += d * l.Diffuse.b;
+      }
+      rgb[0] += l.Ambient.r;
+      rgb[1] += l.Ambient.g;
+      rgb[2] += l.Ambient.b;
+      continue;
+    }
+    float lx = l.Position.x - pos[0], ly = l.Position.y - pos[1],
+          lz = l.Position.z - pos[2];
+    float dist = std::sqrt(lx * lx + ly * ly + lz * lz);
+    if (dist > 1e-5f) {  // DAT_00593588
+      lx /= dist;
+      ly /= dist;
+      lz /= dist;
+    } else {
+      dist = 1.f;
+    }
+    if (dist > l.Range) continue;
+    const float den =
+        (l.Attenuation2 * dist + l.Attenuation1) * dist + l.Attenuation0;
+    float a = den != 0.f ? 1.f / den : 0.f;
+    if (l.Type == D3DLIGHT_SPOT) {
+      const float rho = -(l.Direction.x * lx + l.Direction.y * ly +
+                          l.Direction.z * lz);
+      const float cos_t = std::cos(l.Theta * 0.5f);
+      const float cos_p = std::cos(l.Phi * 0.5f);
+      if (rho <= cos_t) {
+        if (rho <= cos_p) continue;
+        a *= (rho - cos_p) / (cos_t - cos_p);
+      }
+    }
+    const float nl = nrm[0] * lx + nrm[1] * ly + nrm[2] * lz;
+    if (nl >= 0.f) {
+      rgb[0] += (nl * l.Diffuse.r + l.Ambient.r) * a;
+      rgb[1] += (nl * l.Diffuse.g + l.Ambient.g) * a;
+      rgb[2] += (nl * l.Diffuse.b + l.Ambient.b) * a;
+    } else {
+      rgb[0] += l.Ambient.r * a;
+      rgb[1] += l.Ambient.g * a;
+      rgb[2] += l.Ambient.b * a;
+    }
+  }
+}
+
+static void ground_apply_lights(const std::vector<GroundSec>& secs,
+                                const CamLights& lights) {
+  if (secs.empty() || !lights.any) return;
+  const uint64_t stamp = ground_light_hash(lights);
+  // FUN_004550d0 (asm 0x4550f0..0x4551a4): per channel the lit value plus
+  // the material's colour entry 2 (the emissive / v3 illumination, read by
+  // material vt+0x14 in FUN_0046b770), MAXSS 0, MINSS 1.0, x 255.0
+  // (DAT_00593e40), _ftol (truncation); the vertex's alpha is kept.
+  auto to_byte = [](float v) -> uint32_t {
+    if (!(v > 0.f)) v = 0.f;
+    if (v > 1.f) v = 1.f;
+    return static_cast<uint32_t>(v * 255.f);
+  };
+  for (const GroundSec& gs : secs) {
+    MeshSubmesh& sm =
+        const_cast<MeshState*>(gs.ms)->subs[static_cast<size_t>(gs.sub)];
+    if (sm.ground_light_stamp == stamp) continue;
+    sm.ground_light_stamp = stamp;
+    const float em[3] = {
+        static_cast<float>((sm.mat_emissive >> 16) & 0xffu) / 255.f,
+        static_cast<float>((sm.mat_emissive >> 8) & 0xffu) / 255.f,
+        static_cast<float>(sm.mat_emissive & 0xffu) / 255.f};
+    for (MeshVertexWide& v : sm.wide) {
+      const float pos[3] = {v.x, v.y, v.z};
+      const float nrm[3] = {v.nx, v.ny, v.nz};
+      float rgb[3];
+      const float own = static_cast<float>(v.specular >> 24) / 255.f;
+      ground_light_vertex(lights.device, pos, nrm, own, rgb);
+      v.diffuse = (v.diffuse & 0xFF000000u) |
+                  (to_byte(rgb[0] + em[0]) << 16) |
+                  (to_byte(rgb[1] + em[1]) << 8) | to_byte(rgb[2] + em[2]);
+    }
+    ++g_ground_light_stamp;
+  }
+}
+
 static void draw_ground_group(const std::vector<GroundSec>& secs) {
   if (secs.empty() || !g_dev) return;
   std::vector<GroundSec> order(secs);

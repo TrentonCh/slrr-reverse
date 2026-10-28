@@ -4,6 +4,7 @@
 
 #include <cstdint>
 #include <cstdio>
+#include <string>
 #include <vector>
 
 namespace inv {
@@ -47,6 +48,10 @@ InvObject* resref_find_by_id(int32_t id);
 // node is of that type (0x12 = a viewport). Host: an object bound to the id
 // whose node type (ResState::restype) is `restype`; null when there is none.
 InvObject* resref_find_by_id_restype(int32_t id, int32_t restype);
+// M7: the render instance (type 3) with id `id` whose parent is one of the
+// `count` handles in `parents`; null when there is none.
+InvObject* resref_find_render_instance(int32_t id, InvObject* const* parents,
+                                       int count);
 // The id an object is bound to as a handle; 0 for an object that is no
 // handle (or no longer one). Never creates an entry.
 int32_t resref_peek_id(InvObject* o);
@@ -382,6 +387,39 @@ void renderref_clear_line_overrides(InvObject* instance);
 // use it (null when it did not load) and the number of texture entries of
 // the instance's sections that are bound to it.
 void* renderref_line_texture_key(int32_t texture_id);
+// M7, the paint booth (Resources_part5.inc). Runtime textures: id
+// 0xFFFF0000 | n from the node allocator, restype 7. Script boot only.
+// paint_texture_copy: FUN_004e9470 -> FUN_0051ee30 for the texture record
+//   `source_id`: a paintable (render target) copy; 0 when the texture does
+//   not load.
+// paint_texture_from_file: the texture of an unsaved row of a car file
+//   (`sourcefile <file>.<k>` with `flags 1`, FUN_004d5d60); 0 on failure.
+// paint_texture_handle: the handle (renderer key) of such an id, else null.
+// paint_texture_target: FUN_0044d590 for such an id: a render target from
+//   now on (a texture read from a side file becomes one in place).
+// PE 940 Painter natives (NativeTypes_part12.inc). native_painter_send:
+// doPaint 0x4E0560 (`bigdecal`, kind 0) / paintPart 0x4E0800 (`paint`, kind
+// 1): the pick at the cursor `cursor` (FUN_004eb000), the picked node of
+// category 9 (part) or 5 (car), the command to it. False when the pick finds
+// no part or car (or the script boot is off).
+bool native_painter_send(InvObject* cursor, int kind, int32_t color,
+                         int32_t brush, int32_t temp, float rot, float size,
+                         int32_t flip);
+// The exe's '%f' (Lang.cpp, PE 940 FUN_00527a20): truncates at the precision.
+bool exe940_format_f(const char* fmt, double v, std::string* out);
+int32_t paint_texture_copy(int32_t source_id);
+int32_t paint_texture_from_file(const char* path, const char* payload = nullptr);
+InvObject* paint_texture_handle(int32_t id);
+// The payload text a runtime texture was made from (node+0x88; "" for a
+// paintable copy): FUN_004d8510 writes it inline in a car file's unsaved
+// row unless it starts `sourcefile save\` or `sourcefile save/`.
+std::string paint_texture_payload(int32_t id);
+bool paint_texture_target(int32_t id);
+// ResourceRef.makeTexture (FUN_00539170): the runtime texture `id` that
+// `ref` holds, read from `path`, findable by its id (a Decal the player
+// bought is `new Decal(id)`: another handle on the same resource).
+void paint_texture_register_file(int32_t id, InvObject* ref, const char* path,
+                                 const char* payload);
 // Fork: the texture of the global envmap (PE 940 FUN_00421920: the engine
 // asks the texture node of GfxEngine.setGlobalEnvmap for its texture every
 // frame). One host handle per resource id, loaded on first use; returns the
@@ -415,6 +453,8 @@ void native_light_type_debug_dump(FILE* out);
 // (NativeTypes_part9.inc), printed by render_d3d9_debug_dump beside the
 // camera line when SLRR_PE_NATIVE_PROF is set.
 void native_cursor_debug_dump(FILE* out);
+// M7: `[paint] commands` at loop end (NativeTypes_part12.inc).
+void native_paint_debug_dump(FILE* out);
 // Fork: `[render-dbg]` lines for the instances of the native `part` and
 // `car` types (NativeTypes_part6.inc): a count, the cars with their wheels,
 // and the parts with their render instances.

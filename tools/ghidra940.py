@@ -156,6 +156,56 @@ def main():
                         f = fn_at(r.getFromAddress())
                         refs.append("%s@%s" % (f.getName(), f.getEntryPoint()) if f else str(r.getFromAddress()))
                     print("%s  %r  refs=%s" % (d.getAddress(), v[:80], sorted(set(refs))[:6]))
+        elif cmd == "range":
+            # range LO HI: decompile every function whose entry lies in [LO, HI)
+            di = DecompInterface()
+            di.openProgram(prog)
+            lo, hi = int(args[0], 16), int(args[1], 16)
+            for f in fm.getFunctions(addr(lo), True):
+                if f.getEntryPoint().getOffset() >= hi:
+                    break
+                res = di.decompileFunction(f, 120, ConsoleTaskMonitor())
+                print("// ==== %s @ %s" % (f.getName(), f.getEntryPoint()))
+                if res and res.decompileCompleted():
+                    print(res.getDecompiledFunction().getC())
+        elif cmd == "asm":
+            # asm VA: the instructions of the function containing VA
+            for s in args:
+                f = fn_at(addr(s))
+                if not f:
+                    print("no function at", s)
+                    continue
+                print("// ==== %s @ %s" % (f.getName(), f.getEntryPoint()))
+                for ins in listing.getInstructions(f.getBody(), True):
+                    print("  %s  %s" % (ins.getMinAddress(), ins))
+        elif cmd == "sym":
+            # symbols whose name contains the text, with their address
+            st = prog.getSymbolTable()
+            for s in st.getAllSymbols(True):
+                if args[0] in s.getName(True):
+                    print("%s  %s" % (s.getAddress(), s.getName(True)))
+        elif cmd == "vtables":
+            # vtables TEXT [count]: the first entries of every vftable whose class name contains TEXT
+            mem = prog.getMemory()
+            n = int(args[1]) if len(args) > 1 else 12
+            st = prog.getSymbolTable()
+            for s in st.getAllSymbols(True):
+                nm = s.getName(True)
+                if args[0] in nm and nm.endswith("::vftable"):
+                    a = s.getAddress()
+                    row = []
+                    for i in range(n):
+                        v = mem.getInt(a.add(4 * i)) & 0xFFFFFFFF
+                        row.append("%08X" % v)
+                    print("%s %s  %s" % (a, nm, " ".join(row)))
+        elif cmd == "dwords":
+            # dwords VA [count]: u32 values at VA, with the function each one names
+            mem = prog.getMemory()
+            a = addr(args[0])
+            for i in range(int(args[1]) if len(args) > 1 else 16):
+                v = mem.getInt(a.add(4 * i)) & 0xFFFFFFFF
+                f = fm.getFunctionAt(addr(v)) if v >= 0x400000 else None
+                print("  +0x%02X  %08X  %s" % (4 * i, v, f.getName() if f else ""))
         else:
             print("unknown command", cmd)
             return 2

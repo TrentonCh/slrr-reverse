@@ -124,10 +124,15 @@ bool native_filter_hidden(void* node) {
   return node && !g_filter_hidden.empty() && g_filter_hidden.count(node) != 0;
 }
 
+// M7: the click bodies of the `button` objects (NativeTypes_part13.inc).
+void button_click_bodies(std::vector<ClickPickBody>* out);
+
 void click_pick_bodies(std::vector<ClickPickBody>* out) {
   if (!out) return;
   out->clear();
-  if (!native_script_boot() || g_parts_live.empty()) return;
+  if (!native_script_boot()) return;
+  button_click_bodies(out);
+  if (g_parts_live.empty()) return;
   out->reserve(g_parts_live.size());
   for (PartObject* p : g_parts_live) {
     if (p->gone_ || !p->key_ || !p->phy_id_ || p->click_hidden_) continue;

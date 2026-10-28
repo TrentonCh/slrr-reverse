@@ -315,6 +315,7 @@ void render_d3d9_flush() {
       }
       draw_meshes();
       draw_viewport_cameras();  // Fork: script Osd / world cameras
+      render_d3d9_paint_run_jobs();  // M7: FUN_00421690, FUN_00421820
       cam_pass_shot(true);
       queue_flare_sprites();
       set_fullscreen_viewport();
@@ -1800,9 +1801,11 @@ bool upload_dds_cube(TextureState& st, const uint8_t* data, size_t size,
 #endif
 }
 
-bool upload_jpeg_bgra(TextureState& st, const uint8_t* jpeg, size_t jpeg_size) {
 #ifdef _WIN32
-  if (!g_dev || !jpeg || jpeg_size < 4) return false;
+// A JPEG through WIC into 32-bit BGRA (a grey image comes out B = G = R).
+bool decode_jpeg_bgra(const uint8_t* jpeg, size_t jpeg_size,
+                      std::vector<uint8_t>* out, UINT* w_out, UINT* h_out) {
+  if (!jpeg || jpeg_size < 4 || !out) return false;
   if (jpeg[0] != 0xff || jpeg[1] != 0xd8) return false;
 
   static bool com_inited = false;
@@ -1872,12 +1875,37 @@ bool upload_jpeg_bgra(TextureState& st, const uint8_t* jpeg, size_t jpeg_size) {
   }
   const UINT stride = w * 4;
   const UINT bytes = stride * h;
-  std::vector<uint8_t> pixels(bytes);
-  hr = conv->CopyPixels(nullptr, stride, bytes, pixels.data());
+  out->assign(bytes, 0);
+  hr = conv->CopyPixels(nullptr, stride, bytes, out->data());
   conv->Release();
   factory->Release();
   if (FAILED(hr)) return false;
+  *w_out = w;
+  *h_out = h;
+  return true;
+}
+#endif
 
+// `alpha` (optional): the PTX level's second stream (PE 940 FUN_00456cf0,
+// pass 2: the first component of each of its pixels goes into A); without
+// it the texture is opaque.
+bool upload_jpeg_bgra(TextureState& st, const uint8_t* jpeg, size_t jpeg_size,
+                      const uint8_t* alpha = nullptr, size_t alpha_size = 0) {
+#ifdef _WIN32
+  if (!g_dev) return false;
+  std::vector<uint8_t> pixels;
+  UINT w = 0, h = 0;
+  if (!decode_jpeg_bgra(jpeg, jpeg_size, &pixels, &w, &h)) return false;
+  const UINT stride = w * 4;
+  const UINT bytes = stride * h;
+  if (alpha && alpha_size >= 4) {
+    std::vector<uint8_t> ap;
+    UINT aw = 0, ah = 0;
+    if (decode_jpeg_bgra(alpha, alpha_size, &ap, &aw, &ah) && aw == w &&
+        ah == h)
+      for (UINT i = 0; i < w * h; ++i) pixels[i * 4 + 3] = ap[i * 4];
+  }
+  HRESULT hr = S_OK;
   texture_release_gpu(st);
   hr = g_dev->CreateTexture(w, h, 1, 0, D3DFMT_A8R8G8B8, D3DPOOL_MANAGED, &st.tex,
                             nullptr);
@@ -1957,7 +1985,9 @@ bool ptx_level_jpeg0(const uint8_t* level_data, size_t level_bytes,
 
 // Walk PTX levels; prefer last valid jpeg0 (highest quality / largest).
 bool parse_ptx_jpeg(const uint8_t* data, size_t size, const uint8_t** jpeg_out,
-                    size_t* jpeg_size_out, int32_t* w_out, int32_t* h_out) {
+                    size_t* jpeg_size_out, int32_t* w_out, int32_t* h_out,
+                    const uint8_t** alpha_out = nullptr,
+                    size_t* alpha_size_out = nullptr) {
   if (!data || size < sizeof(PtxFileHeader) + 4 || !jpeg_out || !jpeg_size_out)
     return false;
   PtxFileHeader hdr{};
@@ -1970,6 +2000,8 @@ bool parse_ptx_jpeg(const uint8_t* data, size_t size, const uint8_t** jpeg_out,
 
   const uint8_t* best_jpeg = nullptr;
   size_t best_sz = 0;
+  const uint8_t* best_alpha = nullptr;
+  size_t best_alpha_sz = 0;
   size_t off = sizeof(PtxFileHeader);
   uint32_t a = hdr.payload_a;
   uint32_t c = hdr.jpeg0_c;
@@ -1983,6 +2015,10 @@ bool parse_ptx_jpeg(const uint8_t* data, size_t size, const uint8_t** jpeg_out,
     if (ptx_level_jpeg0(level_data, a, c, d, a, &j, &jsz)) {
       best_jpeg = j;
       best_sz = jsz;
+      // The second stream: the `d` bytes behind the first `c` (c + d = a).
+      const bool dual = d > 0 && c > 0 && static_cast<uint64_t>(c) + d == a;
+      best_alpha = dual ? level_data + c : nullptr;
+      best_alpha_sz = dual ? d : 0;
     }
     off += a;
     if (off + sizeof(PtxMipHeader) > size) break;
@@ -2001,6 +2037,8 @@ bool parse_ptx_jpeg(const uint8_t* data, size_t size, const uint8_t** jpeg_out,
   if (!best_jpeg || best_sz < 4) return false;
   *jpeg_out = best_jpeg;
   *jpeg_size_out = best_sz;
+  if (alpha_out) *alpha_out = best_alpha;
+  if (alpha_size_out) *alpha_size_out = best_alpha_sz;
   if (w_out) *w_out = static_cast<int32_t>(hdr.width);
   if (h_out) *h_out = static_cast<int32_t>(hdr.height);
   return true;
@@ -2020,11 +2058,18 @@ bool render_d3d9_texture_create_from_ptx(void* key, const uint8_t* data,
   if (!key || !data) return false;
   const uint8_t* jpeg = nullptr;
   size_t jsz = 0;
+  const uint8_t* alpha = nullptr;
+  size_t asz = 0;
   int32_t pw = 0, ph = 0;
-  if (!parse_ptx_jpeg(data, size, &jpeg, &jsz, &pw, &ph)) return false;
+  if (!parse_ptx_jpeg(data, size, &jpeg, &jsz, &pw, &ph, &alpha, &asz))
+    return false;
   TextureState& st = g_textures[key];
   st.label = label ? label : "";
-  if (upload_jpeg_bgra(st, jpeg, jsz)) return true;
+  // M7: the alpha stream as the exe decodes it (FUN_00456cf0 pass 2), on
+  // the Build 940 boot; the legacy path keeps the opaque colour stream.
+  if (upload_jpeg_bgra(st, jpeg, jsz, render_boot940() ? alpha : nullptr,
+                       asz))
+    return true;
   // Keep atlas size from PTX header so ResourceRef.load / skydome bind can
   // still attach the type (Scene.java RenderRef + maps.skydome textures).
   st.w = pw;

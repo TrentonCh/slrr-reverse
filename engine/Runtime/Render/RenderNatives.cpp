@@ -797,7 +797,20 @@ InvObject* java_render_Text_getPos(InvObject* self) {
   // Java units (no *10 in render_d3d9) — do not fmul 0.1 here.
   // !self / never create: handle+8==0 analogue → nullptr.
   if (!self) return nullptr;
-  if (!tree_field_get_int(self, "_text_posed")) return nullptr;
+  if (!tree_field_get_int(self, "_text_posed")) {
+    // M7: the native reads the `renderinst` handle, whatever made it: the
+    // script RenderRef.getPos (RenderRef.class tree 24) binds a Text's
+    // renderinst to a render instance (`renderinst.duplicate(this)`) and
+    // asks this native for that instance's position (ColorShop's paint
+    // can, PaintBooth.java). Script boot only; the host's pose of the
+    // instance is RenderRef.setMatrix's (0 until then).
+    if (native_script_boot()) {
+      InvObject* ri = tree_field_get_obj(self, "renderinst");
+      if (ri && java_util_resource_ResourceRef_id(ri) != 0)
+        return java_util_resource_RenderRef_getPos(ri);
+    }
+    return nullptr;
+  }
   return vec3_new(tree_field_get_float(self, "_text_px"),
                   tree_field_get_float(self, "_text_py"),
                   tree_field_get_float(self, "_text_pz"));

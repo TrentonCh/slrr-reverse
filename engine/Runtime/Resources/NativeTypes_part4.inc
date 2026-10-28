@@ -1585,6 +1585,10 @@ void part_lines_to(const PartObject* part, InvObject* r) {
 // setMesh and the `texture` / `mesh` commands (NativeTypes_part7.inc).
 void part_set_texture(PartObject* part, int32_t id);
 void part_set_mesh(PartObject* part, int32_t id);
+// M7 (NativeTypes_part12.inc): `paint`, `decal`, `bigdecal` of a part or a
+// car (false for another word) and GII_PAINTABLE.
+bool part_cmd_painter(PartObject* me, const char* word, const char* text);
+int32_t native_part_paintable(PartObject* p, bool car);
 
 // PE 940 FUN_004c2950 / FUN_004c1e90 / FUN_00498180, the loop over the
 // thresholds: the level is the first i with detail < t[i], else the count.

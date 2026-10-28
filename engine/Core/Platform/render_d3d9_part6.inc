@@ -1160,13 +1160,14 @@ void render_d3d9_lit_debug_dump(FILE* out) {
                  "[render-dbg]   lit '%s' section %d '%s' class 0x%02X %s "
                  "(file 0x%02X flags 0x%08X) x%d passes=%d colour0=(%.3f, "
                  "%.3f, %.3f, %.3f) spec=(%.3f, %.3f, %.3f) power=%.2f F=%.3f "
-                 "primary=%s second=%s env=%s uv_sets=%d%s\n",
+                 "emissive=%06X primary=%s second=%s env=%s uv_sets=%d%s\n",
                  base_name(mit->second.label).c_str(), row.sub,
                  sm.name.c_str(), static_cast<unsigned>(r.cls),
                  lit_class_name(r.cls), static_cast<unsigned>(sm.mat_shader),
                  static_cast<unsigned>(sm.mat_flags), row.count, r.passes,
                  sm.col0[0], sm.col0[1], sm.col0[2], sm.col0[3], sm.col1[0],
                  sm.col1[1], sm.col1[2], sm.power, sm.env_factor,
+                 static_cast<unsigned>(sm.mat_emissive & 0xFFFFFFu),
                  sm.slot_primary == -1 ? "-" : tex_name(sm.texture_key).c_str(),
                  sm.slot_second == -1 ? "-" : tex_name(sm.texture_second).c_str(),
                  env, r.wide ? 2 : 1, r.two_bone ? " two-bone" : "");

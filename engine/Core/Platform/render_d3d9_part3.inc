@@ -258,11 +258,13 @@ void render_d3d9_debug_dump(FILE* out) {
   }
   native_camera_debug_dump(out);  // one line per native camera
   native_cursor_debug_dump(out);  // `[cursor] state` (SLRR_PE_NATIVE_PROF)
+  native_paint_debug_dump(out);   // M7: `[paint] commands`
   native_part_debug_dump(out);    // the native parts that are drawn
   render_d3d9_bone_debug_dump(out);
   render_d3d9_lit_debug_dump(out);  // the class programs of the lit groups
   render_d3d9_scene_light_debug_dump(out);
   render_d3d9_shadow_debug_dump(out);  // the projected shadows
+  render_d3d9_paint_debug_dump(out);   // M7: the paint booth's strokes
   render_d3d9_ground_debug_dump(out);  // one line per ground mesh
   // Fork: the object sections of the last flushed frame that went through
   // rg_horizon and material mode 3, and every bind of the engine default

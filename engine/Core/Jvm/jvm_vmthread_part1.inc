@@ -457,6 +457,15 @@ int vmthread_invoke_method(VmThread* thr, InvObject* self, const char* class_fqn
     // dest0 is the discarded static slot, so the first real arg is arg_0.
     // Keeping `self` in front fed the receiver pointer to Thread.sleep.
     bool has_self = self != nullptr;
+    // Fork (M7): the other way round, a STATIC script method whose host row
+    // is an instance row (Painter.doPaint is `native static` in Build 940
+    // and an instance method in the older scripts, one row for both): the
+    // row's function takes a receiver first, so a null one goes in front.
+    if (!has_self && ne && !ne->is_static && slot && slot->acc_exact &&
+        (slot->flags & 0x8u) != 0) {
+      args.insert(args.begin(), JvmValue::make_obj(nullptr));
+      has_self = true;
+    }
     if (has_self && ne && ne->is_static && !args.empty()) {
       args.erase(args.begin());
       has_self = false;

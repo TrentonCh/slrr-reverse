@@ -6,6 +6,7 @@
 #include "game_script.hpp"
 #include "jvm.hpp"
 #include "render_d3d9.hpp"
+#include "NativeTypes.hpp"  // M7: native_script_boot, native_type_log
 
 #include <algorithm>
 #include <chrono>

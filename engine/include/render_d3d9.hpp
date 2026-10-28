@@ -3,6 +3,7 @@
 #include <cstdio>
 #include <cstddef>
 #include <cstdint>
+#include <vector>
 
 namespace inv {
 
@@ -461,6 +462,36 @@ void render_d3d9_set_shadow_options(int32_t shadows, int32_t size,
 // Fork: `[render-dbg]` lines: the shadow options and the owners the shadow
 // pass drew in the last flushed frame.
 void render_d3d9_shadow_debug_dump(FILE* out);
+
+// M7, the paint booth (render_d3d9_part8.inc; ../slrr-ghidra/notes/m7/
+// exe_paint.md). Build 940 boot only.
+// PE 940 FUN_0044d590 / FUN_0044e490: `dst_key` becomes a render target
+// texture (A8R8G8B8) of the size and level count of `src_key`'s texture,
+// every level copied (filter NONE). False when the source has no texture.
+bool render_d3d9_texture_make_paintable(void* dst_key, void* src_key);
+// Fork: `dst_key` takes over the texture of `src_key` (whose entry goes).
+void render_d3d9_texture_take(void* dst_key, void* src_key);
+// The PaintTexture job (`paint` command): level 0 of the paintable texture
+// filled with `argb` (blended by its alpha) after the frame's camera passes.
+void render_d3d9_paint_fill(void* target_key, uint32_t argb);
+// The PaintDecal job (`decal` command, FUN_004c8c60): every section of the
+// render instance `mesh_key` drawn by its uv into level 0 of the paintable
+// `target_key`, the brush `brush_key` projected along the pick segment from
+// `a` (far) to `b` (near), world metres, `size` metres wide, turned by
+// `rot`; `temp` 1: a preview drawn over the instance this frame instead.
+bool render_d3d9_paint_decal(void* mesh_key, void* target_key, void* brush_key,
+                             const float a[3], const float b[3], float size,
+                             float rot, int32_t flip, uint32_t argb,
+                             int32_t temp);
+// Where the frame runs them: the previews after a camera pass's instances
+// (`members`), the strokes and fills after the camera passes.
+void render_d3d9_paint_draw_previews(const std::vector<void*>& members);
+void render_d3d9_paint_run_jobs();
+// Fork: `[render-dbg] paint` lines.
+void render_d3d9_paint_debug_dump(FILE* out);
+// PE 940 FUN_004ebb80 -> FUN_00457cb0: level 0 of the texture `key` written
+// to `path` as a baseline JPEG of its R, G, B at `quality` (the exe: 95).
+bool render_d3d9_texture_save_jpeg(void* key, const char* path, int quality);
 
 // OSD 2D blit queue (host stand-in for Rectangle RenderRef instances).
 // Coords match Osd.createRectangle: center (x,y), size (w,h) in ~[-1,1] space

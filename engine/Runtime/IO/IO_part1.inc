@@ -340,17 +340,44 @@ bool soft_packfile_path_exists(const char* path) {
 
 // Soft skip File_SdatType2_RemountTextures @ 0x00485190 (texture link OOS).
 // Per entry: u32 id, u32 kind, u32 size; kind==7 && size>0 → size payload bytes.
-bool file_sdat_soft_skip_type2_textures(FILE* fp, uint32_t count) {
+// PE 940 FUN_004d5d60 (M7, m5 exe_cars.md 4.1): per unsaved row
+// {u32 k, u32 restype, u32 size}; a texture with a size has its payload
+// text inline (`sourcefile <path>` of a texture that was itself read from
+// a side file), one without is the side file "<car file>.<k>" (`sourcefile
+// <file>.<k>`, `flags 1`); each becomes a runtime texture, and readResID
+// maps ordinal k to its id. Script boot only.
+// Fork: a mesh row (a bent panel, written by the exe as an INVO v4 side
+// file) is read past: the host has no deformed meshes and the part keeps
+// its pack mesh.
+bool file_sdat_soft_skip_type2_textures(FileState* st, FILE* fp,
+                                        uint32_t count) {
   for (uint32_t i = 0; i < count; ++i) {
     uint32_t id = 0, kind = 0, size = 0;
     if (!file_read_u32_le(fp, &id) || !file_read_u32_le(fp, &kind) ||
         !file_read_u32_le(fp, &size)) {
       return false;
     }
-    (void)id;
+    std::string source;
+    std::string text;
     if (kind == 7 && size > 0) {
       if (size > 0x1000000u) return false;
-      if (std::fseek(fp, static_cast<long>(size), SEEK_CUR) != 0) return false;
+      text.assign(size, '\0');
+      if (std::fread(&text[0], 1, size, fp) != size) return false;
+      char path[1025] = {0};
+      if (std::sscanf(text.c_str(), "sourcefile %1024[^\r\n]", path) == 1)
+        source = path;
+    } else if (kind == 7 && st) {
+      source = st->path + "." + std::to_string(id);
+    }
+    if (kind == 7 && st && !source.empty() && native_script_boot()) {
+      FileUnsavedRes node;
+      node.ordinal = static_cast<int32_t>(id);
+      // The inline text is the new texture's payload (written back inline
+      // by the next save of this file); a side file's is `flags 1`.
+      node.abs_id = paint_texture_from_file(
+          source.c_str(), text.empty() ? nullptr : text.c_str());
+      node.restype = 7;
+      if (node.abs_id) st->unsaved.push_back(node);
     }
   }
   return true;
@@ -430,7 +457,7 @@ void file_sdat_soft_loadpack_remount(FileState* st, FILE* fp, unsigned type) {
   if (std::fseek(fp, -4 - static_cast<long>(trailer), SEEK_END) != 0) return;
   uint32_t tex_count = 0;
   if (!file_read_u32_le(fp, &tex_count)) return;
-  if (!file_sdat_soft_skip_type2_textures(fp, tex_count)) return;
+  if (!file_sdat_soft_skip_type2_textures(st, fp, tex_count)) return;
   uint32_t pack_count = 0;
   if (!file_read_u32_le(fp, &pack_count) || pack_count == 0) return;
   file_sdat_soft_remount_packs(st, fp, pack_count);
@@ -448,15 +475,45 @@ bool file_sdat_soft_flush_trailer(FileState* st) {
       static_cast<uint32_t>(st->unsaved.size());
   if (!file_write_u32_le(st->fp, unsaved_count)) return false;
   trailer += 4;
-  // Soft File_SdatType2_WriteUnsavedList: {ordinal, restype, size=0} per node
-  // (kind==7 payload OOS — size0 keeps open skip path linear).
+  // PE 940 FUN_004d8510 (M7, m5 exe_cars.md 4.1): {k, restype, size} per
+  // row. A texture read from a side file under save\ keeps its payload
+  // text inline (size = its length); any other texture is size 0 and the
+  // side file "<file>.<k>", a baseline JPEG, quality 95 (FUN_004ebb80).
+  // Fork: a mesh row is written size 0 with no side file (the host has no
+  // deformed meshes to write).
   for (const FileUnsavedRes& u : st->unsaved) {
+    std::string inline_text;
+    if (u.restype == 7 && native_script_boot()) {
+      // "sourcefile %5s" of the payload, compared with "save\" and
+      // "save/" (FUN_0057c11e, 0 = equal): inline when it is neither.
+      const std::string payload = paint_texture_payload(u.abs_id);
+      char head[6] = {0};
+      std::sscanf(payload.c_str(), "sourcefile %5s", head);
+      const bool from_save = std::strcmp(head, "save\\") == 0 ||
+                             std::strcmp(head, "save/") == 0;
+      if (!payload.empty() && !from_save)
+        inline_text = payload;
+      else if (InvObject* tex = paint_texture_handle(u.abs_id)) {
+        const std::string side = st->path + "." + std::to_string(u.ordinal);
+        if (!render_d3d9_texture_save_jpeg(tex, side.c_str(), 95))
+          std::fprintf(stderr, "[paint] side file %s NOT written\n",
+                       side.c_str());
+        else if (native_type_log())
+          std::fprintf(stderr, "[paint] side file %s (texture 0x%08X)\n",
+                       side.c_str(), static_cast<unsigned>(u.abs_id));
+      }
+    }
+    const uint32_t size = static_cast<uint32_t>(inline_text.size());
     if (!file_write_u32_le(st->fp, static_cast<uint32_t>(u.ordinal)) ||
         !file_write_u32_le(st->fp, static_cast<uint32_t>(u.restype)) ||
-        !file_write_u32_le(st->fp, 0u)) {
+        !file_write_u32_le(st->fp, size)) {
       return false;
     }
     trailer += 12;
+    if (size) {
+      if (std::fwrite(inline_text.data(), 1, size, st->fp) != size) return false;
+      trailer += size;
+    }
   }
   const uint32_t pack_count = static_cast<uint32_t>(st->remount.size());
   if (!file_write_u32_le(st->fp, pack_count)) return false;
@@ -971,8 +1028,13 @@ int32_t java_io_File_write_2(InvObject* self, InvObject* value) {
   const uint32_t hi = uid & 0xFFFF0000u;
   if (hi == 0xFFFF0000u) {
     // Unsaved: RESTYPE-5 ∈ {0,2} → type ∈ {5,7}.
-    const int32_t restype =
+    int32_t restype =
         value ? java_util_resource_ResourceRef_type(value) : 0;
+    // M7: a handle bound to the id of a runtime texture (`new ResourceRef(
+    // part.getTexture())` of a painted part) names that texture node,
+    // restype 7.
+    if (restype == 0 && native_script_boot() && paint_texture_handle(id))
+      restype = 7;
     const int32_t gate = restype - 5;
     if (gate != 0 && gate != 2) return 0;
     for (const FileUnsavedRes& u : st->unsaved) {

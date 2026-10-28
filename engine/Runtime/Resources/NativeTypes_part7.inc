@@ -272,6 +272,8 @@ int32_t part_texture_line(const PartObject* p, const RenderObjectDesc* desc,
 // The record an id names, when it is of pack type `restype` (7 texture, 5
 // mesh).
 bool part_names_record(int32_t id, int restype) {
+  // M7: a runtime texture of the paint booth (Resources_part5.inc).
+  if (restype == 7 && id && paint_texture_handle(id)) return true;
   const RpakEntry* e = id ? rpak_find_entry(id) : nullptr;
   return e && e->restype == restype;
 }

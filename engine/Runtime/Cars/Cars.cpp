@@ -498,6 +498,12 @@ void java_game_Painter_doPaint(InvObject* self, InvObject* cursor, int32_t color
   // dispatch @ 0x004265C0. Epilogue always splices pick list + relinks
   // brushH/pick if owner!=0. Java: MODE_PAINTCOLOR / MODE_PAINTDECAL
   // (paintBrush.id(), temp 0|1); PE re-checks pick category.
+  // Build 940 (M7): `native static` there (self is null); the pick and the
+  // `bigdecal` line of PE 940 0x4E0560 (NativeTypes_part12.inc).
+  if (native_script_boot()) {
+    native_painter_send(cursor, 0, color, brush, temp, rot, size, flip);
+    return;
+  }
   if (!self) return;
   PaintStroke s;
   s.cursor = cursor;
@@ -563,6 +569,12 @@ void java_game_Painter_paintPart(InvObject* self, InvObject* cursor,
   // owner!=0. Contrast xPaint (literal bigdecal, no pick) / doPaint
   // (sprintf bigdecal). Java MODE_PAINTPART pre-filters cat then calls
   // with paintColor|0xFF000000; PE re-checks pick category.
+  // Build 940 (M7): the pick and the `paint` line of PE 940 0x4E0800
+  // (NativeTypes_part12.inc).
+  if (native_script_boot()) {
+    native_painter_send(cursor, 1, color, 0, 0, 0.f, 0.f, 0);
+    return;
+  }
   if (!self) return;
   PaintStroke s;
   s.cursor = cursor;
@@ -609,6 +621,13 @@ void java_game_Painter_xPaint(InvObject* self, InvObject* part) {
   // pop ecx; retn — no pick-list splice (unlike paintPart).
   // Java MODE_PAINTDECAL: flush texture via xPaint(player.car).
   // Host: xpaint_* bookkeeping; queue always (PE ignores this).
+  // Build 940 (M7): PE 940 0x4E07C0 sends the same line to `part` (the
+  // player's car): a stroke without a brush, which only makes the private
+  // copies (NativeTypes_part12.inc).
+  if (native_script_boot()) {
+    native_event(part, 0x10, "bigdecal 0,0 0,0,0 0,0,0 0 0 1 0");
+    return;
+  }
   if (self) {
     tree_field_set_obj(self, "xpaint_part", part);
     tree_field_set_int(self, "xpaint_count",

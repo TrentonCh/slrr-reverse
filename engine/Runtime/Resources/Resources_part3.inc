@@ -282,6 +282,12 @@ void java_util_resource_RenderRef_changeResource(InvObject* self,
     if (keep && render_d3d9_texture_ready(keep))
       render_d3d9_mesh_set_texture(self, keep);
   } else {
+    // M7: a handle bound to the id of a runtime texture that another handle
+    // holds (`new Decal(decal.id())` of a texture ResourceRef.makeTexture
+    // made) names that texture: the exe has one resource behind both.
+    if (newtexture && !render_d3d9_texture_ready(newtexture) && new_id != 0)
+      if (InvObject* rt = paint_texture_handle(new_id))
+        if (render_d3d9_texture_ready(rt)) newtexture = rt;
     if (newtexture && !render_d3d9_texture_ready(newtexture) && new_id != 0)
       java_util_resource_ResourceRef_load(newtexture);
     const int32_t nsub = render_d3d9_mesh_submesh_count(self);
